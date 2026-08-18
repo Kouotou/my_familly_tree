@@ -473,4 +473,15 @@ router.get('/tree/:id', (req,res)=>{
   res.json({ nodes, edges });
 });
 
+// full tree: return all approved people and all relationships between approved people
+router.get('/tree/full', (req,res)=>{
+  try{
+    const nodes = db.prepare("SELECT * FROM people WHERE approval_status = 'approved'").all();
+    const nodeIds = new Set(nodes.map(n=>n.id));
+    const raw = db.prepare('SELECT person_id, relative_id, type FROM relationships').all();
+    const edges = raw.filter(r=> nodeIds.has(r.person_id) && nodeIds.has(r.relative_id)).map(r=> ({ from: r.person_id, to: r.relative_id, type: r.type }));
+    res.json({ nodes, edges });
+  }catch(err){ console.error('tree/full error', err && err.stack || err); res.status(500).json({ error: String(err && err.message ? err.message : err) }); }
+});
+
 module.exports = router;

@@ -6,6 +6,52 @@ async function api(path, opts={}){
   return res.text();
 }
 
+function showProfileModal(person, nodeMap, edges){
+  let modal = document.getElementById('profile-modal');
+  if (!modal){
+    modal = document.createElement('div'); modal.id='profile-modal'; modal.style.position='fixed'; modal.style.inset='0'; modal.style.background='rgba(0,0,0,0.4)'; modal.style.display='flex'; modal.style.alignItems='center'; modal.style.justifyContent='center'; modal.style.zIndex='80';
+    modal.innerHTML = `<div style="background:var(--card);padding:18px;border-radius:10px;max-width:520px;max-height:80vh;overflow:auto;box-shadow:var(--shadow)"><button id="profile-close" style="float:right">Close</button><div id="profile-content"></div></div>`;
+    document.body.appendChild(modal);
+    modal.querySelector('#profile-close').addEventListener('click', ()=> modal.style.display='none');
+  }
+  const content = modal.querySelector('#profile-content'); content.innerHTML = '';
+  const img = document.createElement('img'); img.src = person.photo_path || '/profile_icons/Female_profile_icon.jfif'; img.style.width='96px'; img.style.height='96px'; img.style.objectFit='cover'; img.style.borderRadius='8px'; img.style.float='left'; img.style.marginRight='12px'; content.appendChild(img);
+  const h = document.createElement('h3'); h.textContent = person.full_name || 'Unknown'; content.appendChild(h);
+  const details = document.createElement('div'); details.style.marginTop='8px'; details.innerHTML = `
+    <div><strong>Born:</strong> ${person.birth_date || person.birth_year || ''}</div>
+    <div><strong>Occupation:</strong> ${person.occupation || ''}</div>
+    <div><strong>Residence:</strong> ${person.residence || ''}</div>
+    <div><strong>Phone:</strong> ${person.phone || ''}</div>
+  `;
+  content.appendChild(details);
+
+  // compute relations from edges
+  const rels = { father: [], mother: [], siblings: [], spouses: [], children: [] };
+  edges.forEach(e=>{
+    if (e.type==='parent' && e.to === person.id){ // e.from is parent
+      const p = nodeMap[e.from]; if (p){ if ((p.gender||'').toLowerCase()==='male') rels.father.push(p); else if ((p.gender||'').toLowerCase()==='female') rels.mother.push(p); else rels.father.push(p); }
+    }
+    if (e.type==='parent' && e.from === person.id){ // e.to is child
+      const c = nodeMap[e.to]; if (c) rels.children.push(c);
+    }
+    if (e.type==='spouse' && (e.from===person.id || e.to===person.id)){
+      const otherId = e.from===person.id ? e.to : e.from; const o = nodeMap[otherId]; if (o) rels.spouses.push(o);
+    }
+  });
+  // siblings: persons who share a parent
+  const parentIds = edges.filter(e=> e.type==='parent' && e.to===person.id).map(e=>e.from);
+  parentIds.forEach(pid=>{
+    edges.forEach(e=>{ if (e.type==='parent' && e.from===pid && e.to!==person.id){ const s = nodeMap[e.to]; if (s) rels.siblings.push(s); } });
+  });
+
+  const relDiv = document.createElement('div'); relDiv.style.marginTop='12px';
+  const mk = (label, arr)=>{ const d = document.createElement('div'); d.innerHTML = `<strong>${label}:</strong> ` + (arr.length? arr.map(x=> x.full_name).join(', ') : 'None'); return d; };
+  relDiv.appendChild(mk('Father', rels.father)); relDiv.appendChild(mk('Mother', rels.mother)); relDiv.appendChild(mk('Spouse(s)', rels.spouses)); relDiv.appendChild(mk('Children', rels.children)); relDiv.appendChild(mk('Siblings', rels.siblings));
+  content.appendChild(relDiv);
+
+  modal.style.display='flex';
+}
+
 const loginForm = document.getElementById('login-form');
 if (loginForm){
   loginForm.addEventListener('submit', async e=>{
@@ -162,7 +208,8 @@ async function loadTree(){
   const me = await api('/auth/me');
   const person = me.person;
   if (!person) { svg.innerHTML = '<text x="20" y="20">Not logged in</text>'; return; }
-  const res = await api('/tree/' + person.id + '?depth=3');
+  // fetch full approved tree so every approved member sees the whole family
+  const res = await api('/tree/full');
   renderTreeSVG(svg, res, person.id);
 }
 
@@ -276,8 +323,8 @@ function renderTreeSVG(svg, tree, centerId){
     sub.textContent = n.birth_year || '';
     group.appendChild(sub);
 
-    // click to show info
-    group.addEventListener('click', ()=>{ alert(n.full_name + '\nBorn: ' + (n.birth_year||'?')); });
+    // click to show info modal
+    group.addEventListener('click', (evt)=>{ evt.stopPropagation(); showProfileModal(n, nodeMap, edges); });
 
     g.appendChild(group);
   }
