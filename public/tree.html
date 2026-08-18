@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Family Tree</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <header class="topbar">
+    <h1 id="brand">Famille Nah Adja Mbethe</h1>
+    <div class="toggles">
+      <button id="lang-toggle">FR/EN</button>
+      <button id="theme-toggle">Light/Dark</button>
+    </div>
+  </header>
+  <main>
+    <div style="padding:12px;max-width:1200px;margin:12px auto">
+      <button id="back-to-landing">Logout</button>
+      <div id="me-area"></div>
+      <div class="tree-controls">
+        <button id="center-me">Center on me</button>
+      </div>
+      <div id="tree-container">
+        <svg id="tree-svg" width="1200" height="800"></svg>
+      </div>
+    </div>
+  </main>
+  <script src="/app.js"></script>
+  <script>
+    // initialize tree page: load current user and tree
+    (async ()=>{
+      try{
+        const me = await fetch('/api/auth/me', { credentials:'same-origin' });
+        if (!me.ok){ window.location.href = '/'; return; }
+        const j = await me.json();
+        const person = j.person;
+        if (person) document.getElementById('me-area').textContent = 'Hello, ' + person.full_name;
+        // call loadTree from app.js
+        if (typeof loadTree === 'function') loadTree();
+      }catch(e){ console.warn('Tree init error', e); }
+    })();
+  </script>
+</body>
+</html>

@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Register - Family Tree</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <main class="center-card">
+    <h2>Create your profile</h2>
+    <form id="register-form">
+      <label>Username (optional)<input name="username" id="reg-username" /></label>
+      <label>Password (optional)<input name="password" id="reg-password" type="password" /></label>
+      <label>Full name<input name="full_name" id="reg-fullname" required /></label>
+      <label>Gender<select name="gender" id="reg-gender"><option value="male">Male</option><option value="female">Female</option><option value="other">Other</option></select></label>
+      <label>Birth date<input name="birth_date" id="reg-birthdate" type="date" required /></label>
+      <label>Occupation<input name="occupation" id="reg-occupation" /></label>
+      <label>Residence<input name="residence" id="reg-residence" /></label>
+      <label>Phone<input name="phone" id="reg-phone" /></label>
+      <label>Photo<input name="photo" id="reg-photo" type="file" accept="image/*" /></label>
+      <fieldset>
+        <legend>Parent info (optional)</legend>
+        <label>Father name<input id="father_name" name="father_name" /></label>
+        <label>Father birth year<input id="father_birth_year" name="father_birth_year" type="number" /></label>
+        <label><input type="checkbox" id="father_from_family" name="father_from_family" /> Father is from this family</label>
+        <label>Mother name<input id="mother_name" name="mother_name" /></label>
+        <label>Mother birth year<input id="mother_birth_year" name="mother_birth_year" type="number" /></label>
+        <label><input type="checkbox" id="mother_from_family" name="mother_from_family" /> Mother is from this family</label>
+      </fieldset>
+      <div style="display:flex;gap:12px;margin-top:12px">
+        <button type="submit">Submit registration (pending admin approval)</button>
+        <a href="/" class="secondary-link">Back to login</a>
+      </div>
+    </form>
+    <div id="register-feedback"></div>
+  </main>
+  <script src="/app.js"></script>
+</body>
+</html>

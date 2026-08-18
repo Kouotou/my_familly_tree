@@ -1,0 +1,15 @@
+node_modules/
+.env
+data.sqlite
+server/uploads/
+public/uploads/
+*.log
+npm-debug.log*
+.DS_Store
+.vscode/
+.idea/
+coverage/
+
+# OS files
+Thumbs.db
+Desktop.ini

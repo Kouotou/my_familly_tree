@@ -1,0 +1,324 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Admin Panel</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <header class="topbar">
+    <h1 id="admin-brand">Famille Nah Adja Mbethe — Admin</h1>
+    <div class="toggles">
+      <button id="lang-toggle">FR/EN</button>
+      <button id="theme-toggle">Light/Dark</button>
+    </div>
+  </header>
+
+  <script src="/app.js"></script>
+  <main style="max-width:1000px;margin:24px auto;padding:12px">
+    <div style="display:flex;justify-content:space-between;align-items:center">
+      <div style="display:flex;gap:8px;align-items:center">
+        <button id="tab-pending" class="active">Pending</button>
+        <button id="tab-approved">Approved</button>
+        <button id="tab-rejected">Rejected</button>
+      </div>
+      <div style="display:flex;gap:8px;align-items:center">
+        <button id="admin-logout">Logout</button>
+        <button id="refresh-requests">Refresh</button>
+      </div>
+    </div>
+    <h3 style="margin-top:12px">Pending Requests</h3>
+    <div id="requestsArea">Loading...</div>
+  </main>
+  <script>
+    document.addEventListener('DOMContentLoaded', ()=>{
+    async function api(path, opts={}){ const merged = Object.assign({}, opts, { credentials: 'same-origin' }); const res = await fetch('/api'+path, merged); const ct = res.headers.get('content-type')||''; if (ct.includes('application/json')) return res.json(); return res.text(); }
+    // initial loadRequests removed (replaced by tab-aware loader below)
+    // render a single request as a polished card with photo preview and actions
+    function renderRequestCard(req){
+      const container = document.createElement('div'); container.className='request-item';
+      const header = document.createElement('div'); header.style.display='flex'; header.style.justifyContent='space-between'; header.style.alignItems='center';
+      const meta = document.createElement('div'); meta.innerHTML = `<strong>${req.payload.full_name||'New person'}</strong><div style="font-size:12px;color:var(--muted)">ID: ${req.id} — By: ${req.created_by} — ${new Date(req.created_at).toLocaleString()}</div>`;
+      header.appendChild(meta);
+      container.appendChild(header);
+
+      const body = document.createElement('div'); body.style.display='flex'; body.style.gap='12px'; body.style.marginTop='10px';
+      const left = document.createElement('div'); left.style.minWidth='120px';
+      if (req.payload.photo_path){ const img = document.createElement('img'); img.src = req.payload.photo_path; img.style.width='120px'; img.style.height='120px'; img.style.objectFit='cover'; img.style.borderRadius='8px'; left.appendChild(img); } else { const placeholder = document.createElement('div'); placeholder.style.width='120px'; placeholder.style.height='120px'; placeholder.style.background='#f3f4f6'; placeholder.style.borderRadius='8px'; placeholder.style.display='flex'; placeholder.style.alignItems='center'; placeholder.style.justifyContent='center'; placeholder.style.color='var(--muted)'; placeholder.textContent='No photo'; left.appendChild(placeholder); }
+      body.appendChild(left);
+
+      const info = document.createElement('div'); info.style.flex='1';
+      const fields = [ ['Full name', 'full_name'], ['Gender', 'gender'], ['Birth date', 'birth_date'], ['Birth year', 'birth_year'], ['Occupation', 'occupation'], ['Residence', 'residence'], ['Phone', 'phone'] ];
+      fields.forEach(([label, key])=>{
+        const el = document.createElement('div'); el.style.marginBottom='6px'; el.innerHTML = `<strong style="display:inline-block;width:110px">${label}:</strong> ${req.payload[key]||''}`;
+        info.appendChild(el);
+      });
+
+      if (Array.isArray(req.payload.relations) && req.payload.relations.length>0){
+        const relDiv = document.createElement('div'); relDiv.style.marginTop='8px'; relDiv.innerHTML = '<strong>Relations:</strong>';
+        req.payload.relations.forEach(r=>{ const d = document.createElement('div'); d.style.fontSize='13px'; d.style.color='var(--muted)'; d.textContent = `${r.which||r.type} — ${r.relative && r.relative.full_name ? r.relative.full_name : ''} ${r.from_family? '(from family)':''}`; relDiv.appendChild(d); });
+        info.appendChild(relDiv);
+      }
+
+      body.appendChild(info);
+      container.appendChild(body);
+
+      const actions = document.createElement('div'); actions.style.marginTop='10px';
+      if (req.status === 'pending'){
+        const approveBtn = document.createElement('button'); approveBtn.textContent='Approve'; approveBtn.addEventListener('click', async ()=>{ if (!await showConfirm('Approve this request?')) return; try{ const res = await fetch('/api/admin/requests/'+req.id+'/approve',{method:'POST', credentials:'same-origin'}); const ct = res.headers.get('content-type')||''; const body = ct.includes('application/json')? await res.json() : await res.text(); if (res.ok){ await loadRequests(currentStatus); } else { alert('Approve failed: ' + (body && (body.error||body.message) ? (body.error||body.message) : JSON.stringify(body))); } }catch(e){ alert('Network error: ' + e.message); } });
+        const editBtn = document.createElement('button'); editBtn.textContent='Edit & Approve'; editBtn.style.marginLeft='8px'; editBtn.addEventListener('click', ()=> openEditModal(req));
+        const rejectBtn = document.createElement('button'); rejectBtn.textContent='Reject'; rejectBtn.style.marginLeft='8px'; rejectBtn.addEventListener('click', async ()=>{ const ok = await showConfirm('Reject this request?'); if (!ok) return; const note = prompt('Reason for rejection',''); try{ const res = await fetch('/api/admin/requests/'+req.id+'/reject',{method:'POST', headers:{'Content-Type':'application/json'}, credentials:'same-origin', body: JSON.stringify({note})}); const ct = res.headers.get('content-type')||''; const body = ct.includes('application/json')? await res.json() : await res.text(); if (res.ok){ await loadRequests(currentStatus); } else { alert('Reject failed: ' + (body && (body.error||body.message) ? (body.error||body.message) : JSON.stringify(body))); } }catch(e){ alert('Network error: ' + e.message); } });
+        actions.appendChild(approveBtn); actions.appendChild(editBtn); actions.appendChild(rejectBtn);
+      } else if (req.status === 'approved'){
+        // allow admin to modify or delete an approved account
+        const modifyBtn = document.createElement('button'); modifyBtn.textContent = 'Modify account'; modifyBtn.style.marginLeft='8px'; modifyBtn.addEventListener('click', async ()=>{
+          // try to resolve the person id from payload
+          const pid = await resolvePersonIdFromPayload(req.payload);
+          if (!pid){ alert('Could not locate person record for this approved request'); return; }
+          // fetch person data and open modal for person
+          const person = await api('/people/' + pid);
+          openEditModalForPerson(person);
+        });
+        const deleteBtn = document.createElement('button'); deleteBtn.textContent='Delete account'; deleteBtn.style.marginLeft='8px'; deleteBtn.addEventListener('click', async ()=>{ if (!await showConfirm('Delete this person and all relationships?')) return; try{ const pid = await resolvePersonIdFromPayload(req.payload); if (!pid){ alert('Could not locate person record'); return; } const res = await fetch('/api/admin/people/'+pid+'/delete',{ method:'POST', credentials:'same-origin' }); const j = await res.json(); if (j.ok){ alert('Deleted'); await loadRequests(currentStatus); } else { alert('Delete failed: '+JSON.stringify(j)); } }catch(e){ alert('Network error: '+e.message); } });
+        actions.appendChild(modifyBtn); actions.appendChild(deleteBtn);
+      } else {
+        const rev = document.createElement('div'); rev.style.fontSize='13px'; rev.style.color='var(--muted)'; rev.textContent = `Reviewed by: ${req.reviewed_by || 'n/a'} — ${req.reviewed_at || ''}`;
+        actions.appendChild(rev);
+      }
+      container.appendChild(actions);
+
+      return container;
+    }
+
+    let currentStatus = 'pending';
+    function setActiveTab(s){ currentStatus = s; const tp = document.getElementById('tab-pending'); const ta = document.getElementById('tab-approved'); const tr = document.getElementById('tab-rejected'); if (tp) tp.classList.toggle('active', s==='pending'); if (ta) ta.classList.toggle('active', s==='approved'); if (tr) tr.classList.toggle('active', s==='rejected'); }
+    async function loadRequests(status){
+      status = status || currentStatus || 'pending';
+      setActiveTab(status);
+      const area = document.getElementById('requestsArea'); area.innerHTML='Loading...';
+      try{
+        const r = await api('/admin/requests?status=' + encodeURIComponent(status));
+        if (!Array.isArray(r) || r.length===0){ area.innerHTML = `<div>No ${status} requests</div>`; return; }
+        area.innerHTML='';
+        r.forEach(req=>{ area.appendChild(renderRequestCard(req)); });
+      }catch(e){ area.innerHTML='Error loading'; console.error(e); }
+    }
+
+    // Edit modal
+    function openEditModal(req){
+      const modal = document.getElementById('edit-modal');
+      const form = document.getElementById('edit-form');
+      if (!form){ console.warn('Edit form not found'); return; }
+      const set = (name, value) => { const el = form.querySelector('[name="'+name+'"]'); if (el) el.value = value===null? '': value; };
+      set('requestId', req.id);
+      set('username', req.payload.username || '');
+      set('full_name', req.payload.full_name || '');
+      set('gender', req.payload.gender || '');
+      set('birth_date', req.payload.birth_date || '');
+      set('birth_year', req.payload.birth_year || '');
+      set('occupation', req.payload.occupation || '');
+      set('residence', req.payload.residence || '');
+      set('phone', req.payload.phone || '');
+      const photoPathEl = form.querySelector('[name="photo_path"]'); if (photoPathEl) photoPathEl.value = req.payload.photo_path || '';
+      // populate existing relations
+      const list = document.getElementById('relations-list'); list.innerHTML='';
+      if (Array.isArray(req.payload.relations)){
+        req.payload.relations.forEach(r=>{
+          const item = document.createElement('div'); item.className='relation-item'; item.style.display='flex'; item.style.gap='8px'; item.style.marginTop='6px';
+          item.innerHTML = `
+            <select name="rel-which"><option value="father">Father</option><option value="mother">Mother</option></select>
+            <input name="rel-name" placeholder="Name" />
+            <input name="rel-year" placeholder="Birth year" type="number" style="width:100px" />
+            <label style="font-size:12px"><input type="checkbox" name="rel-from" /> From family</label>
+            <button type="button" class="remove-rel">Remove</button>
+          `;
+          const whichEl = item.querySelector('[name="rel-which"]'); if (whichEl) whichEl.value = r.which || r.type || 'father';
+          const nameEl = item.querySelector('[name="rel-name"]'); if (nameEl) nameEl.value = (r.relative && r.relative.full_name) || '';
+          const yearEl = item.querySelector('[name="rel-year"]'); if (yearEl) yearEl.value = (r.relative && r.relative.birth_year) || '';
+          const fromEl = item.querySelector('[name="rel-from"]'); if (fromEl) fromEl.checked = !!r.from_family;
+          const rem = item.querySelector('.remove-rel'); if (rem) rem.addEventListener('click', ()=> item.remove());
+          list.appendChild(item);
+        });
+      }
+      modal.style.display = 'block';
+    }
+
+    // open modal populated with an existing person record
+    function openEditModalForPerson(person){
+      const modal = document.getElementById('edit-modal');
+      const form = document.getElementById('edit-form');
+      if (!form || !person){ console.warn('Missing form or person'); return; }
+      // set personId to indicate update path
+      const set = (name, value) => { const el = form.querySelector('[name="'+name+'"]'); if (el) el.value = value===null? '': value; };
+      set('personId', person.id);
+      set('requestId', '');
+      set('username', person.username || '');
+      set('full_name', person.full_name || '');
+      set('gender', person.gender || '');
+      set('birth_date', person.birth_date || '');
+      set('birth_year', person.birth_year || '');
+      set('occupation', person.occupation || '');
+      set('residence', person.residence || '');
+      set('phone', person.phone || '');
+      set('photo_path', person.photo_path || '');
+      // relations: we don't have easy mapping here; clear list
+      const list = document.getElementById('relations-list'); list.innerHTML = '';
+      modal.style.display = 'block';
+    }
+
+    // try to resolve person id from a request payload by username or matching full_name+birth_date
+    async function resolvePersonIdFromPayload(payload){
+      try{
+        const people = await api('/people');
+        if (payload.username){ const byUser = people.find(p=> p.username && p.username === payload.username); if (byUser) return byUser.id; }
+        // match by full_name and birth_date or birth_year
+        const candidates = people.filter(p=> (p.full_name||'').trim().toLowerCase() === (payload.full_name||'').trim().toLowerCase());
+        if (candidates.length===1) return candidates[0].id;
+        if (candidates.length>1 && payload.birth_date){ const exact = candidates.find(c=> c.birth_date === payload.birth_date); if (exact) return exact.id; }
+        if (candidates.length>0 && payload.birth_year){ const byyear = candidates.find(c=> String(c.birth_year) === String(payload.birth_year)); if (byyear) return byyear.id; }
+        return null;
+      }catch(e){ console.error('resolvePerson error', e); return null; }
+    }
+
+    const editCancelEl = document.getElementById('edit-cancel');
+    if (editCancelEl) editCancelEl.addEventListener('click', ()=>{ document.getElementById('edit-modal').style.display='none'; });
+    const addRelationEl = document.getElementById('add-relation');
+    if (addRelationEl) addRelationEl.addEventListener('click', ()=>{
+      const list = document.getElementById('relations-list');
+      const idx = list.children.length;
+      const item = document.createElement('div'); item.className='relation-item'; item.style.display='flex'; item.style.gap='8px'; item.style.marginTop='6px';
+      item.innerHTML = `
+        <select name="rel-which"><option value="father">Father</option><option value="mother">Mother</option></select>
+        <input name="rel-name" placeholder="Name" />
+        <input name="rel-year" placeholder="Birth year" type="number" style="width:100px" />
+        <label style="font-size:12px"><input type="checkbox" name="rel-from" /> From family</label>
+        <button type="button" class="remove-rel">Remove</button>
+      `;
+      item.querySelector('.remove-rel').addEventListener('click', ()=> item.remove());
+      list.appendChild(item);
+    });
+    const editFormEl = document.getElementById('edit-form');
+    if (editFormEl) editFormEl.addEventListener('submit', async (e)=>{
+      e.preventDefault();
+      const f = e.target;
+      const id = f.requestId.value;
+      // collect relations from relations-list
+      const rels = [];
+      document.querySelectorAll('#relations-list .relation-item').forEach(rn=>{
+        const which = rn.querySelector('[name="rel-which"]').value;
+        const name = rn.querySelector('[name="rel-name"]').value;
+        const by = rn.querySelector('[name="rel-year"]').value;
+        const fromFamily = rn.querySelector('[name="rel-from"]').checked;
+        rels.push({ type: 'parent', which, from_family: fromFamily, relative: { full_name: name, birth_year: by?Number(by):null } });
+      });
+
+      // if a photo file is provided, send multipart to the new endpoint
+      const photoEl = document.getElementById('edit-photo');
+      if (photoEl && photoEl.files && photoEl.files[0]){
+        const form = new FormData();
+        form.append('type','create_person');
+        form.append('username', f.username ? f.username.value || '' : '');
+        form.append('full_name', f.full_name.value);
+        form.append('gender', f.gender.value);
+        form.append('birth_date', f.birth_date.value || '');
+        form.append('birth_year', f.birth_year.value || '');
+        form.append('occupation', f.occupation.value || '');
+        form.append('residence', f.residence.value || '');
+        form.append('phone', f.phone.value || '');
+        form.append('photo', photoEl.files[0]);
+        form.append('relations', JSON.stringify(rels));
+        const personId = f.personId && f.personId.value ? f.personId.value : null;
+        const endpoint = personId ? ('/api/admin/people/' + personId + '/update-multipart') : ('/api/admin/requests/' + id + '/edit-approve-multipart');
+        const res = await fetch(endpoint, { method:'POST', credentials:'same-origin', body: form });
+        const j = await res.json();
+        if (j.ok){ alert(personId ? 'Person updated' : 'Approved with edits'); document.getElementById('edit-modal').style.display='none'; await loadRequests(currentStatus); }
+        else alert('Error: ' + JSON.stringify(j));
+        return;
+      }
+
+      const payload = {
+        type: 'create_person',
+        username: f.username ? f.username.value || null : null,
+        password: null,
+        full_name: f.full_name.value,
+        gender: f.gender.value,
+        birth_date: f.birth_date.value || null,
+        birth_year: f.birth_year.value ? Number(f.birth_year.value) : null,
+        occupation: f.occupation.value || null,
+        residence: f.residence.value || null,
+        phone: f.phone.value || null,
+        photo_path: f.photo_path ? f.photo_path.value || null : null,
+        relations: rels
+      };
+      // if editing an existing person (admin modify), personId will be set
+      const personId = f.personId && f.personId.value ? f.personId.value : null;
+      if (personId){
+        // no photo: send json update
+        const res = await fetch('/api/admin/people/' + personId + '/update', { method:'POST', headers:{'Content-Type':'application/json'}, credentials:'same-origin', body: JSON.stringify({ payload }) });
+        const j = await res.json();
+        if (j.ok){ alert('Person updated'); document.getElementById('edit-modal').style.display='none'; await loadRequests(currentStatus); }
+        else alert('Error: ' + JSON.stringify(j));
+        return;
+      }
+
+      const res = await fetch('/api/admin/requests/' + id + '/edit-approve', { method:'POST', headers:{'Content-Type':'application/json'}, credentials:'same-origin', body: JSON.stringify({ payload }) });
+      const j = await res.json();
+      if (j.ok){ alert('Approved with edits'); document.getElementById('edit-modal').style.display='none'; await loadRequests(currentStatus); }
+      else alert('Error');
+    });
+
+    const refreshBtn = document.getElementById('refresh-requests'); if (refreshBtn) refreshBtn.addEventListener('click', ()=> loadRequests());
+    const tabPending = document.getElementById('tab-pending'); if (tabPending) tabPending.addEventListener('click', ()=> loadRequests('pending'));
+    const tabApproved = document.getElementById('tab-approved'); if (tabApproved) tabApproved.addEventListener('click', ()=> loadRequests('approved'));
+    const tabRejected = document.getElementById('tab-rejected'); if (tabRejected) tabRejected.addEventListener('click', ()=> loadRequests('rejected'));
+    const logoutBtn = document.getElementById('admin-logout'); if (logoutBtn) logoutBtn.addEventListener('click', async ()=>{ await api('/auth/logout',{method:'POST'}); window.location.href='/'; });
+    // initial load
+    loadRequests();
+    
+    // custom confirm modal
+    function showConfirm(message){
+      return new Promise(resolve=>{
+        let el = document.getElementById('confirm-modal');
+        if (!el){ el = document.createElement('div'); el.id = 'confirm-modal'; el.style.position='fixed'; el.style.inset='0'; el.style.background='rgba(0,0,0,0.4)'; el.style.display='flex'; el.style.alignItems='center'; el.style.justifyContent='center'; el.style.zIndex='70'; el.innerHTML = `<div style="background:var(--card);padding:18px;border-radius:10px;max-width:420px;box-shadow:var(--shadow)"><div id="confirm-msg" style="margin-bottom:12px"></div><div style="display:flex;gap:8px;justify-content:flex-end"><button id="confirm-no" class="secondary">No</button><button id="confirm-yes">Yes</button></div></div>`; document.body.appendChild(el); }
+        el.querySelector('#confirm-msg').textContent = message;
+        el.style.display='flex';
+        const onYes = ()=>{ el.style.display='none'; el.querySelector('#confirm-yes').removeEventListener('click', onYes); el.querySelector('#confirm-no').removeEventListener('click', onNo); resolve(true); };
+        const onNo = ()=>{ el.style.display='none'; el.querySelector('#confirm-yes').removeEventListener('click', onYes); el.querySelector('#confirm-no').removeEventListener('click', onNo); resolve(false); };
+        el.querySelector('#confirm-yes').addEventListener('click', onYes);
+        el.querySelector('#confirm-no').addEventListener('click', onNo);
+      });
+    }
+    });
+  </script>
+  <!-- Edit modal -->
+  <div id="edit-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.4);align-items:center;justify-content:center;z-index:60">
+    <div style="background:var(--card);padding:18px;border-radius:10px;max-width:680px;max-height:80vh;margin:48px auto;box-shadow:var(--shadow);overflow:auto;">
+      <h3>Edit request and approve</h3>
+      <form id="edit-form">
+        <input type="hidden" name="requestId" />
+        <input type="hidden" name="personId" />
+        <input type="hidden" name="photo_path" />
+        <label>Username (optional)<input name="username" /></label>
+        <label>Full name<input name="full_name" required /></label>
+        <label>Gender<select name="gender"><option value="male">Male</option><option value="female">Female</option><option value="other">Other</option></select></label>
+        <label>Birth date<input name="birth_date" type="date" /></label>
+        <label>Birth year<input name="birth_year" type="number" /></label>
+        <label>Occupation<input name="occupation" /></label>
+        <label>Residence<input name="residence" /></label>
+        <label>Phone<input name="phone" /></label>
+        <label>Photo (replace)<input id="edit-photo" name="photo" type="file" accept="image/*" /></label>
+        <div id="relations-container" style="margin-top:8px">
+          <strong>Relations</strong>
+          <div id="relations-list"></div>
+          <button type="button" id="add-relation" style="margin-top:8px">Add relation</button>
+        </div>
+        <div style="display:flex;gap:8px;margin-top:12px">
+          <button type="submit">Save & Approve</button>
+          <button type="button" id="edit-cancel" class="secondary">Cancel</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</body>
+</html>

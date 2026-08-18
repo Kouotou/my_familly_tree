@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Family Tree App</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <div id="app">
+    <header class="topbar">
+      <h1 id="brand">Famille Nah Adja Mbethe</h1>
+      <div class="toggles">
+        <button id="lang-toggle">FR/EN</button>
+        <button id="theme-toggle">Light/Dark</button>
+      </div>
+    </header>
+
+    <main>
+      <section id="landing">
+        <div class="left-card">
+          <h2 id="landing-title" style="margin-top:0">Welcome</h2>
+          <p id="landing-desc" style="color:var(--muted)">Find your place in the family tree — quick login with your name and birth year.</p>
+          <form id="login-form">
+            <label>Full name
+              <input id="fullName" type="text" placeholder="e.g. John Doe" />
+            </label>
+            <label>Birth date
+              <input id="birthDate" type="date" />
+            </label>
+            <button id="login-btn" type="submit">Log in</button>
+          </form>
+          <p id="login-feedback" style="color:var(--muted)"></p>
+          <div style="display:flex;gap:12px;margin-top:12px">
+            <a id="create-profile" href="/register.html" class="secondary-link">Profile not found — create your own profile</a>
+            <a id="admin-link" href="/admin-login.html" class="secondary-link">Administrator login</a>
+          </div>
+        </div>
+        <div class="right-visual">
+          <div style="background:linear-gradient(180deg,#eefcff,#ffffff);padding:24px;border-radius:12px;box-shadow:var(--shadow)">
+            <h3 id="right-title" style="margin-top:0">Family Tree</h3>
+            <p id="right-desc" style="color:var(--muted)">Explore ancestors, add/update profiles, and submit changes for admin approval. We keep your family's history safe and accurate.</p>
+            <img src="/family-illustration.svg" alt="family" style="width:100%;max-width:320px;margin-top:12px;border-radius:8px"/>
+          </div>
+        </div>
+      </section>
+
+      <!-- Tree view moved to its own page: /tree.html -->
+
+      <section id="register" class="hidden">
+        <h3>Create your profile</h3>
+        <form id="register-form">
+          <label>Username (optional)<input name="username" id="reg-username" /></label>
+          <label>Password (optional)<input name="password" id="reg-password" type="password" /></label>
+          <label>Full name<input name="full_name" id="reg-fullname" required /></label>
+          <label>Gender<select name="gender" id="reg-gender"><option value="male">Male</option><option value="female">Female</option><option value="other">Other</option></select></label>
+          <label>Birth date<input name="birth_date" id="reg-birthdate" type="date" required /></label>
+          <label>Occupation<input name="occupation" id="reg-occupation" /></label>
+          <label>Residence<input name="residence" id="reg-residence" /></label>
+          <label>Phone<input name="phone" id="reg-phone" /></label>
+          <label>Photo<input name="photo" id="reg-photo" type="file" accept="image/*" /></label>
+          <fieldset>
+            <legend>Father</legend>
+            <label>Name<input id="father_name" name="father_name" /></label>
+            <label>Birth year<input id="father_birth_year" name="father_birth_year" type="number" /></label>
+            <label><input type="checkbox" id="father_from_family" name="father_from_family" /> Father is from this family</label>
+          </fieldset>
+          <fieldset>
+            <legend>Mother</legend>
+            <label>Name<input id="mother_name" name="mother_name" /></label>
+            <label>Birth year<input id="mother_birth_year" name="mother_birth_year" type="number" /></label>
+            <label><input type="checkbox" id="mother_from_family" name="mother_from_family" /> Mother is from this family</label>
+          </fieldset>
+          <button type="submit">Submit registration (pending admin approval)</button>
+        </form>
+        <div id="register-feedback"></div>
+      </section>
+
+      <!-- Admin login moved to /admin-login.html -->
+    </main>
+  </div>
+  <script src="/app.js"></script>
+</body>
+</html>
