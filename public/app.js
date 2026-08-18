@@ -221,13 +221,18 @@ function renderTreeSVG(svg, tree, centerId){
 
   // build level map: BFS ancestors (-) and descendants (+)
   const levels = {};
+  // ensure centerId exists in nodeMap; if not, fall back to first node
+  if (!nodeMap[centerId]){
+    if (nodes.length>0) centerId = nodes[0].id;
+    else { svg.innerHTML = '<text x="20" y="20">No approved profiles to display</text>'; return; }
+  }
   levels[centerId]=0;
   // ancestors
   let current = [centerId];
   for (let d=1; d<=3; d++){
     const next = [];
     for (const id of current){
-      const parents = edges.filter(e=> e.type==='parent' && e.to===id).map(e=>e.from);
+      const parents = edges.filter(e=> e.type==='parent' && e.to===id && nodeMap[e.from]).map(e=>e.from);
       for (const p of parents){ if (!(p in levels)){ levels[p] = -d; next.push(p); } }
     }
     current = next;
@@ -237,7 +242,7 @@ function renderTreeSVG(svg, tree, centerId){
   for (let d=1; d<=3; d++){
     const next = [];
     for (const id of current){
-      const childs = edges.filter(e=> e.type==='parent' && e.from===id).map(e=>e.to);
+      const childs = edges.filter(e=> e.type==='parent' && e.from===id && nodeMap[e.to]).map(e=>e.to);
       for (const c of childs){ if (!(c in levels)){ levels[c] = d; next.push(c); } }
     }
     current = next;
@@ -259,11 +264,13 @@ function renderTreeSVG(svg, tree, centerId){
   for (const lv of levelKeys){
     const ids = groups[lv];
     // sort by birth_year
-    ids.sort((a,b)=> (nodeMap[a].birth_year||0) - (nodeMap[b].birth_year||0));
-    const totalWidth = (ids.length-1)*spacingX;
+    // filter out unknown ids just in case
+    const knownIds = ids.filter(id=> !!nodeMap[id]);
+    knownIds.sort((a,b)=> (nodeMap[a].birth_year||0) - (nodeMap[b].birth_year||0));
+    const totalWidth = (knownIds.length-1)*spacingX;
     let startX = (svgW - totalWidth)/2;
-    for (let i=0;i<ids.length;i++){
-      const id = ids[i];
+    for (let i=0;i<knownIds.length;i++){
+      const id = knownIds[i];
       const x = startX + i*spacingX;
       const y = svgH/2 + lv*levelHeight;
       positions[id] = { x, y };
@@ -295,6 +302,7 @@ function renderTreeSVG(svg, tree, centerId){
   for (const id of Object.keys(positions)){
     const pos = positions[id];
     const n = nodeMap[id];
+    if (!n) continue; // defensive: skip unknown node
     const group = document.createElementNS('http://www.w3.org/2000/svg','g');
     group.setAttribute('class','node');
     group.setAttribute('transform', `translate(${pos.x}, ${pos.y})`);
