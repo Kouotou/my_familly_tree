@@ -485,3 +485,8 @@ router.get('/tree/full', (req,res)=>{
 });
 
 module.exports = router;
+
+// debug: expose DB file path when needed
+try{
+  router.get('/debug/dbfile', (req,res)=>{ res.json({ dbfile: require('./db').__dbfile || null }); });
+}catch(e){ console.error('Could not add debug route', e); }

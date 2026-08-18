@@ -68,5 +68,8 @@ function init() {
 }
 
 init();
+// attach the resolved DB file path for runtime inspection
+db.__dbfile = dbfile;
+console.log('[db] using sqlite file:', dbfile);
 
 module.exports = db;

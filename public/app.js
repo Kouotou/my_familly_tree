@@ -209,7 +209,14 @@ async function loadTree(){
   const person = me.person;
   if (!person) { svg.innerHTML = '<text x="20" y="20">Not logged in</text>'; return; }
   // fetch full approved tree so every approved member sees the whole family
-  const res = await api('/tree/full');
+  let res = await api('/tree/full');
+  // if full-tree endpoint returned no nodes (possible in some runtimes), fall back to simple people list
+  if (!res || !Array.isArray(res.nodes) || res.nodes.length === 0){
+    try{
+      const people = await api('/people');
+      res = { nodes: Array.isArray(people)? people : [], edges: [] };
+    }catch(e){ res = { nodes: [], edges: [] }; }
+  }
   renderTreeSVG(svg, res, person.id);
 }
 
