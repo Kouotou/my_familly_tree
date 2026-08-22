@@ -14,6 +14,16 @@ function now(){ return new Date().toISOString(); }
 // helper: normalize name for tolerant matching
 function normalizeName(s){ return (s||'').trim().toLowerCase().replace(/\s+/g,' '); }
 
+// settings key/value helpers (used for e.g. the family tree root profile)
+function getSetting(key){ const row = db.prepare('SELECT value FROM settings WHERE key = ?').get(key); return row ? row.value : null; }
+function setSetting(key, value){ db.prepare('INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value').run(key, value); }
+
+function requireAdmin(req,res){
+  if (!req.session.user){ res.status(401).json({error:'not logged in'}); return false; }
+  if (!req.session.user.role || req.session.user.role==='member'){ res.status(403).json({error:'forbidden'}); return false; }
+  return true;
+}
+
 // Public: login by full name + date of birth (ISO string or YYYY-MM-DD)
 router.post('/auth/login-by-dob', (req,res)=>{
   const fullName = req.body.fullName || req.body.full_name || '';
@@ -73,6 +83,15 @@ router.get('/people', (req,res)=>{
   res.json(rows);
 });
 
+// search approved people by (partial) name — used to match parents typed during registration
+router.get('/people/search', (req,res)=>{
+  const q = normalizeName(req.query.name || req.query.q || '');
+  if (!q) return res.json([]);
+  const rows = db.prepare("SELECT * FROM people WHERE approval_status = 'approved'").all();
+  const matches = rows.filter(p => normalizeName(p.full_name).includes(q));
+  res.json(matches.slice(0, 20));
+});
+
 // get a single person
 router.get('/people/:id', (req,res)=>{
   const p = db.prepare('SELECT * FROM people WHERE id = ?').get(req.params.id);
@@ -90,9 +109,14 @@ router.post('/requests', upload.single('photo'), (req,res)=>{
 });
 
 // self-registration: creates a pending create_person request
-router.post('/auth/register', upload.single('photo'), (req,res)=>{
+router.post('/auth/register', upload.fields([
+  { name: 'photo', maxCount: 1 },
+  { name: 'father_photo', maxCount: 1 },
+  { name: 'mother_photo', maxCount: 1 }
+]), (req,res)=>{
   const body = req.body || {};
-  if (req.file) body.photo_path = '/uploads/' + path.basename(req.file.path);
+  const files = req.files || {};
+  if (files.photo && files.photo[0]) body.photo_path = '/uploads/' + path.basename(files.photo[0].path);
   // prefer full birth_date (YYYY-MM-DD). If only year provided, store as birth_year.
   let birthDate = body.birth_date || null;
   let birthYear = null;
@@ -116,12 +140,41 @@ router.post('/auth/register', upload.single('photo'), (req,res)=>{
     relations: []
   };
 
-  // collect simple parent info if provided
-  if (body.father_name){
-    payload.relations.push({ type: 'parent', which: 'father', from_family: body.father_from_family === 'on', relative: { full_name: body.father_name, birth_year: body.father_birth_year||null } });
+  // father: either an existing matched profile (father_id) or full details to create a new one
+  if (body.father_id){
+    payload.relations.push({ type: 'parent', which: 'father', from_family: true, relative_id: body.father_id });
+  } else if (body.father_name){
+    payload.relations.push({
+      type: 'parent', which: 'father',
+      from_family: body.father_origin !== 'married',
+      relative: {
+        full_name: body.father_name,
+        birth_year: body.father_birth_year || null,
+        birth_date: body.father_birth_date || null,
+        occupation: body.father_occupation || null,
+        residence: body.father_residence || null,
+        phone: body.father_phone || null,
+        photo_path: files.father_photo && files.father_photo[0] ? '/uploads/' + path.basename(files.father_photo[0].path) : null
+      }
+    });
   }
-  if (body.mother_name){
-    payload.relations.push({ type: 'parent', which: 'mother', from_family: body.mother_from_family === 'on', relative: { full_name: body.mother_name, birth_year: body.mother_birth_year||null } });
+  // mother: either an existing matched profile (mother_id) or full details to create a new one
+  if (body.mother_id){
+    payload.relations.push({ type: 'parent', which: 'mother', from_family: true, relative_id: body.mother_id });
+  } else if (body.mother_name){
+    payload.relations.push({
+      type: 'parent', which: 'mother',
+      from_family: body.mother_origin !== 'married',
+      relative: {
+        full_name: body.mother_name,
+        birth_year: body.mother_birth_year || null,
+        birth_date: body.mother_birth_date || null,
+        occupation: body.mother_occupation || null,
+        residence: body.mother_residence || null,
+        phone: body.mother_phone || null,
+        photo_path: files.mother_photo && files.mother_photo[0] ? '/uploads/' + path.basename(files.mother_photo[0].path) : null
+      }
+    });
   }
 
   const id = uuidv4();
@@ -164,12 +217,15 @@ function processCreatePerson(payload, reviewerId){
     // fallback to the id we attempted to insert
     return id;
   }
-  function addParentChild(childId, parentId){
-    const ins = db.prepare('INSERT INTO relationships (id, person_id, relative_id, type) VALUES (?, ?, ?, ?)');
-    ins.run(uuidv4(), childId, parentId, 'parent');
-    ins.run(uuidv4(), parentId, childId, 'child');
+  function addParentChild(childId, parentId, note){
+    const ins = db.prepare('INSERT INTO relationships (id, person_id, relative_id, type, notes) VALUES (?, ?, ?, ?, ?)');
+    ins.run(uuidv4(), childId, parentId, 'parent', note || null);
+    ins.run(uuidv4(), parentId, childId, 'child', note || null);
   }
   function addSpouse(a,b){
+    // avoid duplicate spouse links (e.g. both parents already matched to existing profiles)
+    const existing = db.prepare("SELECT id FROM relationships WHERE person_id = ? AND relative_id = ? AND type = 'spouse'").get(a,b);
+    if (existing) return;
     const ins = db.prepare('INSERT INTO relationships (id, person_id, relative_id, type) VALUES (?, ?, ?, ?)');
     ins.run(uuidv4(), a, b, 'spouse');
     ins.run(uuidv4(), b, a, 'spouse');
@@ -188,49 +244,24 @@ function processCreatePerson(payload, reviewerId){
     const father = payload.relations.find(r=> r.type==='parent' && r.which==='father');
     const mother = payload.relations.find(r=> r.type==='parent' && r.which==='mother');
 
-    if (father && father.from_family){
-      let fatherId = father.relative_id;
-      if (!fatherId){ const frel = father.relative || {}; fatherId = createPerson({ full_name: frel.full_name || 'Unknown', birth_year: frel.birth_year||null, gender: frel.gender||'male', photo_path: frel.photo_path||null }); }
-      addParentChild(personId, fatherId);
-      if (mother){
-        let motherId = mother.relative_id;
-        if (!motherId){ const mrel = mother.relative || {}; motherId = createPerson({ full_name: mrel.full_name || 'Unknown', birth_year: mrel.birth_year||null, gender: mrel.gender||'female', photo_path: mrel.photo_path||null }); }
-        addSpouse(fatherId, motherId);
+    let fatherId = null, motherId = null;
+    if (father){
+      fatherId = father.relative_id;
+      if (!fatherId){
+        const frel = father.relative || {};
+        fatherId = createPerson({ full_name: frel.full_name || 'Unknown', birth_year: frel.birth_year||null, birth_date: frel.birth_date||null, gender: 'male', occupation: frel.occupation||null, residence: frel.residence||null, phone: frel.phone||null, photo_path: frel.photo_path||null });
       }
+      addParentChild(personId, fatherId, father.from_family ? 'blood' : 'married-in');
     }
-    else if (mother && mother.from_family){
-      let motherId = mother.relative_id;
-      if (!motherId){ const mrel = mother.relative || {}; motherId = createPerson({ full_name: mrel.full_name || 'Unknown', birth_year: mrel.birth_year||null, gender: mrel.gender||'female', photo_path: mrel.photo_path||null }); }
-      addParentChild(personId, motherId);
-      if (father){
-        let fatherId = father.relative_id;
-        if (!fatherId){ const frel = father.relative || {}; fatherId = createPerson({ full_name: frel.full_name || 'Unknown', birth_year: frel.birth_year||null, gender: frel.gender||'male', photo_path: frel.photo_path||null }); }
-        addSpouse(motherId, fatherId);
+    if (mother){
+      motherId = mother.relative_id;
+      if (!motherId){
+        const mrel = mother.relative || {};
+        motherId = createPerson({ full_name: mrel.full_name || 'Unknown', birth_year: mrel.birth_year||null, birth_date: mrel.birth_date||null, gender: 'female', occupation: mrel.occupation||null, residence: mrel.residence||null, phone: mrel.phone||null, photo_path: mrel.photo_path||null });
       }
+      addParentChild(personId, motherId, mother.from_family ? 'blood' : 'married-in');
     }
-    else {
-      if (father){
-        let fatherId = father.relative_id;
-        if (!fatherId){ const frel = father.relative || {}; fatherId = createPerson({ full_name: frel.full_name || 'Unknown', birth_year: frel.birth_year||null, gender: frel.gender||'male', photo_path: frel.photo_path||null }); }
-        addParentChild(personId, fatherId);
-      }
-      if (mother){
-        let motherId = mother.relative_id;
-        if (!motherId){ const mrel = mother.relative || {}; motherId = createPerson({ full_name: mrel.full_name || 'Unknown', birth_year: mrel.birth_year||null, gender: mrel.gender||'female', photo_path: mrel.photo_path||null }); }
-        addParentChild(personId, motherId);
-      }
-      if (father && mother){
-        const fName = (father.relative && father.relative.full_name) || father.relative_name || null;
-        const mName = (mother.relative && mother.relative.full_name) || mother.relative_name || null;
-        if (fName && mName){
-          const fRow = db.prepare('SELECT id FROM people WHERE full_name = ? ORDER BY created_at DESC').all(fName)[0];
-          const mRow = db.prepare('SELECT id FROM people WHERE full_name = ? ORDER BY created_at DESC').all(mName)[0];
-          const fId = fRow && fRow.id;
-          const mId = mRow && mRow.id;
-          if (fId && mId) addSpouse(fId, mId);
-        }
-      }
-    }
+    if (fatherId && motherId) addSpouse(fatherId, motherId);
   }
 
   return personId;
@@ -391,6 +422,51 @@ router.post('/admin/people/:id/delete', (req,res)=>{
       .run(rid, 'delete_person', JSON.stringify(payload), 'rejected', req.session.user.id, now(), req.session.user.id, now(), 'deleted by admin');
     res.json({ ok:true });
   }catch(err){ console.error('Delete person error', err && err.stack || err); res.status(500).json({ error: String(err && err.message ? err.message : err) }); }
+});
+
+// admin: create a person directly (already approved) — used e.g. to create the root/founder profile
+router.post('/admin/people/create-direct', upload.single('photo'), (req,res)=>{
+  if (!requireAdmin(req,res)) return;
+  const body = req.body || {};
+  if (!body.full_name) return res.status(400).json({ error: 'full_name required' });
+  try{
+    const id = uuidv4();
+    const photoPath = req.file ? '/uploads/' + path.basename(req.file.path) : null;
+    let birthDate = body.birth_date || null;
+    let birthYear = body.birth_year ? Number(body.birth_year) : null;
+    if (birthDate && !birthYear){ const d = new Date(birthDate); if (isFinite(d)) birthYear = d.getFullYear(); }
+    db.prepare('INSERT INTO people (id, username, full_name, gender, birth_year, birth_date, occupation, residence, phone, photo_path, created_by, created_at, approval_status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
+      .run(id, null, body.full_name, body.gender||null, birthYear, birthDate, body.occupation||null, body.residence||null, body.phone||null, photoPath, req.session.user.id, now(), 'approved');
+    if (body.set_as_root === 'on' || body.set_as_root === 'true'){ setSetting('root_person_id', id); }
+    const person = db.prepare('SELECT * FROM people WHERE id = ?').get(id);
+    res.json({ ok:true, person });
+  }catch(err){ console.error('create-direct error', err && err.stack || err); res.status(500).json({ error: String(err && err.message ? err.message : err) }); }
+});
+
+// admin: get/set the family tree root profile
+router.get('/admin/root', (req,res)=>{
+  if (!requireAdmin(req,res)) return;
+  const rid = getSetting('root_person_id');
+  const person = rid ? db.prepare('SELECT * FROM people WHERE id = ?').get(rid) : null;
+  res.json({ root: person || null });
+});
+
+router.post('/admin/root', express.json(), (req,res)=>{
+  if (!requireAdmin(req,res)) return;
+  const personId = req.body && req.body.person_id;
+  if (!personId) return res.status(400).json({ error: 'missing person_id' });
+  const p = db.prepare('SELECT id FROM people WHERE id = ?').get(personId);
+  if (!p) return res.status(404).json({ error: 'person not found' });
+  setSetting('root_person_id', personId);
+  res.json({ ok:true });
+});
+
+// public: the current root profile, so the tree page knows where to anchor the layout
+router.get('/tree/root', (req,res)=>{
+  const rid = getSetting('root_person_id');
+  if (!rid) return res.json({ root: null });
+  const p = db.prepare("SELECT * FROM people WHERE id = ? AND approval_status = 'approved'").get(rid);
+  res.json({ root: p || null });
 });
 
 // simple stats for admin

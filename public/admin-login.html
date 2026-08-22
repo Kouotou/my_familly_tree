@@ -7,15 +7,18 @@
   <link rel="stylesheet" href="/styles.css">
 </head>
 <body>
-  <main class="center-card" style="max-width:480px;margin:48px auto;padding:24px;background:#fff;border-radius:12px;box-shadow:var(--shadow)">
+  <header class="topbar">
+    <h1>Famille Nah Adja Mbethe</h1>
+  </header>
+  <main class="center-card" style="max-width:420px">
     <h2 id="admin-login-title">Administrator Login</h2>
     <label id="label-username">Username<input id="adminUser" /></label>
     <label id="label-password">Password<input id="adminPwd" type="password" /></label>
-    <div style="display:flex;gap:8px;margin-top:12px">
+    <div style="display:flex;gap:10px;margin-top:16px;align-items:center">
       <button id="adminLoginBtn">Login</button>
       <a href="/" class="secondary-link">Back</a>
     </div>
-    <div id="adminFeedback"></div>
+    <div id="adminFeedback" class="hint"></div>
   </main>
   <script>
     async function api(path, opts={}){ const merged = Object.assign({}, opts, { credentials: 'same-origin' }); const res = await fetch('/api'+path, merged); const ct = res.headers.get('content-type')||''; if (ct.includes('application/json')) return res.json(); return res.text(); }

@@ -9,45 +9,99 @@ async function api(path, opts={}){
 function showProfileModal(person, nodeMap, edges){
   let modal = document.getElementById('profile-modal');
   if (!modal){
-    modal = document.createElement('div'); modal.id='profile-modal'; modal.style.position='fixed'; modal.style.inset='0'; modal.style.background='rgba(0,0,0,0.4)'; modal.style.display='flex'; modal.style.alignItems='center'; modal.style.justifyContent='center'; modal.style.zIndex='80';
-    modal.innerHTML = `<div style="background:var(--card);padding:18px;border-radius:10px;max-width:520px;max-height:80vh;overflow:auto;box-shadow:var(--shadow)"><button id="profile-close" style="float:right">Close</button><div id="profile-content"></div></div>`;
+    modal = document.createElement('div'); modal.id='profile-modal';
+    modal.innerHTML = `<div id="profile-card"><button id="profile-close" aria-label="Close">&times;</button><div id="profile-content"></div></div>`;
     document.body.appendChild(modal);
     modal.querySelector('#profile-close').addEventListener('click', ()=> modal.style.display='none');
+    modal.addEventListener('click', (e)=>{ if (e.target === modal) modal.style.display='none'; });
   }
   const content = modal.querySelector('#profile-content'); content.innerHTML = '';
-  const img = document.createElement('img'); img.src = person.photo_path || '/profile_icons/Female_profile_icon.jfif'; img.style.width='96px'; img.style.height='96px'; img.style.objectFit='cover'; img.style.borderRadius='8px'; img.style.float='left'; img.style.marginRight='12px'; content.appendChild(img);
-  const h = document.createElement('h3'); h.textContent = person.full_name || 'Unknown'; content.appendChild(h);
-  const details = document.createElement('div'); details.style.marginTop='8px'; details.innerHTML = `
-    <div><strong>Born:</strong> ${person.birth_date || person.birth_year || ''}</div>
-    <div><strong>Occupation:</strong> ${person.occupation || ''}</div>
-    <div><strong>Residence:</strong> ${person.residence || ''}</div>
-    <div><strong>Phone:</strong> ${person.phone || ''}</div>
-  `;
-  content.appendChild(details);
 
-  // compute relations from edges
+  // compute relations from edges. For 'parent' rows, {from,to} mirror the relationships
+  // table's {person_id,relative_id}: from = child, to = parent.
   const rels = { father: [], mother: [], siblings: [], spouses: [], children: [] };
   edges.forEach(e=>{
-    if (e.type==='parent' && e.to === person.id){ // e.from is parent
-      const p = nodeMap[e.from]; if (p){ if ((p.gender||'').toLowerCase()==='male') rels.father.push(p); else if ((p.gender||'').toLowerCase()==='female') rels.mother.push(p); else rels.father.push(p); }
+    if (e.type==='parent' && e.from === person.id){ // e.to is this person's parent
+      const p = nodeMap[e.to]; if (p){ if ((p.gender||'').toLowerCase()==='male') rels.father.push(p); else if ((p.gender||'').toLowerCase()==='female') rels.mother.push(p); else rels.father.push(p); }
     }
-    if (e.type==='parent' && e.from === person.id){ // e.to is child
-      const c = nodeMap[e.to]; if (c) rels.children.push(c);
+    if (e.type==='parent' && e.to === person.id){ // e.from is this person's child
+      const c = nodeMap[e.from]; if (c) rels.children.push(c);
     }
     if (e.type==='spouse' && (e.from===person.id || e.to===person.id)){
       const otherId = e.from===person.id ? e.to : e.from; const o = nodeMap[otherId]; if (o) rels.spouses.push(o);
     }
   });
-  // siblings: persons who share a parent
-  const parentIds = edges.filter(e=> e.type==='parent' && e.to===person.id).map(e=>e.from);
+  // siblings: persons who share a parent (dedupe full siblings who share both parents)
+  const parentIds = edges.filter(e=> e.type==='parent' && e.from===person.id).map(e=>e.to);
+  const siblingIds = new Set();
   parentIds.forEach(pid=>{
-    edges.forEach(e=>{ if (e.type==='parent' && e.from===pid && e.to!==person.id){ const s = nodeMap[e.to]; if (s) rels.siblings.push(s); } });
+    edges.forEach(e=>{ if (e.type==='parent' && e.to===pid && e.from!==person.id){ const s = nodeMap[e.from]; if (s && !siblingIds.has(s.id)){ siblingIds.add(s.id); rels.siblings.push(s); } } });
+  });
+  // defensively dedupe every group by id — the underlying data can contain duplicate
+  // relationship rows (e.g. from repeated admin edits), but each relative should show once.
+  ['father','mother','spouses','children','siblings'].forEach(key=>{
+    const seen = new Set();
+    rels[key] = rels[key].filter(p=> p && !seen.has(p.id) && seen.add(p.id));
   });
 
-  const relDiv = document.createElement('div'); relDiv.style.marginTop='12px';
-  const mk = (label, arr)=>{ const d = document.createElement('div'); d.innerHTML = `<strong>${label}:</strong> ` + (arr.length? arr.map(x=> x.full_name).join(', ') : 'None'); return d; };
-  relDiv.appendChild(mk('Father', rels.father)); relDiv.appendChild(mk('Mother', rels.mother)); relDiv.appendChild(mk('Spouse(s)', rels.spouses)); relDiv.appendChild(mk('Children', rels.children)); relDiv.appendChild(mk('Siblings', rels.siblings));
-  content.appendChild(relDiv);
+  const age = (p)=>{
+    if (!p.birth_year) return '';
+    const end = p.death_date ? new Date(p.death_date).getFullYear() : new Date().getFullYear();
+    const yrs = end - p.birth_year;
+    return isFinite(yrs) && yrs>=0 ? (p.death_date ? `${yrs} yrs (at death)` : `${yrs} yrs old`) : '';
+  };
+
+  const header = document.createElement('div'); header.className = 'profile-header';
+  const img = document.createElement('img'); img.className = 'profile-photo';
+  img.src = person.photo_path || '/profile_icons/Female_profile_icon.jfif';
+  img.addEventListener('error', ()=>{ img.src = '/profile_icons/Female_profile_icon.jfif'; });
+  header.appendChild(img);
+  const headText = document.createElement('div');
+  const nameRow = document.createElement('h3'); nameRow.className='profile-name'; nameRow.textContent = person.full_name || 'Unknown';
+  headText.appendChild(nameRow);
+  const sub = document.createElement('div'); sub.className = 'profile-sub';
+  const bits = [];
+  if (person.gender) bits.push(person.gender.charAt(0).toUpperCase()+person.gender.slice(1));
+  const born = person.birth_date || person.birth_year;
+  if (born) bits.push((person.death_date ? `${born} – ${person.death_date}` : `Born ${born}`));
+  const ageStr = age(person); if (ageStr) bits.push(ageStr);
+  if (person.death_date) bits.push('Deceased');
+  sub.textContent = bits.join(' · ');
+  headText.appendChild(sub);
+  header.appendChild(headText);
+  content.appendChild(header);
+
+  const details = document.createElement('div'); details.className = 'profile-details';
+  const row = (label, value)=>{ if (!value) return ''; return `<div class="profile-detail-row"><span class="profile-detail-label">${label}</span><span>${value}</span></div>`; };
+  details.innerHTML = [
+    row('Occupation', person.occupation),
+    row('Residence', person.residence),
+    row('Phone', person.phone)
+  ].filter(Boolean).join('') || '<div class="profile-detail-row profile-detail-empty">No additional details on file</div>';
+  content.appendChild(details);
+
+  const relSection = document.createElement('div'); relSection.className = 'profile-relations';
+  const mkGroup = (label, arr)=>{
+    if (!arr.length) return;
+    const group = document.createElement('div'); group.className = 'profile-rel-group';
+    const lab = document.createElement('div'); lab.className = 'profile-rel-label'; lab.textContent = label; group.appendChild(lab);
+    const chips = document.createElement('div'); chips.className = 'profile-rel-chips';
+    arr.forEach(p=>{
+      const chip = document.createElement('button'); chip.type = 'button'; chip.className = 'profile-rel-chip';
+      chip.textContent = p.full_name || 'Unknown';
+      chip.addEventListener('click', ()=> showProfileModal(p, nodeMap, edges));
+      chips.appendChild(chip);
+    });
+    group.appendChild(chips);
+    relSection.appendChild(group);
+  };
+  mkGroup('Father', rels.father);
+  mkGroup('Mother', rels.mother);
+  mkGroup('Spouse(s)', rels.spouses);
+  mkGroup('Children', rels.children);
+  mkGroup('Siblings', rels.siblings);
+  if (!relSection.children.length){ const none = document.createElement('div'); none.className='profile-detail-row profile-detail-empty'; none.textContent = 'No linked relatives yet'; relSection.appendChild(none); }
+  content.appendChild(relSection);
 
   modal.style.display='flex';
 }
@@ -156,6 +210,61 @@ async function editApproveRequest(id, payload){
   }catch(e){ alert('Network error'); }
 }
 
+// --- Registration: parent name matching against existing approved profiles ---
+function setupParentMatcher(prefix){
+  const nameInput = document.getElementById(prefix + '_name');
+  if (!nameInput) return;
+  const matchesEl = document.getElementById(prefix + '_matches');
+  const idInput = document.getElementById(prefix + '_id');
+  const newFields = document.getElementById(prefix + '_new_fields');
+
+  function showNewFields(){ if (newFields) newFields.classList.remove('hidden'); }
+  function hideNewFields(){ if (newFields) newFields.classList.add('hidden'); }
+
+  function selectMatch(p){
+    idInput.value = p.id;
+    hideNewFields();
+    matchesEl.innerHTML = '';
+    const chosen = document.createElement('div'); chosen.className = 'parent-match-chosen';
+    chosen.innerHTML = `<span>Linked to existing profile: <strong>${p.full_name}</strong> (${p.birth_date || p.birth_year || 'no DOB on file'})</span>`;
+    const change = document.createElement('button'); change.type = 'button'; change.className = 'secondary'; change.textContent = 'Not them / change';
+    change.addEventListener('click', ()=>{ idInput.value=''; matchesEl.innerHTML=''; runSearch(); });
+    chosen.appendChild(change);
+    matchesEl.appendChild(chosen);
+  }
+
+  async function runSearch(){
+    idInput.value = '';
+    const q = nameInput.value.trim();
+    matchesEl.innerHTML = '';
+    if (!q){ hideNewFields(); return; }
+    let people = [];
+    try{ people = await api('/people/search?name=' + encodeURIComponent(q)); }catch(e){ people = []; }
+    if (!Array.isArray(people) || people.length === 0){
+      matchesEl.innerHTML = '<div class="hint">No existing profile found with this name.</div>';
+      showNewFields();
+      return;
+    }
+    hideNewFields();
+    const list = document.createElement('div'); list.className = 'parent-match-list';
+    people.forEach(p=>{
+      const row = document.createElement('div'); row.className = 'parent-match-row';
+      row.innerHTML = `<span>${p.full_name} <span class="hint">(${p.birth_date || p.birth_year || 'no DOB on file'})</span></span>`;
+      const btn = document.createElement('button'); btn.type = 'button'; btn.textContent = 'This is them'; btn.addEventListener('click', ()=> selectMatch(p));
+      row.appendChild(btn);
+      list.appendChild(row);
+    });
+    const noneBtn = document.createElement('button'); noneBtn.type = 'button'; noneBtn.className = 'secondary'; noneBtn.textContent = 'None of these — create a new profile';
+    noneBtn.addEventListener('click', ()=>{ matchesEl.innerHTML=''; showNewFields(); });
+    matchesEl.appendChild(list);
+    matchesEl.appendChild(noneBtn);
+  }
+
+  nameInput.addEventListener('blur', runSearch);
+}
+setupParentMatcher('father');
+setupParentMatcher('mother');
+
 // registration form submit
 const registerForm = document.getElementById('register-form');
 if (registerForm){
@@ -174,13 +283,23 @@ if (registerForm){
     const photoEl = document.getElementById('reg-photo');
     if (photoEl && photoEl.files && photoEl.files[0]) data.append('photo', photoEl.files[0]);
 
-    // parent fields (optional)
-    if (document.getElementById('father_name')) data.append('father_name', maybe('father_name'));
-    if (document.getElementById('father_birth_year')) data.append('father_birth_year', maybe('father_birth_year'));
-    if (document.getElementById('father_from_family') && document.getElementById('father_from_family').checked) data.append('father_from_family','on');
-    if (document.getElementById('mother_name')) data.append('mother_name', maybe('mother_name'));
-    if (document.getElementById('mother_birth_year')) data.append('mother_birth_year', maybe('mother_birth_year'));
-    if (document.getElementById('mother_from_family') && document.getElementById('mother_from_family').checked) data.append('mother_from_family','on');
+    // parent fields (optional): either linked to an existing matched profile (id set by the
+    // matcher UI) or full details for a brand-new profile to be created alongside this one.
+    const appendParent = (prefix)=>{
+      if (!document.getElementById(prefix + '_name')) return;
+      data.append(prefix + '_name', maybe(prefix + '_name'));
+      const idVal = maybe(prefix + '_id');
+      if (idVal){ data.append(prefix + '_id', idVal); return; }
+      data.append(prefix + '_birth_date', maybe(prefix + '_birth_date'));
+      data.append(prefix + '_occupation', maybe(prefix + '_occupation'));
+      data.append(prefix + '_residence', maybe(prefix + '_residence'));
+      data.append(prefix + '_phone', maybe(prefix + '_phone'));
+      data.append(prefix + '_origin', maybe(prefix + '_origin'));
+      const photoEl = document.getElementById(prefix + '_photo');
+      if (photoEl && photoEl.files && photoEl.files[0]) data.append(prefix + '_photo', photoEl.files[0]);
+    };
+    appendParent('father');
+    appendParent('mother');
 
     const feedback = document.getElementById('register-feedback');
     if (feedback) feedback.textContent = 'Submitting...';
@@ -217,71 +336,138 @@ async function loadTree(){
       res = { nodes: Array.isArray(people)? people : [], edges: [] };
     }catch(e){ res = { nodes: [], edges: [] }; }
   }
-  renderTreeSVG(svg, res, person.id);
+  let rootInfo = null;
+  try{ rootInfo = await api('/tree/root'); }catch(e){ rootInfo = null; }
+  const rootId = rootInfo && rootInfo.root ? rootInfo.root.id : null;
+  renderTreeSVG(svg, res, person.id, rootId);
 }
 
-function renderTreeSVG(svg, tree, centerId){
+// Compute each node's generation relative to an anchor by walking parent/child/spouse
+// edges outward (BFS). Ancestors of the anchor get negative levels, descendants positive,
+// spouses share their partner's level. Returns { levels, visited(Set) }.
+function computeGenerationLevels(anchorId, edges){
+  const levels = { [anchorId]: 0 };
+  const visited = new Set([anchorId]);
+  const queue = [anchorId];
+  while (queue.length){
+    const id = queue.shift();
+    const lvl = levels[id];
+    // parents of id: rows where this person (id) is the "from" side of a 'parent' edge
+    edges.filter(e=> e.type==='parent' && e.from===id).forEach(e=>{
+      const p = e.to;
+      if (!visited.has(p)){ visited.add(p); levels[p] = lvl - 1; queue.push(p); }
+    });
+    // children of id: rows where this person (id) is the "to" side of a 'parent' edge
+    edges.filter(e=> e.type==='parent' && e.to===id).forEach(e=>{
+      const c = e.from;
+      if (!visited.has(c)){ visited.add(c); levels[c] = lvl + 1; queue.push(c); }
+    });
+    // spouses share the same generation
+    edges.filter(e=> e.type==='spouse' && (e.from===id || e.to===id)).forEach(e=>{
+      const s = e.from===id ? e.to : e.from;
+      if (!visited.has(s)){ visited.add(s); levels[s] = lvl; queue.push(s); }
+    });
+  }
+  return { levels, visited };
+}
+
+function renderTreeSVG(svg, tree, centerId, rootId){
   const nodes = tree.nodes;
-  const edges = tree.edges;
+  const edges = tree.edges.filter(e=> e.type==='parent' || e.type==='spouse');
   const nodeMap = {};
   nodes.forEach(n=> nodeMap[n.id]=n);
 
-  // build level map: BFS ancestors (-) and descendants (+)
-  const levels = {};
+  if (nodes.length===0){ svg.innerHTML = '<text x="20" y="20">No approved profiles to display</text>'; return; }
   // ensure centerId exists in nodeMap; if not, fall back to first node
-  if (!nodeMap[centerId]){
-    if (nodes.length>0) centerId = nodes[0].id;
-    else { svg.innerHTML = '<text x="20" y="20">No approved profiles to display</text>'; return; }
-  }
-  levels[centerId]=0;
-  // ancestors
-  let current = [centerId];
-  for (let d=1; d<=3; d++){
-    const next = [];
-    for (const id of current){
-      const parents = edges.filter(e=> e.type==='parent' && e.to===id && nodeMap[e.from]).map(e=>e.from);
-      for (const p of parents){ if (!(p in levels)){ levels[p] = -d; next.push(p); } }
-    }
-    current = next;
-  }
-  // descendants
-  current = [centerId];
-  for (let d=1; d<=3; d++){
-    const next = [];
-    for (const id of current){
-      const childs = edges.filter(e=> e.type==='parent' && e.from===id && nodeMap[e.to]).map(e=>e.to);
-      for (const c of childs){ if (!(c in levels)){ levels[c] = d; next.push(c); } }
-    }
-    current = next;
-  }
+  if (!nodeMap[centerId]) centerId = nodes[0].id;
+  // anchor the whole layout on the admin-designated root profile so every member sees the
+  // same tree, oriented the same way, regardless of who is logged in. Fall back to the
+  // logged-in person if no root has been set yet.
+  const anchorId = (rootId && nodeMap[rootId]) ? rootId : centerId;
+
+  const { levels, visited } = computeGenerationLevels(anchorId, edges);
+  // anyone not reachable from the anchor (disconnected branch) is still shown, grouped
+  // separately below the main tree, so approved profiles are never silently hidden.
+  const orphanIds = nodes.map(n=>n.id).filter(id => !visited.has(id));
 
   // group by level
   const groups = {};
   for (const id in levels){ const lv = levels[id]; groups[lv] = groups[lv]||[]; groups[lv].push(id); }
 
   // layout
-  const levelHeight = 140;
-  const nodeW = 140, nodeH = 60;
-  const spacingX = 160;
+  const levelHeight = 160;
+  const nodeW = 200, nodeH = 70;
+  const spacingX = 230;
   const svgW = svg.clientWidth || 1200;
   const svgH = svg.clientHeight || 800;
 
   const positions = {};
   const levelKeys = Object.keys(groups).map(Number).sort((a,b)=>a-b);
+  const minLevel = levelKeys.length ? levelKeys[0] : 0;
+  const topMargin = 60;
   for (const lv of levelKeys){
     const ids = groups[lv];
-    // sort by birth_year
-    // filter out unknown ids just in case
+    // keep spouse pairs adjacent, then sort by birth_year for stable ordering
     const knownIds = ids.filter(id=> !!nodeMap[id]);
     knownIds.sort((a,b)=> (nodeMap[a].birth_year||0) - (nodeMap[b].birth_year||0));
-    const totalWidth = (knownIds.length-1)*spacingX;
+    const ordered = [];
+    const placed = new Set();
+    knownIds.forEach(id=>{
+      if (placed.has(id)) return;
+      ordered.push(id); placed.add(id);
+      const spouseEdge = edges.find(e=> e.type==='spouse' && (e.from===id || e.to===id) && levels[e.from===id?e.to:e.from]===lv);
+      if (spouseEdge){
+        const sid = spouseEdge.from===id ? spouseEdge.to : spouseEdge.from;
+        if (!placed.has(sid) && nodeMap[sid]){ ordered.push(sid); placed.add(sid); }
+      }
+    });
+    const totalWidth = (ordered.length-1)*spacingX;
     let startX = (svgW - totalWidth)/2;
-    for (let i=0;i<knownIds.length;i++){
-      const id = knownIds[i];
+    for (let i=0;i<ordered.length;i++){
+      const id = ordered[i];
       const x = startX + i*spacingX;
-      const y = svgH/2 + lv*levelHeight;
+      const y = topMargin + (lv - minLevel)*levelHeight;
       positions[id] = { x, y };
     }
+  }
+
+  // Lay out any disconnected branches (profiles not yet linked to the root) beneath the
+  // main tree. Each disconnected branch still gets its own parent-above-child generation
+  // layout, computed the same way as the main tree — it's just anchored on one of its own
+  // members instead of the family root.
+  let orphanLabelY = null;
+  if (orphanIds.length){
+    const idSet = new Set(orphanIds);
+    const orphanEdges = edges.filter(e=> idSet.has(e.from) && idSet.has(e.to));
+    const parentOf = {}; orphanIds.forEach(id=> parentOf[id]=id);
+    const find = x=>{ while(parentOf[x]!==x){ parentOf[x]=parentOf[parentOf[x]]; x=parentOf[x]; } return x; };
+    orphanEdges.forEach(e=>{ const ra=find(e.from), rb=find(e.to); if (ra!==rb) parentOf[ra]=rb; });
+    const compMap = {};
+    orphanIds.forEach(id=>{ const r=find(id); (compMap[r]=compMap[r]||[]).push(id); });
+    const components = Object.values(compMap).sort((a,b)=> b.length-a.length || (nodeMap[a[0]].full_name||'').localeCompare(nodeMap[b[0]].full_name||''));
+
+    const maxLevel = levelKeys.length ? levelKeys[levelKeys.length-1] : 0;
+    let cursorY = topMargin + (maxLevel - minLevel)*levelHeight + levelHeight;
+    orphanLabelY = cursorY - 40;
+
+    components.forEach(comp=>{
+      const { levels: localLevels } = computeGenerationLevels(comp[0], orphanEdges);
+      const localLevelVals = comp.map(id=> localLevels[id]!==undefined ? localLevels[id] : 0);
+      const compMin = Math.min(...localLevelVals);
+      const compMax = Math.max(...localLevelVals);
+      const localGroups = {};
+      comp.forEach(id=>{
+        const lv = (localLevels[id]!==undefined ? localLevels[id] : 0) - compMin;
+        (localGroups[lv]=localGroups[lv]||[]).push(id);
+      });
+      Object.keys(localGroups).map(Number).sort((a,b)=>a-b).forEach(lv=>{
+        const rowIds = localGroups[lv].sort((a,b)=> (nodeMap[a].birth_year||0)-(nodeMap[b].birth_year||0));
+        const totalWidth = (rowIds.length-1)*spacingX;
+        const startX = (svgW - totalWidth)/2;
+        rowIds.forEach((id,i)=>{ positions[id] = { x: startX + i*spacingX, y: cursorY + lv*levelHeight }; });
+      });
+      cursorY += (compMax - compMin + 1)*levelHeight + 50;
+    });
   }
 
   // create pan/zoom group
@@ -289,20 +475,82 @@ function renderTreeSVG(svg, tree, centerId){
   g.setAttribute('id','viewport');
   svg.appendChild(g);
 
-  // draw edges
-  edges.forEach(e=>{
+  if (orphanIds.length){
+    const label = document.createElementNS('http://www.w3.org/2000/svg','text');
+    label.setAttribute('x', String(svgW/2));
+    label.setAttribute('y', String(orphanLabelY));
+    label.setAttribute('text-anchor','middle');
+    label.setAttribute('font-size','13');
+    label.setAttribute('fill','#a49070');
+    label.setAttribute('font-family', "'Iowan Old Style','Palatino Linotype',Georgia,serif");
+    label.textContent = 'Other profiles (not yet linked to the family root)';
+    g.appendChild(label);
+  }
+
+  // draw spouse links: a short horizontal bar between partners at the same level
+  edges.filter(e=> e.type==='spouse').forEach(e=>{
     const from = positions[e.from];
     const to = positions[e.to];
     if (!from || !to) return;
+    if (from.y !== to.y) return; // only draw the direct same-generation spouse bar
     const line = document.createElementNS('http://www.w3.org/2000/svg','line');
-    line.setAttribute('x1', from.x + nodeW/2);
-    line.setAttribute('y1', from.y + nodeH/2);
-    line.setAttribute('x2', to.x + nodeW/2);
-    line.setAttribute('y2', to.y + nodeH/2);
-    line.setAttribute('stroke', e.type==='spouse' ? '#888' : '#444');
-    line.setAttribute('stroke-width', 2);
-    if (e.type==='spouse') line.setAttribute('stroke-dasharray','4 3');
+    const y = from.y + nodeH/2;
+    line.setAttribute('x1', Math.min(from.x,to.x) + nodeW);
+    line.setAttribute('y1', y);
+    line.setAttribute('x2', Math.max(from.x,to.x));
+    line.setAttribute('y2', y);
+    line.setAttribute('stroke', '#c3924f');
+    line.setAttribute('stroke-width', 3);
     g.appendChild(line);
+  });
+
+  // draw parent -> child links as elbow connectors: a couple's children hang off the
+  // midpoint between the parents (or a single parent) via a vertical drop + horizontal bar,
+  // matching a classic genealogy chart layout instead of crossing diagonal lines.
+  const childrenByParentKey = {};
+  edges.filter(e=> e.type==='parent').forEach(e=>{
+    const childId = e.from, parentId = e.to;
+    if (!positions[childId] || !positions[parentId]) return;
+    const spouseEdge = edges.find(se=> se.type==='spouse' && (se.from===parentId || se.to===parentId));
+    const coParentId = spouseEdge ? (spouseEdge.from===parentId ? spouseEdge.to : spouseEdge.from) : null;
+    const key = coParentId && positions[coParentId] ? [parentId, coParentId].sort().join('|') : parentId;
+    childrenByParentKey[key] = childrenByParentKey[key] || { parentIds: coParentId && positions[coParentId] ? [parentId, coParentId] : [parentId], children: new Set() };
+    childrenByParentKey[key].children.add(childId);
+  });
+
+  Object.values(childrenByParentKey).forEach(({ parentIds, children })=>{
+    const parentPts = parentIds.map(pid=> positions[pid]).filter(Boolean);
+    if (!parentPts.length) return;
+    const parentMidX = parentPts.reduce((s,p)=> s+p.x+nodeW/2, 0)/parentPts.length;
+    const parentY = parentPts[0].y + nodeH;
+    const dropY = parentY + levelHeight/2;
+    // trunk line down from the parent(s)
+    const trunk = document.createElementNS('http://www.w3.org/2000/svg','line');
+    trunk.setAttribute('x1', parentMidX); trunk.setAttribute('y1', parentY);
+    trunk.setAttribute('x2', parentMidX); trunk.setAttribute('y2', dropY);
+    trunk.setAttribute('stroke', '#c3ac86'); trunk.setAttribute('stroke-width', 2);
+    g.appendChild(trunk);
+
+    const childXs = Array.from(children).map(cid=> positions[cid]).filter(Boolean).map(p=> p.x + nodeW/2);
+    if (!childXs.length) return;
+    const minX = Math.min(parentMidX, ...childXs);
+    const maxX = Math.max(parentMidX, ...childXs);
+    if (childXs.length>1 || minX!==maxX){
+      const bar = document.createElementNS('http://www.w3.org/2000/svg','line');
+      bar.setAttribute('x1', String(minX)); bar.setAttribute('y1', String(dropY));
+      bar.setAttribute('x2', String(maxX)); bar.setAttribute('y2', String(dropY));
+      bar.setAttribute('stroke', '#c3ac86'); bar.setAttribute('stroke-width', 2);
+      g.appendChild(bar);
+    }
+    Array.from(children).forEach(cid=>{
+      const cp = positions[cid]; if (!cp) return;
+      const cx = cp.x + nodeW/2;
+      const drop = document.createElementNS('http://www.w3.org/2000/svg','line');
+      drop.setAttribute('x1', String(cx)); drop.setAttribute('y1', String(dropY));
+      drop.setAttribute('x2', String(cx)); drop.setAttribute('y2', String(cp.y));
+      drop.setAttribute('stroke', '#c3ac86'); drop.setAttribute('stroke-width', 2);
+      g.appendChild(drop);
+    });
   });
 
   // draw nodes with standard SVG elements for better cross-browser rendering
@@ -316,7 +564,7 @@ function renderTreeSVG(svg, tree, centerId){
     let current = '';
     for (const word of words){
       const next = current ? current + ' ' + word : word;
-      if (next.length <= 16){ current = next; continue; }
+      if (next.length <= 14){ current = next; continue; }
       if (current) lines.push(current);
       current = word;
     }
@@ -330,11 +578,12 @@ function renderTreeSVG(svg, tree, centerId){
     if (!n) continue;
 
     const group = document.createElementNS(svgNS, 'g');
-    group.setAttribute('class', 'node');
+    group.setAttribute('class', 'node' + (id===centerId ? ' me':'') + (id===anchorId ? ' root':''));
+    group.dataset.id = id;
     group.setAttribute('transform', `translate(${pos.x}, ${pos.y})`);
     group.style.cursor = 'pointer';
 
-    const cardW = 180;
+    const cardW = 200;
     const cardH = 70;
     const bg = document.createElementNS(svgNS, 'rect');
     bg.setAttribute('x', '0');
@@ -343,10 +592,10 @@ function renderTreeSVG(svg, tree, centerId){
     bg.setAttribute('height', String(cardH));
     bg.setAttribute('rx', '14');
     bg.setAttribute('ry', '14');
-    bg.setAttribute('fill', id === centerId ? '#fff7dc' : '#ffffff');
-    bg.setAttribute('stroke', id === centerId ? '#f59e0b' : '#d8e0ea');
-    bg.setAttribute('stroke-width', id === centerId ? '2' : '1.2');
-    bg.setAttribute('filter', 'drop-shadow(0 6px 10px rgba(15,23,42,0.08))');
+    bg.setAttribute('fill', id === centerId ? '#fbead0' : '#fffaf2');
+    bg.setAttribute('stroke', id === anchorId ? '#7a4a20' : (id === centerId ? '#c3924f' : '#e6d6ba'));
+    bg.setAttribute('stroke-width', (id === centerId || id === anchorId) ? '2.5' : '1.2');
+    bg.setAttribute('filter', 'drop-shadow(0 6px 10px rgba(90,62,33,0.12))');
     group.appendChild(bg);
 
     const clipId = `clip-${id.replace(/[^a-zA-Z0-9]/g,'')}`;
@@ -378,7 +627,8 @@ function renderTreeSVG(svg, tree, centerId){
       text.setAttribute('y', String(28 + idx * 15));
       text.setAttribute('font-size', idx === 0 ? '13' : '12');
       text.setAttribute('font-weight', idx === 0 ? '700' : '500');
-      text.setAttribute('fill', '#0f172a');
+      text.setAttribute('fill', '#3c2c1c');
+      text.setAttribute('font-family', "'Iowan Old Style','Palatino Linotype',Georgia,serif");
       text.textContent = line;
       group.appendChild(text);
     });
@@ -387,12 +637,12 @@ function renderTreeSVG(svg, tree, centerId){
     year.setAttribute('x', '62');
     year.setAttribute('y', '58');
     year.setAttribute('font-size', '11');
-    year.setAttribute('fill', '#64748b');
+    year.setAttribute('fill', '#8a7860');
     year.textContent = n.birth_year || '—';
     group.appendChild(year);
 
     const infoBtn = document.createElementNS(svgNS, 'g');
-    infoBtn.setAttribute('transform', 'translate(150 13)');
+    infoBtn.setAttribute('transform', 'translate(170 13)');
     infoBtn.style.cursor = 'pointer';
     infoBtn.addEventListener('click', (evt)=>{ evt.preventDefault(); evt.stopPropagation(); showProfileModal(n, nodeMap, edges); });
     const infoBox = document.createElementNS(svgNS, 'rect');
@@ -401,15 +651,15 @@ function renderTreeSVG(svg, tree, centerId){
     infoBox.setAttribute('width', '18');
     infoBox.setAttribute('height', '18');
     infoBox.setAttribute('rx', '5');
-    infoBox.setAttribute('fill', 'rgba(59,130,246,0.08)');
-    infoBox.setAttribute('stroke', '#60a5fa');
+    infoBox.setAttribute('fill', 'rgba(169,104,63,0.1)');
+    infoBox.setAttribute('stroke', '#c3924f');
     infoBtn.appendChild(infoBox);
     for (let i = 0; i < 3; i++){
       const dot = document.createElementNS(svgNS, 'circle');
       dot.setAttribute('cx', String(9 + i * 0));
       dot.setAttribute('cy', String(9));
       dot.setAttribute('r', '2');
-      dot.setAttribute('fill', '#2563eb');
+      dot.setAttribute('fill', '#8a4f28');
       infoBtn.appendChild(dot);
     }
     group.appendChild(infoBtn);
@@ -436,7 +686,13 @@ function initPanZoom(svg, viewport){
   function apply(){ viewport.setAttribute('transform', `translate(${tx},${ty}) scale(${scale})`); }
   svg.addEventListener('wheel', e=>{ e.preventDefault(); const delta = -e.deltaY*0.001; const oldScale = scale; scale = Math.min(3, Math.max(0.2, scale*(1+delta))); // zoom to pointer
     const rect = svg.getBoundingClientRect(); const px = e.clientX - rect.left; const py = e.clientY - rect.top; tx -= (px/oldScale - px/scale); ty -= (py/oldScale - py/scale); apply(); });
-  svg.addEventListener('pointerdown', e=>{ dragging=true; lastX=e.clientX; lastY=e.clientY; svg.setPointerCapture(e.pointerId); });
+  svg.addEventListener('pointerdown', e=>{
+    // don't hijack clicks on a node (card body / info button) into a canvas drag —
+    // pointer capture retargets the resulting synthetic click away from the node subtree,
+    // which silently breaks "open profile" clicks.
+    if (e.target && e.target.closest && e.target.closest('.node')) return;
+    dragging=true; lastX=e.clientX; lastY=e.clientY; svg.setPointerCapture(e.pointerId);
+  });
   svg.addEventListener('pointermove', e=>{ if (!dragging) return; const dx = e.clientX - lastX; const dy = e.clientY - lastY; lastX = e.clientX; lastY = e.clientY; tx += dx; ty += dy; apply(); });
   svg.addEventListener('pointerup', e=>{ dragging=false; try{ svg.releasePointerCapture(e.pointerId); }catch(_){} });
 }
@@ -449,8 +705,8 @@ if (centerBtn){
     if (!svg) return;
     const viewport = svg.querySelector('#viewport');
     if (!viewport) return;
-    const node = svg.querySelector('.node');
-    if (!node) return; // simple: recenters to first node
+    const node = (me.person && svg.querySelector(`.node[data-id="${me.person.id}"]`)) || svg.querySelector('.node');
+    if (!node) return;
     // center logic: compute bbox of node and translate so it's centered in view
     const bbox = node.getBBox();
     const svgW = svg.clientWidth, svgH = svg.clientHeight;
@@ -465,10 +721,12 @@ function applyTheme(theme){
   if (theme === 'dark') document.body.classList.add('dark'); else document.body.classList.remove('dark');
 }
 
+// apply the saved theme on every page, whether or not it has a visible toggle button,
+// so the preference set on one page (e.g. the landing page) persists everywhere.
+applyTheme(localStorage.getItem('ft_theme') || 'light');
+
 const themeToggle = document.getElementById('theme-toggle');
 if (themeToggle){
-  const saved = localStorage.getItem('ft_theme') || 'light';
-  applyTheme(saved);
   themeToggle.addEventListener('click', ()=>{
     const cur = document.body.classList.contains('dark') ? 'dark' : 'light';
     const next = cur === 'dark' ? 'light' : 'dark';
@@ -540,10 +798,10 @@ function applyLang(lang){
   const lp = document.getElementById('label-password'); if (lp) lp.childNodes[0].textContent = t.password + '\n';
 }
 
+applyLang(localStorage.getItem('ft_lang') || 'en');
+
 const langToggle = document.getElementById('lang-toggle');
 if (langToggle){
-  const savedLang = localStorage.getItem('ft_lang') || 'en';
-  applyLang(savedLang);
   langToggle.addEventListener('click', ()=>{
     const cur = localStorage.getItem('ft_lang') || 'en';
     const next = cur === 'en' ? 'fr' : 'en';

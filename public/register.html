@@ -7,6 +7,13 @@
   <link rel="stylesheet" href="/styles.css">
 </head>
 <body>
+  <header class="topbar">
+    <h1>Famille Nah Adja Mbethe</h1>
+    <div class="toggles">
+      <button id="lang-toggle">FR/EN</button>
+      <button id="theme-toggle">Light/Dark</button>
+    </div>
+  </header>
   <main class="center-card">
     <h2>Create your profile</h2>
     <form id="register-form">
@@ -19,14 +26,45 @@
       <label>Residence<input name="residence" id="reg-residence" /></label>
       <label>Phone<input name="phone" id="reg-phone" /></label>
       <label>Photo<input name="photo" id="reg-photo" type="file" accept="image/*" /></label>
-      <fieldset>
-        <legend>Parent info (optional)</legend>
-        <label>Father name<input id="father_name" name="father_name" /></label>
-        <label>Father birth year<input id="father_birth_year" name="father_birth_year" type="number" /></label>
-        <label><input type="checkbox" id="father_from_family" name="father_from_family" /> Father is from this family</label>
-        <label>Mother name<input id="mother_name" name="mother_name" /></label>
-        <label>Mother birth year<input id="mother_birth_year" name="mother_birth_year" type="number" /></label>
-        <label><input type="checkbox" id="mother_from_family" name="mother_from_family" /> Mother is from this family</label>
+      <fieldset class="parent-fieldset" data-parent="father">
+        <legend>Father (optional)</legend>
+        <label>Father's full name<input id="father_name" name="father_name" /></label>
+        <div id="father_matches" class="parent-matches"></div>
+        <input type="hidden" id="father_id" name="father_id" />
+        <div id="father_new_fields" class="parent-new-fields hidden">
+          <p class="hint">No matching profile found. Fill in what you know so the admin can add him to the tree alongside your registration.</p>
+          <label>Birth date<input id="father_birth_date" name="father_birth_date" type="date" /></label>
+          <label>Occupation<input id="father_occupation" name="father_occupation" /></label>
+          <label>Residence<input id="father_residence" name="father_residence" /></label>
+          <label>Phone<input id="father_phone" name="father_phone" /></label>
+          <label>Photo<input id="father_photo" name="father_photo" type="file" accept="image/*" /></label>
+          <label>Is he originally from this family, or did he marry into it?
+            <select id="father_origin" name="father_origin">
+              <option value="family">Born into this family (blood relative)</option>
+              <option value="married">Married into this family</option>
+            </select>
+          </label>
+        </div>
+      </fieldset>
+      <fieldset class="parent-fieldset" data-parent="mother">
+        <legend>Mother (optional)</legend>
+        <label>Mother's full name<input id="mother_name" name="mother_name" /></label>
+        <div id="mother_matches" class="parent-matches"></div>
+        <input type="hidden" id="mother_id" name="mother_id" />
+        <div id="mother_new_fields" class="parent-new-fields hidden">
+          <p class="hint">No matching profile found. Fill in what you know so the admin can add her to the tree alongside your registration.</p>
+          <label>Birth date<input id="mother_birth_date" name="mother_birth_date" type="date" /></label>
+          <label>Occupation<input id="mother_occupation" name="mother_occupation" /></label>
+          <label>Residence<input id="mother_residence" name="mother_residence" /></label>
+          <label>Phone<input id="mother_phone" name="mother_phone" /></label>
+          <label>Photo<input id="mother_photo" name="mother_photo" type="file" accept="image/*" /></label>
+          <label>Is she originally from this family, or did she marry into it?
+            <select id="mother_origin" name="mother_origin">
+              <option value="family">Born into this family (blood relative)</option>
+              <option value="married">Married into this family</option>
+            </select>
+          </label>
+        </div>
       </fieldset>
       <div style="display:flex;gap:12px;margin-top:12px">
         <button type="submit">Submit registration (pending admin approval)</button>

@@ -64,6 +64,11 @@ function init() {
     created_at TEXT,
     approval_status TEXT DEFAULT 'pending'
   );
+
+  CREATE TABLE IF NOT EXISTS settings (
+    key TEXT PRIMARY KEY,
+    value TEXT
+  );
   `);
 }
 

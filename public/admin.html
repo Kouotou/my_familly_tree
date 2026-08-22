@@ -17,6 +17,31 @@
 
   <script src="/app.js"></script>
   <main style="max-width:1000px;margin:24px auto;padding:12px">
+    <div id="rootPanel" style="padding:16px;background:var(--card);border-radius:10px;box-shadow:var(--shadow);margin-bottom:20px">
+      <h3 style="margin-top:0">Family Tree Root Profile</h3>
+      <p style="color:var(--muted);margin-top:-6px;font-size:13px">Every member's profile connects into the tree through this person — set them as the top-most ancestor (e.g. the family's great grandparent) so the whole tree hangs together.</p>
+      <div id="rootCurrent">Loading...</div>
+      <div style="margin-top:12px;display:flex;gap:8px;flex-wrap:wrap">
+        <button id="rootEditBtn" type="button" class="secondary hidden">Edit root's info</button>
+        <button id="rootChooseBtn" type="button" class="secondary">Choose existing profile</button>
+        <button id="rootCreateBtn" type="button" class="secondary">Create new root profile</button>
+      </div>
+      <div id="rootChooseArea" style="display:none;margin-top:12px">
+        <input id="rootSearchInput" placeholder="Search approved profiles by name..." />
+        <div id="rootSearchResults" style="margin-top:8px"></div>
+      </div>
+      <div id="rootCreateArea" style="display:none;margin-top:12px">
+        <form id="rootCreateForm">
+          <label>Full name<input name="full_name" required /></label>
+          <label>Gender<select name="gender"><option value="male">Male</option><option value="female">Female</option><option value="other">Other</option></select></label>
+          <label>Birth date<input name="birth_date" type="date" /></label>
+          <label>Occupation<input name="occupation" /></label>
+          <label>Residence<input name="residence" /></label>
+          <label>Photo<input name="photo" type="file" accept="image/*" /></label>
+          <button type="submit">Create &amp; set as root</button>
+        </form>
+      </div>
+    </div>
     <div style="display:flex;justify-content:space-between;align-items:center">
       <div style="display:flex;gap:8px;align-items:center">
         <button id="tab-pending" class="active">Pending</button>
@@ -80,7 +105,16 @@
           const person = await api('/people/' + pid);
           openEditModalForPerson(person);
         });
-        const deleteBtn = document.createElement('button'); deleteBtn.textContent='Delete account'; deleteBtn.style.marginLeft='8px'; deleteBtn.addEventListener('click', async ()=>{ if (!await showConfirm('Reject this approved request? This moves it to Rejected.')) return; const note = prompt('Reason for rejection',''); try{ const res = await fetch('/api/admin/requests/'+req.id+'/reject',{method:'POST', headers:{'Content-Type':'application/json'}, credentials:'same-origin', body: JSON.stringify({note})}); const ct = res.headers.get('content-type')||''; const body = ct.includes('application/json')? await res.json() : await res.text(); if (res.ok){ await loadRequests('rejected'); } else { alert('Reject failed: ' + (body && (body.error||body.message) ? (body.error||body.message) : JSON.stringify(body))); } }catch(e){ alert('Network error: ' + e.message); } });
+        const deleteBtn = document.createElement('button'); deleteBtn.textContent='Delete account'; deleteBtn.style.marginLeft='8px'; deleteBtn.addEventListener('click', async ()=>{
+          if (!await showConfirm('Delete this account? This removes them (and their relationships) from the family tree.')) return;
+          try{
+            const pid = await resolvePersonIdFromPayload(req.payload);
+            if (!pid){ alert('Could not locate the person record for this approved request'); return; }
+            const res = await fetch('/api/admin/people/'+pid+'/delete', { method:'POST', credentials:'same-origin' });
+            const ct = res.headers.get('content-type')||''; const body = ct.includes('application/json')? await res.json() : await res.text();
+            if (res.ok){ await loadRequests('rejected'); } else { alert('Delete failed: ' + (body && (body.error||body.message) ? (body.error||body.message) : JSON.stringify(body))); }
+          }catch(e){ alert('Network error: ' + e.message); }
+        });
         actions.appendChild(modifyBtn); actions.appendChild(deleteBtn);
       } else {
         const rev = document.createElement('div'); rev.style.fontSize='13px'; rev.style.color='var(--muted)'; rev.textContent = `Reviewed by: ${req.reviewed_by || 'n/a'} — ${req.reviewed_at || ''}`;
@@ -90,6 +124,95 @@
 
       return container;
     }
+
+    // --- Family tree root profile management ---
+    let currentRootPerson = null;
+    function renderRootCard(person){
+      currentRootPerson = person;
+      const el = document.getElementById('rootCurrent');
+      const editBtn = document.getElementById('rootEditBtn');
+      if (!person){ el.innerHTML = '<div style="color:var(--muted)">No root profile set yet — the tree has no fixed top. Choose or create one below.</div>'; if (editBtn) editBtn.classList.add('hidden'); return; }
+      el.innerHTML = '';
+      const wrap = document.createElement('div'); wrap.style.display='flex'; wrap.style.gap='12px'; wrap.style.alignItems='center';
+      const img = document.createElement('img'); img.src = person.photo_path || '/profile_icons/Female_profile_icon.jfif'; img.style.width='56px'; img.style.height='56px'; img.style.objectFit='cover'; img.style.borderRadius='50%';
+      const info = document.createElement('div');
+      info.innerHTML = `<strong>${person.full_name}</strong><div style="font-size:12px;color:var(--muted)">${person.birth_date || person.birth_year || ''}</div>`;
+      wrap.appendChild(img); wrap.appendChild(info);
+      el.appendChild(wrap);
+      if (editBtn) editBtn.classList.remove('hidden');
+    }
+    async function loadRoot(){
+      try{ const r = await api('/admin/root'); renderRootCard(r.root); }
+      catch(e){ document.getElementById('rootCurrent').textContent = 'Error loading root profile'; }
+    }
+    const rootEditBtn = document.getElementById('rootEditBtn');
+    if (rootEditBtn) rootEditBtn.addEventListener('click', ()=>{
+      if (!currentRootPerson) return;
+      openEditModalForPerson(currentRootPerson);
+    });
+    const rootChooseBtn = document.getElementById('rootChooseBtn');
+    const rootCreateBtn = document.getElementById('rootCreateBtn');
+    const rootChooseArea = document.getElementById('rootChooseArea');
+    const rootCreateArea = document.getElementById('rootCreateArea');
+    if (rootChooseBtn) rootChooseBtn.addEventListener('click', ()=>{
+      rootCreateArea.style.display='none';
+      rootChooseArea.style.display = rootChooseArea.style.display==='none' ? 'block' : 'none';
+    });
+    if (rootCreateBtn) rootCreateBtn.addEventListener('click', ()=>{
+      rootChooseArea.style.display='none';
+      rootCreateArea.style.display = rootCreateArea.style.display==='none' ? 'block' : 'none';
+    });
+    const rootSearchInput = document.getElementById('rootSearchInput');
+    if (rootSearchInput){
+      let debounce;
+      rootSearchInput.addEventListener('input', ()=>{
+        clearTimeout(debounce);
+        debounce = setTimeout(async ()=>{
+          const q = rootSearchInput.value.trim();
+          const results = document.getElementById('rootSearchResults');
+          if (!q){ results.innerHTML=''; return; }
+          try{
+            const people = await api('/people/search?name=' + encodeURIComponent(q));
+            results.innerHTML='';
+            if (!people.length){ results.innerHTML = '<div style="color:var(--muted);font-size:13px">No matches</div>'; return; }
+            people.forEach(p=>{
+              const row = document.createElement('div'); row.style.display='flex'; row.style.justifyContent='space-between'; row.style.alignItems='center'; row.style.padding='6px 0'; row.style.borderBottom='1px solid #eef2f7';
+              row.innerHTML = `<span>${p.full_name} <span style="color:var(--muted);font-size:12px">${p.birth_date||p.birth_year||''}</span></span>`;
+              const btn = document.createElement('button'); btn.textContent='Set as root'; btn.style.marginTop='0';
+              btn.addEventListener('click', async ()=>{
+                if (!await showConfirm('Set ' + p.full_name + ' as the family tree root?')) return;
+                const res = await fetch('/api/admin/root', { method:'POST', headers:{'Content-Type':'application/json'}, credentials:'same-origin', body: JSON.stringify({ person_id: p.id }) });
+                const j = await res.json();
+                if (j.ok){ await loadRoot(); rootChooseArea.style.display='none'; } else alert('Error: ' + JSON.stringify(j));
+              });
+              row.appendChild(btn);
+              results.appendChild(row);
+            });
+          }catch(e){ results.innerHTML = 'Error searching'; }
+        }, 250);
+      });
+    }
+    const rootCreateForm = document.getElementById('rootCreateForm');
+    if (rootCreateForm) rootCreateForm.addEventListener('submit', async (e)=>{
+      e.preventDefault();
+      const f = e.target;
+      const form = new FormData();
+      form.append('full_name', f.full_name.value);
+      form.append('gender', f.gender.value);
+      form.append('birth_date', f.birth_date.value || '');
+      form.append('occupation', f.occupation.value || '');
+      form.append('residence', f.residence.value || '');
+      form.append('set_as_root', 'on');
+      const photoEl = f.querySelector('[name="photo"]');
+      if (photoEl && photoEl.files && photoEl.files[0]) form.append('photo', photoEl.files[0]);
+      try{
+        const res = await fetch('/api/admin/people/create-direct', { method:'POST', credentials:'same-origin', body: form });
+        const j = await res.json();
+        if (j.ok){ alert('Root profile created'); f.reset(); rootCreateArea.style.display='none'; await loadRoot(); }
+        else alert('Error: ' + JSON.stringify(j));
+      }catch(err){ alert('Network error: ' + err.message); }
+    });
+    loadRoot();
 
     let currentStatus = 'pending';
     function setActiveTab(s){ currentStatus = s; const tp = document.getElementById('tab-pending'); const ta = document.getElementById('tab-approved'); const tr = document.getElementById('tab-rejected'); if (tp) tp.classList.toggle('active', s==='pending'); if (ta) ta.classList.toggle('active', s==='approved'); if (tr) tr.classList.toggle('active', s==='rejected'); }
@@ -232,7 +355,7 @@
         const endpoint = personId ? ('/api/admin/people/' + personId + '/update-multipart') : ('/api/admin/requests/' + id + '/edit-approve-multipart');
         const res = await fetch(endpoint, { method:'POST', credentials:'same-origin', body: form });
         const j = await res.json();
-        if (j.ok){ alert(personId ? 'Person updated' : 'Approved with edits'); document.getElementById('edit-modal').style.display='none'; await loadRequests(currentStatus); }
+        if (j.ok){ alert(personId ? 'Person updated' : 'Approved with edits'); document.getElementById('edit-modal').style.display='none'; await loadRequests(currentStatus); await loadRoot(); }
         else alert('Error: ' + JSON.stringify(j));
         return;
       }
@@ -257,7 +380,7 @@
         // no photo: send json update
         const res = await fetch('/api/admin/people/' + personId + '/update', { method:'POST', headers:{'Content-Type':'application/json'}, credentials:'same-origin', body: JSON.stringify({ payload }) });
         const j = await res.json();
-        if (j.ok){ alert('Person updated'); document.getElementById('edit-modal').style.display='none'; await loadRequests(currentStatus); }
+        if (j.ok){ alert('Person updated'); document.getElementById('edit-modal').style.display='none'; await loadRequests(currentStatus); await loadRoot(); }
         else alert('Error: ' + JSON.stringify(j));
         return;
       }
