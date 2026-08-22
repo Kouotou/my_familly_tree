@@ -8,18 +8,34 @@
 </head>
 <body>
   <header class="topbar">
-    <h1 id="brand">Famille Nah Adja Mbethe</h1>
+    <div class="topbar-left">
+      <button id="hamburger-btn" class="hamburger-btn" aria-label="Menu"><span></span><span></span><span></span></button>
+      <h1 id="brand" data-i18n="brand">Famille Nah Adja Mbethe</h1>
+    </div>
     <div class="toggles">
       <button id="lang-toggle">FR/EN</button>
       <button id="theme-toggle">Light/Dark</button>
     </div>
   </header>
+
+  <div id="sidebar-overlay"></div>
+  <div id="sidebar-drawer">
+    <button id="sidebar-close" aria-label="Close">&times;</button>
+    <h3 data-i18n="sidebar_menu_title">Menu</h3>
+    <a class="sidebar-item" href="/archives.html"><span class="icon">📁</span> <span data-i18n="sidebar_archives">Archives</span></a>
+    <button type="button" class="sidebar-item" id="sidebar-tree-summary-btn"><span class="icon">🌳</span> <span data-i18n="sidebar_tree_summary">Family tree summary</span></button>
+    <div class="sidebar-subpanel" id="sidebar-tree-summary-panel">
+      <button type="button" id="download-tree-image" data-i18n="sidebar_download_image">Download as Image</button>
+      <button type="button" id="download-tree-pdf" class="secondary" data-i18n="sidebar_download_pdf">Download as PDF</button>
+    </div>
+  </div>
+
   <main>
     <div style="padding:12px;max-width:1200px;margin:12px auto">
-      <button id="back-to-landing">Logout</button>
+      <button id="back-to-landing" data-i18n="tree_logout">Logout</button>
       <div id="me-area"></div>
       <div class="tree-controls">
-        <button id="center-me">Center on me</button>
+        <button id="center-me" data-i18n="center_me">Center on me</button>
       </div>
       <div id="tree-container">
         <svg id="tree-svg" width="1200" height="800"></svg>
@@ -35,7 +51,7 @@
         if (!me.ok){ window.location.href = '/'; return; }
         const j = await me.json();
         const person = j.person;
-        if (person) document.getElementById('me-area').textContent = 'Hello, ' + person.full_name;
+        if (person && typeof t === 'function') document.getElementById('me-area').textContent = t('tree_hello', { name: person.full_name });
         // call loadTree from app.js
         if (typeof loadTree === 'function') loadTree();
       }catch(e){ console.warn('Tree init error', e); }

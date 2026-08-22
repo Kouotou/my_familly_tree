@@ -24,6 +24,38 @@ function requireAdmin(req,res){
   return true;
 }
 
+// any logged-in account with a linked profile (i.e. a real person, not a bare admin login)
+function requireLoggedInPerson(req,res){
+  if (!req.session.user){ res.status(401).json({error:'not logged in'}); return false; }
+  if (!req.session.user.person_id){ res.status(403).json({error:'no linked profile'}); return false; }
+  return true;
+}
+
+function isUsernameTaken(username){
+  if (!username) return false;
+  if (db.prepare('SELECT id FROM people WHERE username = ?').get(username)) return true;
+  if (db.prepare('SELECT id FROM users WHERE username = ?').get(username)) return true;
+  const pending = db.prepare("SELECT payload FROM requests WHERE status = 'pending'").all();
+  return pending.some(r=>{ try{ return JSON.parse(r.payload).username === username; }catch(e){ return false; } });
+}
+
+// this person's father/mother, classified by gender among their recorded parents
+function getParentIds(personId){
+  const rows = db.prepare("SELECT relative_id FROM relationships WHERE person_id = ? AND type = 'parent'").all(personId);
+  let fatherId = null, motherId = null;
+  rows.forEach(r=>{
+    const p = db.prepare('SELECT gender FROM people WHERE id = ?').get(r.relative_id);
+    const g = ((p && p.gender) || '').toLowerCase();
+    if (g === 'male' && !fatherId) fatherId = r.relative_id;
+    else if (g === 'female' && !motherId) motherId = r.relative_id;
+  });
+  return { fatherId, motherId };
+}
+
+function getSpouseIds(personId){
+  return db.prepare("SELECT relative_id FROM relationships WHERE person_id = ? AND type = 'spouse'").all(personId).map(r=>r.relative_id);
+}
+
 // Login by username + password — used for both members and admins. Username is each
 // person's unique login id (assigned at registration, or by an admin for accounts they
 // create directly).
@@ -92,11 +124,7 @@ router.post('/auth/register', upload.fields([
 
   // username/password are mandatory — the username becomes this person's unique login id.
   if (!body.username || !body.password) return res.status(400).json({ error: 'Username and password are required.' });
-  const usernameTakenByPerson = db.prepare('SELECT id FROM people WHERE username = ?').get(body.username);
-  const usernameTakenByUser = db.prepare('SELECT id FROM users WHERE username = ?').get(body.username);
-  const pendingRequests = db.prepare("SELECT payload FROM requests WHERE status = 'pending'").all();
-  const usernameTakenByPending = pendingRequests.some(r=>{ try{ return JSON.parse(r.payload).username === body.username; }catch(e){ return false; } });
-  if (usernameTakenByPerson || usernameTakenByUser || usernameTakenByPending) return res.status(409).json({ error: 'That username is already taken. Please choose another.' });
+  if (isUsernameTaken(body.username)) return res.status(409).json({ error: 'That username is already taken. Please choose another.' });
 
   if (files.photo && files.photo[0]) body.photo_path = '/uploads/' + path.basename(files.photo[0].path);
   // prefer full birth_date (YYYY-MM-DD). If only year provided, store as birth_year.
@@ -174,53 +202,69 @@ router.get('/admin/requests', (req,res)=>{
   res.json(rows.map(r=> ({...r, payload: JSON.parse(r.payload)})));
 });
 
+// --- shared person/relationship helpers, used by request-approval processors below ---
+
+function createPersonRecord(p, reviewerId){
+  // if username provided and a person already exists with that username, reuse it
+  if (p.username){
+    const existing = db.prepare('SELECT id FROM people WHERE username = ?').get(p.username);
+    if (existing && existing.id) return existing.id;
+  }
+  const id = uuidv4();
+  // Use INSERT OR IGNORE to avoid unique constraint errors; then select the inserted row or fallback to an existing row
+  db.prepare('INSERT OR IGNORE INTO people (id, username, full_name, gender, birth_year, birth_date, occupation, residence, phone, photo_path, family_head, created_by, created_at, approval_status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
+    .run(id, p.username||null, p.full_name, p.gender||null, p.birth_year||null, p.birth_date||null, p.occupation||null, p.residence||null, p.phone||null, p.photo_path||null, p.family_head||null, reviewerId, now(), 'approved');
+  if (p.username){
+    const existingByUser = db.prepare('SELECT id FROM people WHERE username = ?').get(p.username);
+    if (existingByUser && existingByUser.id) return existingByUser.id;
+  }
+  // otherwise try to find by full_name + birth_date (if available)
+  if (p.full_name && p.birth_date){
+    const existingByName = db.prepare('SELECT id FROM people WHERE full_name = ? AND birth_date = ?').get(p.full_name, p.birth_date);
+    if (existingByName && existingByName.id) return existingByName.id;
+  }
+  // fallback to the id we attempted to insert
+  return id;
+}
+
+function linkParentChild(childId, parentId, note){
+  const existing = db.prepare("SELECT id FROM relationships WHERE person_id = ? AND relative_id = ? AND type = 'parent'").get(childId, parentId);
+  if (existing) return;
+  const ins = db.prepare('INSERT INTO relationships (id, person_id, relative_id, type, notes) VALUES (?, ?, ?, ?, ?)');
+  ins.run(uuidv4(), childId, parentId, 'parent', note || null);
+  ins.run(uuidv4(), parentId, childId, 'child', note || null);
+}
+
+function linkSpouse(a,b){
+  // avoid duplicate spouse links (e.g. both parents already matched to existing profiles)
+  const existing = db.prepare("SELECT id FROM relationships WHERE person_id = ? AND relative_id = ? AND type = 'spouse'").get(a,b);
+  if (existing) return;
+  const ins = db.prepare('INSERT INTO relationships (id, person_id, relative_id, type) VALUES (?, ?, ?, ?)');
+  ins.run(uuidv4(), a, b, 'spouse');
+  ins.run(uuidv4(), b, a, 'spouse');
+}
+
+// used only when two siblings share no recorded parent yet, so there's no shared-parent
+// link to hang the relationship off of
+function linkSibling(a,b){
+  const existing = db.prepare("SELECT id FROM relationships WHERE person_id = ? AND relative_id = ? AND type = 'sibling'").get(a,b);
+  if (existing) return;
+  const ins = db.prepare('INSERT INTO relationships (id, person_id, relative_id, type) VALUES (?, ?, ?, ?)');
+  ins.run(uuidv4(), a, b, 'sibling');
+  ins.run(uuidv4(), b, a, 'sibling');
+}
+
+function createLoginForPerson(personId, username, password){
+  if (!username || !password) return;
+  const pwdHash = bcrypt.hashSync(password, 10);
+  db.prepare('INSERT OR IGNORE INTO users (id, username, password_hash, role, person_id) VALUES (?, ?, ?, ?, ?)').run(uuidv4(), username, pwdHash, 'member', personId);
+  db.prepare('UPDATE users SET person_id = ? WHERE username = ?').run(personId, username);
+}
+
 // helper to process create_person payload into the DB and return the created person id
 function processCreatePerson(payload, reviewerId){
-  function createPerson(p){
-    // if username provided and a person already exists with that username, reuse it
-    if (p.username){
-      const existing = db.prepare('SELECT id FROM people WHERE username = ?').get(p.username);
-      if (existing && existing.id) return existing.id;
-    }
-    const id = uuidv4();
-    // Use INSERT OR IGNORE to avoid unique constraint errors; then select the inserted row or fallback to an existing row
-    db.prepare('INSERT OR IGNORE INTO people (id, username, full_name, gender, birth_year, birth_date, occupation, residence, phone, photo_path, family_head, created_by, created_at, approval_status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
-      .run(id, p.username||null, p.full_name, p.gender||null, p.birth_year||null, p.birth_date||null, p.occupation||null, p.residence||null, p.phone||null, p.photo_path||null, p.family_head||null, reviewerId, now(), 'approved');
-    // if username provided, try to select by username
-    if (p.username){
-      const existingByUser = db.prepare('SELECT id FROM people WHERE username = ?').get(p.username);
-      if (existingByUser && existingByUser.id) return existingByUser.id;
-    }
-    // otherwise try to find by full_name + birth_date (if available)
-    if (p.full_name && p.birth_date){
-      const existingByName = db.prepare('SELECT id FROM people WHERE full_name = ? AND birth_date = ?').get(p.full_name, p.birth_date);
-      if (existingByName && existingByName.id) return existingByName.id;
-    }
-    // fallback to the id we attempted to insert
-    return id;
-  }
-  function addParentChild(childId, parentId, note){
-    const ins = db.prepare('INSERT INTO relationships (id, person_id, relative_id, type, notes) VALUES (?, ?, ?, ?, ?)');
-    ins.run(uuidv4(), childId, parentId, 'parent', note || null);
-    ins.run(uuidv4(), parentId, childId, 'child', note || null);
-  }
-  function addSpouse(a,b){
-    // avoid duplicate spouse links (e.g. both parents already matched to existing profiles)
-    const existing = db.prepare("SELECT id FROM relationships WHERE person_id = ? AND relative_id = ? AND type = 'spouse'").get(a,b);
-    if (existing) return;
-    const ins = db.prepare('INSERT INTO relationships (id, person_id, relative_id, type) VALUES (?, ?, ?, ?)');
-    ins.run(uuidv4(), a, b, 'spouse');
-    ins.run(uuidv4(), b, a, 'spouse');
-  }
-
-  const personId = createPerson(payload);
-  if (payload.username && payload.password){
-    const pwdHash = bcrypt.hashSync(payload.password, 10);
-    // avoid unique constraint error by ignoring if username already exists
-    db.prepare('INSERT OR IGNORE INTO users (id, username, password_hash, role, person_id) VALUES (?, ?, ?, ?, ?)').run(uuidv4(), payload.username, pwdHash, 'member', personId);
-    // if the user already existed, ensure person_id is set
-    db.prepare('UPDATE users SET person_id = ? WHERE username = ?').run(personId, payload.username);
-  }
+  const personId = createPersonRecord(payload, reviewerId);
+  createLoginForPerson(personId, payload.username, payload.password);
 
   if (Array.isArray(payload.relations)){
     const father = payload.relations.find(r=> r.type==='parent' && r.which==='father');
@@ -231,27 +275,69 @@ function processCreatePerson(payload, reviewerId){
       fatherId = father.relative_id;
       if (!fatherId){
         const frel = father.relative || {};
-        fatherId = createPerson({ full_name: frel.full_name || 'Unknown', birth_year: frel.birth_year||null, birth_date: frel.birth_date||null, gender: 'male', occupation: frel.occupation||null, residence: frel.residence||null, phone: frel.phone||null, photo_path: frel.photo_path||null });
+        fatherId = createPersonRecord({ full_name: frel.full_name || 'Unknown', birth_year: frel.birth_year||null, birth_date: frel.birth_date||null, gender: 'male', occupation: frel.occupation||null, residence: frel.residence||null, phone: frel.phone||null, photo_path: frel.photo_path||null }, reviewerId);
       }
-      addParentChild(personId, fatherId, father.from_family ? 'blood' : 'married-in');
+      linkParentChild(personId, fatherId, father.from_family ? 'blood' : 'married-in');
     }
     if (mother){
       motherId = mother.relative_id;
       if (!motherId){
         const mrel = mother.relative || {};
-        motherId = createPerson({ full_name: mrel.full_name || 'Unknown', birth_year: mrel.birth_year||null, birth_date: mrel.birth_date||null, gender: 'female', occupation: mrel.occupation||null, residence: mrel.residence||null, phone: mrel.phone||null, photo_path: mrel.photo_path||null });
+        motherId = createPersonRecord({ full_name: mrel.full_name || 'Unknown', birth_year: mrel.birth_year||null, birth_date: mrel.birth_date||null, gender: 'female', occupation: mrel.occupation||null, residence: mrel.residence||null, phone: mrel.phone||null, photo_path: mrel.photo_path||null }, reviewerId);
       }
-      addParentChild(personId, motherId, mother.from_family ? 'blood' : 'married-in');
+      linkParentChild(personId, motherId, mother.from_family ? 'blood' : 'married-in');
     }
-    if (fatherId && motherId) addSpouse(fatherId, motherId);
+    if (fatherId && motherId) linkSpouse(fatherId, motherId);
   }
 
   return personId;
 }
 
+// apply an approved self-edit to the person's own record, keeping their existing photo
+// unless a new one was uploaded with the request
+function processUpdatePerson(payload, reviewerId){
+  const current = db.prepare('SELECT * FROM people WHERE id = ?').get(payload.person_id);
+  if (!current) return;
+  const photoPath = payload.photo_path || current.photo_path;
+  db.prepare('UPDATE people SET full_name = ?, gender = ?, birth_year = ?, birth_date = ?, occupation = ?, residence = ?, phone = ?, photo_path = ?, last_edited_by = ?, last_edited_at = ? WHERE id = ?')
+    .run(payload.full_name || current.full_name, payload.gender || current.gender, payload.birth_year || null, payload.birth_date || null, payload.occupation || null, payload.residence || null, payload.phone || null, photoPath, reviewerId, now(), current.id);
+}
+
+// approve a member-submitted "add spouse/child/sibling" request: link to an existing
+// matched profile, or create the new person (with their own login, if provided) and link
+function processAddRelative(payload, reviewerId){
+  const requesterId = payload.requester_person_id;
+  let relativeId = payload.matched_person_id;
+  if (!relativeId){
+    relativeId = createPersonRecord({
+      full_name: payload.full_name, gender: payload.gender || null, birth_year: payload.birth_year || null,
+      birth_date: payload.birth_date || null, occupation: payload.occupation || null, residence: payload.residence || null,
+      phone: payload.phone || null, photo_path: payload.photo_path || null, username: payload.username || null
+    }, reviewerId);
+    createLoginForPerson(relativeId, payload.username, payload.password);
+  }
+
+  if (payload.relation === 'spouse'){
+    linkSpouse(requesterId, relativeId);
+  } else if (payload.relation === 'child'){
+    linkParentChild(relativeId, requesterId, 'blood');
+    if (payload.other_parent_id){
+      const validSpouse = db.prepare("SELECT id FROM relationships WHERE person_id = ? AND relative_id = ? AND type = 'spouse'").get(requesterId, payload.other_parent_id);
+      if (validSpouse) linkParentChild(relativeId, payload.other_parent_id, 'blood');
+    }
+  } else if (payload.relation === 'sibling'){
+    const { fatherId, motherId } = getParentIds(requesterId);
+    let linked = false;
+    if (fatherId && payload.link_via_father !== false){ linkParentChild(relativeId, fatherId, 'blood'); linked = true; }
+    if (motherId && payload.link_via_mother !== false){ linkParentChild(relativeId, motherId, 'blood'); linked = true; }
+    if (!linked) linkSibling(requesterId, relativeId);
+  }
+
+  return relativeId;
+}
+
 router.post('/admin/requests/:id/approve', (req,res)=>{
-  if (!req.session.user) return res.status(401).json({error:'not logged in'});
-  if (!req.session.user.role || req.session.user.role==='member') return res.status(403).json({error:'forbidden'});
+  if (!requireAdmin(req,res)) return;
   const id = req.params.id;
   const reqRow = db.prepare('SELECT * FROM requests WHERE id = ?').get(id);
   if (!reqRow) return res.status(404).json({error:'not found'});
@@ -259,6 +345,10 @@ router.post('/admin/requests/:id/approve', (req,res)=>{
   try{
     if (payload.type==='create_person' || payload.type==='create'){
       processCreatePerson(payload, req.session.user.id);
+    } else if (payload.type==='update_person'){
+      processUpdatePerson(payload, req.session.user.id);
+    } else if (payload.type==='add_relative'){
+      processAddRelative(payload, req.session.user.id);
     }
     db.prepare('UPDATE requests SET status = ?, reviewed_by = ?, reviewed_at = ? WHERE id = ?').run('approved', req.session.user.id, now(), id);
     res.json({ok:true});
@@ -266,6 +356,113 @@ router.post('/admin/requests/:id/approve', (req,res)=>{
     console.error('Approve error', err && err.stack || err);
     res.status(500).json({ error: String(err && err.message ? err.message : err) });
   }
+});
+
+// --- member self-service: edit own profile, change password, add a relative ---
+
+router.get('/member/context', (req,res)=>{
+  if (!requireLoggedInPerson(req,res)) return;
+  const id = req.session.user.person_id;
+  const spouses = getSpouseIds(id).map(sid=> db.prepare('SELECT id, full_name FROM people WHERE id = ?').get(sid)).filter(Boolean);
+  const { fatherId, motherId } = getParentIds(id);
+  const father = fatherId ? db.prepare('SELECT id, full_name FROM people WHERE id = ?').get(fatherId) : null;
+  const mother = motherId ? db.prepare('SELECT id, full_name FROM people WHERE id = ?').get(motherId) : null;
+  res.json({ spouses, father, mother });
+});
+
+// submit a pending request to change one's own profile fields (photo, name, DOB, etc.)
+router.post('/member/profile/update', upload.single('photo'), (req,res)=>{
+  if (!requireLoggedInPerson(req,res)) return;
+  const body = req.body || {};
+  const personId = req.session.user.person_id;
+  const current = db.prepare('SELECT * FROM people WHERE id = ?').get(personId);
+  if (!current) return res.status(404).json({ error: 'profile not found' });
+
+  let birthDate = body.birth_date || null;
+  let birthYear = null;
+  if (birthDate){ try{ const d = new Date(birthDate); if (isFinite(d)) birthYear = d.getFullYear(); else birthDate = null; }catch(e){ birthDate = null; } }
+
+  const payload = {
+    type: 'update_person',
+    person_id: personId,
+    target_name: current.full_name,
+    full_name: body.full_name || current.full_name,
+    gender: body.gender || current.gender,
+    birth_date: birthDate,
+    birth_year: birthYear,
+    occupation: body.occupation || null,
+    residence: body.residence || null,
+    phone: body.phone || null,
+    photo_path: req.file ? '/uploads/' + path.basename(req.file.path) : null
+  };
+  const id = uuidv4();
+  db.prepare('INSERT INTO requests (id, type, payload, status, created_by, created_at) VALUES (?, ?, ?, ?, ?, ?)').run(id, 'update_person', JSON.stringify(payload), 'pending', req.session.user.id, now());
+  res.json({ ok:true, id });
+});
+
+// change one's own password immediately — a security setting, not tree data, so it
+// doesn't go through admin review
+router.post('/member/password', express.json(), (req,res)=>{
+  if (!requireLoggedInPerson(req,res)) return;
+  const { current_password, new_password } = req.body || {};
+  if (!current_password || !new_password) return res.status(400).json({ error: 'Current and new password are required.' });
+  if (String(new_password).length < 4) return res.status(400).json({ error: 'New password is too short.' });
+  const user = db.prepare('SELECT * FROM users WHERE id = ?').get(req.session.user.id);
+  if (!user) return res.status(404).json({ error: 'account not found' });
+  if (!bcrypt.compareSync(current_password, user.password_hash)) return res.status(401).json({ error: 'Current password is incorrect.' });
+  db.prepare('UPDATE users SET password_hash = ? WHERE id = ?').run(bcrypt.hashSync(new_password, 10), user.id);
+  res.json({ ok:true });
+});
+
+// submit a pending request to add a spouse, child, or sibling — either linked to an
+// existing matched profile, or a brand-new one (with its own login) for admin to approve
+router.post('/member/relatives/add', upload.single('photo'), (req,res)=>{
+  if (!requireLoggedInPerson(req,res)) return;
+  const body = req.body || {};
+  const requesterId = req.session.user.person_id;
+  const requester = db.prepare('SELECT * FROM people WHERE id = ?').get(requesterId);
+  if (!requester) return res.status(404).json({ error: 'profile not found' });
+  if (!['spouse','child','sibling'].includes(body.relation)) return res.status(400).json({ error: 'invalid relation' });
+
+  const payload = {
+    type: 'add_relative',
+    relation: body.relation,
+    requester_person_id: requesterId,
+    requester_name: requester.full_name
+  };
+
+  if (body.matched_person_id){
+    payload.matched_person_id = body.matched_person_id;
+  } else {
+    if (!body.full_name) return res.status(400).json({ error: 'Full name is required.' });
+    if (!body.username || !body.password) return res.status(400).json({ error: 'Username and password are required for the new profile.' });
+    if (isUsernameTaken(body.username)) return res.status(409).json({ error: 'That username is already taken. Please choose another.' });
+
+    let birthDate = body.birth_date || null;
+    let birthYear = null;
+    if (birthDate){ try{ const d = new Date(birthDate); if (isFinite(d)) birthYear = d.getFullYear(); else birthDate = null; }catch(e){ birthDate = null; } }
+
+    payload.full_name = body.full_name;
+    payload.gender = body.gender || null;
+    payload.birth_date = birthDate;
+    payload.birth_year = birthYear;
+    payload.occupation = body.occupation || null;
+    payload.residence = body.residence || null;
+    payload.phone = body.phone || null;
+    payload.photo_path = req.file ? '/uploads/' + path.basename(req.file.path) : null;
+    payload.username = body.username;
+    payload.password = body.password;
+  }
+
+  if (body.relation === 'child' && body.other_parent_id) payload.other_parent_id = body.other_parent_id;
+  if (body.relation === 'sibling'){
+    payload.link_via_father = body.link_via_father !== 'false';
+    payload.link_via_mother = body.link_via_mother !== 'false';
+  }
+
+  const id = uuidv4();
+  db.prepare('INSERT INTO requests (id, type, payload, status, created_by, created_at) VALUES (?, ?, ?, ?, ?, ?)').run(id, 'add_relative', JSON.stringify(payload), 'pending', req.session.user.id, now());
+  res.json({ ok:true, id });
 });
 
 // admin: reject request
@@ -368,6 +565,7 @@ router.post('/admin/people/:id/update-multipart', upload.single('photo'), (req,r
   if (!req.session.user.role || req.session.user.role==='member') return res.status(403).json({error:'forbidden'});
   const id = req.params.id;
   const body = req.body || {};
+  const current = db.prepare('SELECT photo_path FROM people WHERE id = ?').get(id);
   const payload = {
     username: body.username || null,
     full_name: body.full_name || null,
@@ -377,7 +575,8 @@ router.post('/admin/people/:id/update-multipart', upload.single('photo'), (req,r
     occupation: body.occupation || null,
     residence: body.residence || null,
     phone: body.phone || null,
-    photo_path: null
+    // keep the existing photo unless a new one was uploaded with this edit
+    photo_path: current ? current.photo_path : null
   };
   if (req.file) payload.photo_path = '/uploads/' + path.basename(req.file.path);
   try{
@@ -542,6 +741,76 @@ router.get('/tree/:id', (req,res)=>{
   }
 
   res.json({ nodes, edges });
+});
+
+// --- Family archive: member-submitted photo/audio/video-link posts, admin-approved ---
+
+function extractYouTubeId(url){
+  if (!url) return null;
+  const m = url.match(/(?:youtube\.com\/watch\?v=|youtu\.be\/|youtube\.com\/embed\/|youtube\.com\/shorts\/)([A-Za-z0-9_-]{11})/);
+  return m ? m[1] : null;
+}
+
+function withPosterInfo(row){
+  const person = row.person_id ? db.prepare('SELECT full_name FROM people WHERE id = ?').get(row.person_id) : null;
+  return { ...row, posted_by_name: person ? person.full_name : null, youtube_id: row.type === 'video' ? extractYouTubeId(row.url) : null };
+}
+
+// submit a pending photo / audio / YouTube-link post
+router.post('/archive', upload.single('file'), (req,res)=>{
+  if (!requireLoggedInPerson(req,res)) return;
+  const body = req.body || {};
+  const type = body.type;
+  if (!['photo','audio','video'].includes(type)) return res.status(400).json({ error: 'invalid type' });
+
+  let filePath = null, url = null;
+  if (type === 'video'){
+    if (!body.url) return res.status(400).json({ error: 'A YouTube link is required.' });
+    if (!extractYouTubeId(body.url)) return res.status(400).json({ error: "That doesn't look like a valid YouTube link." });
+    url = body.url;
+  } else {
+    if (!req.file) return res.status(400).json({ error: type === 'photo' ? 'A photo file is required.' : 'An audio file is required.' });
+    filePath = '/uploads/' + path.basename(req.file.path);
+  }
+
+  const id = uuidv4();
+  db.prepare('INSERT INTO archive (id, title, url, description, file_path, type, person_id, created_by, created_at, approval_status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
+    .run(id, null, url, body.description || null, filePath, type, req.session.user.person_id, req.session.user.id, now(), 'pending');
+  res.json({ ok:true, id });
+});
+
+// approved posts for members to browse, one type at a time
+router.get('/archive', (req,res)=>{
+  if (!requireLoggedInPerson(req,res)) return;
+  const type = req.query.type;
+  if (!['photo','audio','video'].includes(type)) return res.status(400).json({ error: 'invalid type' });
+  const rows = db.prepare("SELECT * FROM archive WHERE type = ? AND approval_status = 'approved' ORDER BY created_at DESC").all(type);
+  res.json(rows.map(withPosterInfo));
+});
+
+// admin: list archive submissions by status
+router.get('/admin/archive', (req,res)=>{
+  if (!requireAdmin(req,res)) return;
+  const status = (req.query.status || 'pending').toLowerCase();
+  if (!['pending','approved','rejected'].includes(status)) return res.status(400).json({ error: 'invalid status' });
+  const rows = db.prepare('SELECT * FROM archive WHERE approval_status = ? ORDER BY created_at DESC').all(status);
+  res.json(rows.map(withPosterInfo));
+});
+
+router.post('/admin/archive/:id/approve', (req,res)=>{
+  if (!requireAdmin(req,res)) return;
+  const row = db.prepare('SELECT id FROM archive WHERE id = ?').get(req.params.id);
+  if (!row) return res.status(404).json({ error: 'not found' });
+  db.prepare("UPDATE archive SET approval_status = 'approved', reviewed_by = ?, reviewed_at = ? WHERE id = ?").run(req.session.user.id, now(), req.params.id);
+  res.json({ ok:true });
+});
+
+router.post('/admin/archive/:id/reject', (req,res)=>{
+  if (!requireAdmin(req,res)) return;
+  const row = db.prepare('SELECT id FROM archive WHERE id = ?').get(req.params.id);
+  if (!row) return res.status(404).json({ error: 'not found' });
+  db.prepare("UPDATE archive SET approval_status = 'rejected', reviewed_by = ?, reviewed_at = ? WHERE id = ?").run(req.session.user.id, now(), req.params.id);
+  res.json({ ok:true });
 });
 
 module.exports = router;

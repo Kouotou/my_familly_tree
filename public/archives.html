@@ -1,0 +1,176 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Family Archives</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <header class="topbar">
+    <h1 id="brand" data-i18n="brand">Famille Nah Adja Mbethe</h1>
+    <div class="toggles">
+      <button id="lang-toggle">FR/EN</button>
+      <button id="theme-toggle">Light/Dark</button>
+    </div>
+  </header>
+  <main>
+    <div style="padding:12px;max-width:1100px;margin:12px auto">
+      <a href="/tree.html" class="secondary-link" data-i18n="archives_back_link">Back to tree</a>
+      <h2 style="margin-top:10px" data-i18n="archives_title">Family Archives</h2>
+
+      <div class="archive-tabs">
+        <button id="tab-photos" class="active" data-i18n="archives_tab_photos">Photos</button>
+        <button id="tab-audios" data-i18n="archives_tab_audios">Audios</button>
+        <button id="tab-videos" data-i18n="archives_tab_videos">Videos</button>
+      </div>
+      <button type="button" id="new-post-btn" class="secondary archive-new-post" data-i18n="archives_new_post">+ New post</button>
+
+      <div id="archive-grid" class="archive-grid"></div>
+    </div>
+  </main>
+
+  <!-- new post modal -->
+  <div id="new-post-modal">
+    <div id="new-post-card">
+      <button id="new-post-close" aria-label="Close">&times;</button>
+      <h3 data-i18n="np_title">New post</h3>
+      <form id="new-post-form">
+        <label data-i18n="np_type">Type
+          <select id="np-type" name="type">
+            <option value="photo" data-i18n="np_type_photo">Photo</option>
+            <option value="audio" data-i18n="np_type_audio">Audio</option>
+            <option value="video" data-i18n="np_type_video">YouTube video link</option>
+          </select>
+        </label>
+        <label id="np-photo-label" data-i18n="np_file_photo">Photo file<input type="file" id="np-photo-file" accept="image/*" /></label>
+        <label id="np-audio-label" class="hidden" data-i18n="np_file_audio">Audio file<input type="file" id="np-audio-file" accept="audio/*" /></label>
+        <label id="np-video-label" class="hidden" data-i18n="np_youtube_url">YouTube link<input type="text" id="np-video-url" placeholder="https://www.youtube.com/watch?v=..." /></label>
+        <label data-i18n="np_caption">Write something about this post<textarea id="np-caption" rows="3"></textarea></label>
+        <button type="submit" data-i18n="np_submit">Submit for admin approval</button>
+      </form>
+      <div id="new-post-feedback" class="hint"></div>
+    </div>
+  </div>
+
+  <script src="/app.js"></script>
+  <script>
+    (function(){
+      let currentTab = 'photo';
+      const tabs = { photo: 'tab-photos', audio: 'tab-audios', video: 'tab-videos' };
+
+      function setActiveTab(type){
+        currentTab = type;
+        Object.entries(tabs).forEach(([k,id])=>{ const el=document.getElementById(id); if (el) el.classList.toggle('active', k===type); });
+      }
+
+      function formatDate(iso){
+        try{ const d = new Date(iso); return d.toLocaleString(); }catch(e){ return iso || ''; }
+      }
+
+      function renderCard(item){
+        const card = document.createElement('div'); card.className = 'archive-card';
+        if (item.type === 'photo' && item.file_path){
+          const img = document.createElement('img'); img.className = 'archive-card-media'; img.src = item.file_path; img.alt = '';
+          card.appendChild(img);
+        } else if (item.type === 'video' && item.youtube_id){
+          const a = document.createElement('a'); a.href = item.url; a.target = '_blank'; a.rel = 'noopener';
+          const img = document.createElement('img'); img.className = 'archive-card-media'; img.src = 'https://img.youtube.com/vi/'+item.youtube_id+'/hqdefault.jpg'; img.alt = '';
+          a.appendChild(img); card.appendChild(a);
+        } else if (item.type === 'audio' && item.file_path){
+          const wrap = document.createElement('div'); wrap.style.padding = '18px 14px 0';
+          const audio = document.createElement('audio'); audio.controls = true; audio.style.width = '100%'; audio.src = item.file_path;
+          wrap.appendChild(audio); card.appendChild(wrap);
+        }
+        const body = document.createElement('div'); body.className = 'archive-card-body';
+        if (item.description){ const p = document.createElement('p'); p.className = 'archive-card-caption'; p.textContent = item.description; body.appendChild(p); }
+        const meta = document.createElement('div'); meta.className = 'archive-card-meta';
+        meta.textContent = item.posted_by_name
+          ? t('archives_posted_by', { name: item.posted_by_name, date: formatDate(item.created_at) })
+          : t('archives_posted_by_unknown', { date: formatDate(item.created_at) });
+        body.appendChild(meta);
+        card.appendChild(body);
+        return card;
+      }
+
+      async function loadTab(type){
+        setActiveTab(type);
+        const grid = document.getElementById('archive-grid');
+        grid.innerHTML = '';
+        try{
+          const items = await api('/archive?type=' + encodeURIComponent(type));
+          if (!Array.isArray(items) || items.length === 0){
+            const empty = document.createElement('div'); empty.className = 'archive-empty';
+            empty.textContent = t('archives_empty_' + type + 's');
+            grid.appendChild(empty);
+            return;
+          }
+          items.forEach(item => grid.appendChild(renderCard(item)));
+        }catch(e){ grid.innerHTML = `<div class="archive-empty">${t('error_loading')}</div>`; }
+      }
+
+      document.getElementById('tab-photos').addEventListener('click', ()=> loadTab('photo'));
+      document.getElementById('tab-audios').addEventListener('click', ()=> loadTab('audio'));
+      document.getElementById('tab-videos').addEventListener('click', ()=> loadTab('video'));
+
+      // new post modal
+      const modal = document.getElementById('new-post-modal');
+      const typeSelect = document.getElementById('np-type');
+      const photoLabel = document.getElementById('np-photo-label');
+      const audioLabel = document.getElementById('np-audio-label');
+      const videoLabel = document.getElementById('np-video-label');
+
+      function syncTypeFields(){
+        const v = typeSelect.value;
+        photoLabel.classList.toggle('hidden', v !== 'photo');
+        audioLabel.classList.toggle('hidden', v !== 'audio');
+        videoLabel.classList.toggle('hidden', v !== 'video');
+      }
+      typeSelect.addEventListener('change', syncTypeFields);
+
+      document.getElementById('new-post-btn').addEventListener('click', ()=>{
+        document.getElementById('new-post-form').reset();
+        typeSelect.value = currentTab;
+        syncTypeFields();
+        document.getElementById('new-post-feedback').textContent = '';
+        modal.style.display = 'flex';
+      });
+      document.getElementById('new-post-close').addEventListener('click', ()=> modal.style.display = 'none');
+      modal.addEventListener('click', (e)=>{ if (e.target === modal) modal.style.display = 'none'; });
+
+      document.getElementById('new-post-form').addEventListener('submit', async (e)=>{
+        e.preventDefault();
+        const feedback = document.getElementById('new-post-feedback');
+        feedback.textContent = t('np_submitting');
+        const data = new FormData();
+        const type = typeSelect.value;
+        data.append('type', type);
+        data.append('description', document.getElementById('np-caption').value);
+        if (type === 'photo'){
+          const f = document.getElementById('np-photo-file').files[0];
+          if (f) data.append('file', f);
+        } else if (type === 'audio'){
+          const f = document.getElementById('np-audio-file').files[0];
+          if (f) data.append('file', f);
+        } else {
+          data.append('url', document.getElementById('np-video-url').value.trim());
+        }
+        try{
+          const res = await fetch('/api/archive', { method:'POST', body:data, credentials:'same-origin' });
+          const j = await res.json();
+          if (j.ok){ feedback.textContent = t('np_submitted_ok'); setTimeout(()=>{ modal.style.display='none'; }, 1400); }
+          else feedback.textContent = j.error || t('np_error_generic');
+        }catch(err){ feedback.textContent = t('network_error'); }
+      });
+
+      (async ()=>{
+        try{
+          const me = await fetch('/api/auth/me', { credentials:'same-origin' });
+          if (!me.ok){ window.location.href = '/'; return; }
+        }catch(e){}
+        loadTab('photo');
+      })();
+    })();
+  </script>
+</body>
+</html>

@@ -8,67 +8,67 @@
 </head>
 <body>
   <header class="topbar">
-    <h1>Famille Nah Adja Mbethe</h1>
+    <h1 data-i18n="brand">Famille Nah Adja Mbethe</h1>
     <div class="toggles">
       <button id="lang-toggle">FR/EN</button>
       <button id="theme-toggle">Light/Dark</button>
     </div>
   </header>
   <main class="center-card">
-    <h2>Create your profile</h2>
+    <h2 data-i18n="reg_title">Create your profile</h2>
     <form id="register-form">
-      <label>Username (this will be your login ID — must be unique)<input name="username" id="reg-username" autocomplete="username" required /></label>
-      <label>Password<input name="password" id="reg-password" type="password" autocomplete="new-password" required /></label>
-      <label>Full name<input name="full_name" id="reg-fullname" required /></label>
-      <label>Gender<select name="gender" id="reg-gender"><option value="male">Male</option><option value="female">Female</option><option value="other">Other</option></select></label>
-      <label>Birth date<input name="birth_date" id="reg-birthdate" type="date" required /></label>
-      <label>Occupation<input name="occupation" id="reg-occupation" /></label>
-      <label>Residence<input name="residence" id="reg-residence" /></label>
-      <label>Phone<input name="phone" id="reg-phone" /></label>
-      <label>Photo<input name="photo" id="reg-photo" type="file" accept="image/*" /></label>
+      <label data-i18n="reg_username_label">Username (this will be your login ID — must be unique)<input name="username" id="reg-username" autocomplete="username" required /></label>
+      <label data-i18n="reg_password_label">Password<input name="password" id="reg-password" type="password" autocomplete="new-password" required /></label>
+      <label data-i18n="reg_fullname_label">Full name<input name="full_name" id="reg-fullname" required /></label>
+      <label data-i18n="reg_gender_label">Gender<select name="gender" id="reg-gender"><option value="male" data-i18n="male">Male</option><option value="female" data-i18n="female">Female</option><option value="other" data-i18n="other">Other</option></select></label>
+      <label data-i18n="reg_birthdate_label">Birth date<input name="birth_date" id="reg-birthdate" type="date" required /></label>
+      <label data-i18n="reg_occupation_label">Occupation<input name="occupation" id="reg-occupation" /></label>
+      <label data-i18n="reg_residence_label">Residence<input name="residence" id="reg-residence" /></label>
+      <label data-i18n="reg_phone_label">Phone<input name="phone" id="reg-phone" /></label>
+      <label data-i18n="reg_photo_label">Photo<input name="photo" id="reg-photo" type="file" accept="image/*" /></label>
       <fieldset class="parent-fieldset" data-parent="father">
-        <legend>Father (optional)</legend>
-        <label>Father's full name<input id="father_name" name="father_name" /></label>
+        <legend data-i18n="reg_father_legend">Father (optional)</legend>
+        <label data-i18n="reg_father_fullname_label">Father's full name<input id="father_name" name="father_name" /></label>
         <div id="father_matches" class="parent-matches"></div>
         <input type="hidden" id="father_id" name="father_id" />
         <div id="father_new_fields" class="parent-new-fields hidden">
-          <p class="hint">No matching profile found. Fill in what you know so the admin can add him to the tree alongside your registration.</p>
-          <label>Birth date<input id="father_birth_date" name="father_birth_date" type="date" /></label>
-          <label>Occupation<input id="father_occupation" name="father_occupation" /></label>
-          <label>Residence<input id="father_residence" name="father_residence" /></label>
-          <label>Phone<input id="father_phone" name="father_phone" /></label>
-          <label>Photo<input id="father_photo" name="father_photo" type="file" accept="image/*" /></label>
-          <label>Is he originally from this family, or did he marry into it?
+          <p class="hint" data-i18n="reg_new_father_hint">No matching profile found. Fill in what you know so the admin can add him to the tree alongside your registration.</p>
+          <label data-i18n="reg_birthdate_label">Birth date<input id="father_birth_date" name="father_birth_date" type="date" /></label>
+          <label data-i18n="reg_occupation_label">Occupation<input id="father_occupation" name="father_occupation" /></label>
+          <label data-i18n="reg_residence_label">Residence<input id="father_residence" name="father_residence" /></label>
+          <label data-i18n="reg_phone_label">Phone<input id="father_phone" name="father_phone" /></label>
+          <label data-i18n="reg_photo_label">Photo<input id="father_photo" name="father_photo" type="file" accept="image/*" /></label>
+          <label data-i18n="reg_origin_question_father">Is he originally from this family, or did he marry into it?
             <select id="father_origin" name="father_origin">
-              <option value="family">Born into this family (blood relative)</option>
-              <option value="married">Married into this family</option>
+              <option value="family" data-i18n="reg_origin_family">Born into this family (blood relative)</option>
+              <option value="married" data-i18n="reg_origin_married">Married into this family</option>
             </select>
           </label>
         </div>
       </fieldset>
       <fieldset class="parent-fieldset" data-parent="mother">
-        <legend>Mother (optional)</legend>
-        <label>Mother's full name<input id="mother_name" name="mother_name" /></label>
+        <legend data-i18n="reg_mother_legend">Mother (optional)</legend>
+        <label data-i18n="reg_mother_fullname_label">Mother's full name<input id="mother_name" name="mother_name" /></label>
         <div id="mother_matches" class="parent-matches"></div>
         <input type="hidden" id="mother_id" name="mother_id" />
         <div id="mother_new_fields" class="parent-new-fields hidden">
-          <p class="hint">No matching profile found. Fill in what you know so the admin can add her to the tree alongside your registration.</p>
-          <label>Birth date<input id="mother_birth_date" name="mother_birth_date" type="date" /></label>
-          <label>Occupation<input id="mother_occupation" name="mother_occupation" /></label>
-          <label>Residence<input id="mother_residence" name="mother_residence" /></label>
-          <label>Phone<input id="mother_phone" name="mother_phone" /></label>
-          <label>Photo<input id="mother_photo" name="mother_photo" type="file" accept="image/*" /></label>
-          <label>Is she originally from this family, or did she marry into it?
+          <p class="hint" data-i18n="reg_new_mother_hint">No matching profile found. Fill in what you know so the admin can add her to the tree alongside your registration.</p>
+          <label data-i18n="reg_birthdate_label">Birth date<input id="mother_birth_date" name="mother_birth_date" type="date" /></label>
+          <label data-i18n="reg_occupation_label">Occupation<input id="mother_occupation" name="mother_occupation" /></label>
+          <label data-i18n="reg_residence_label">Residence<input id="mother_residence" name="mother_residence" /></label>
+          <label data-i18n="reg_phone_label">Phone<input id="mother_phone" name="mother_phone" /></label>
+          <label data-i18n="reg_photo_label">Photo<input id="mother_photo" name="mother_photo" type="file" accept="image/*" /></label>
+          <label data-i18n="reg_origin_question_mother">Is she originally from this family, or did she marry into it?
             <select id="mother_origin" name="mother_origin">
-              <option value="family">Born into this family (blood relative)</option>
-              <option value="married">Married into this family</option>
+              <option value="family" data-i18n="reg_origin_family">Born into this family (blood relative)</option>
+              <option value="married" data-i18n="reg_origin_married">Married into this family</option>
             </select>
           </label>
         </div>
       </fieldset>
       <div style="display:flex;gap:12px;margin-top:12px">
-        <button type="submit">Submit registration (pending admin approval)</button>
-        <a href="/" class="secondary-link">Back to login</a>
+        <button type="submit" data-i18n="reg_submit_btn">Submit registration (pending admin approval)</button>
+        <a href="/" class="secondary-link" data-i18n="reg_back_link">Back to login</a>
       </div>
     </form>
     <div id="register-feedback"></div>

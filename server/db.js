@@ -70,6 +70,16 @@ function init() {
     value TEXT
   );
   `);
+
+  // migrate the archive table forward for family-post support (photo/audio/video-link
+  // posts), without disturbing any rows already in an existing database
+  const archiveCols = db.prepare("PRAGMA table_info(archive)").all().map(c => c.name);
+  const addArchiveCol = (name, def) => { if (!archiveCols.includes(name)) db.exec(`ALTER TABLE archive ADD COLUMN ${name} ${def}`); };
+  addArchiveCol('type', "TEXT DEFAULT 'photo'");
+  addArchiveCol('file_path', 'TEXT');
+  addArchiveCol('person_id', 'TEXT');
+  addArchiveCol('reviewed_by', 'TEXT');
+  addArchiveCol('reviewed_at', 'TEXT');
 }
 
 init();
