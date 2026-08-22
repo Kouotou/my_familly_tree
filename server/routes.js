@@ -404,6 +404,19 @@ router.get('/admin/stats', (req,res)=>{
   res.json({ total, male, female, deceased });
 });
 
+// full tree: return all approved people and all relationships between approved people
+router.get('/tree/full', (req,res)=>{
+  try{
+    const nodes = db.prepare("SELECT * FROM people WHERE approval_status = 'approved'").all();
+    console.log('[tree/full] approved count:', nodes.length, 'sample', nodes.slice(0,3).map(n=>n.full_name));
+    const nodeIds = new Set(nodes.map(n=>n.id));
+    const raw = db.prepare('SELECT person_id, relative_id, type FROM relationships').all();
+    const edges = raw.filter(r=> nodeIds.has(r.person_id) && nodeIds.has(r.relative_id)).map(r=> ({ from: r.person_id, to: r.relative_id, type: r.type }));
+    console.log('[tree/full] edges count:', edges.length);
+    res.json({ nodes, edges });
+  }catch(err){ console.error('tree/full error', err && err.stack || err); res.status(500).json({ error: String(err && err.message ? err.message : err) }); }
+});
+
 // tree endpoint: return nodes and edges around a starting person id
 router.get('/tree/:id', (req,res)=>{
   const start = req.params.id;
@@ -471,17 +484,6 @@ router.get('/tree/:id', (req,res)=>{
   }
 
   res.json({ nodes, edges });
-});
-
-// full tree: return all approved people and all relationships between approved people
-router.get('/tree/full', (req,res)=>{
-  try{
-    const nodes = db.prepare("SELECT * FROM people WHERE approval_status = 'approved'").all();
-    const nodeIds = new Set(nodes.map(n=>n.id));
-    const raw = db.prepare('SELECT person_id, relative_id, type FROM relationships').all();
-    const edges = raw.filter(r=> nodeIds.has(r.person_id) && nodeIds.has(r.relative_id)).map(r=> ({ from: r.person_id, to: r.relative_id, type: r.type }));
-    res.json({ nodes, edges });
-  }catch(err){ console.error('tree/full error', err && err.stack || err); res.status(500).json({ error: String(err && err.message ? err.message : err) }); }
 });
 
 module.exports = router;

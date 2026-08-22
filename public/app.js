@@ -305,42 +305,125 @@ function renderTreeSVG(svg, tree, centerId){
     g.appendChild(line);
   });
 
-  // draw nodes
+  // draw nodes with standard SVG elements for better cross-browser rendering
+  const svgNS = 'http://www.w3.org/2000/svg';
+  const defaultAvatar = '/profile_icons/Female_profile_icon.jfif';
+  const wrapName = (name)=>{
+    const raw = (name || 'Unknown').trim();
+    if (!raw) return ['Unknown'];
+    const words = raw.split(/\s+/);
+    const lines = [];
+    let current = '';
+    for (const word of words){
+      const next = current ? current + ' ' + word : word;
+      if (next.length <= 16){ current = next; continue; }
+      if (current) lines.push(current);
+      current = word;
+    }
+    if (current) lines.push(current);
+    return lines.slice(0,2);
+  };
+
   for (const id of Object.keys(positions)){
     const pos = positions[id];
     const n = nodeMap[id];
-    if (!n) continue; // defensive: skip unknown node
-    const group = document.createElementNS('http://www.w3.org/2000/svg','g');
-    group.setAttribute('class','node');
+    if (!n) continue;
+
+    const group = document.createElementNS(svgNS, 'g');
+    group.setAttribute('class', 'node');
     group.setAttribute('transform', `translate(${pos.x}, ${pos.y})`);
+    group.style.cursor = 'pointer';
 
-    const rect = document.createElementNS('http://www.w3.org/2000/svg','rect');
-    rect.setAttribute('width', nodeW);
-    rect.setAttribute('height', nodeH);
-    rect.setAttribute('rx', 8);
-    rect.setAttribute('ry', 8);
-    rect.setAttribute('fill', id===centerId? '#fffbdd' : '#fff');
-    rect.setAttribute('stroke', '#555');
-    group.appendChild(rect);
+    const cardW = 180;
+    const cardH = 70;
+    const bg = document.createElementNS(svgNS, 'rect');
+    bg.setAttribute('x', '0');
+    bg.setAttribute('y', '0');
+    bg.setAttribute('width', String(cardW));
+    bg.setAttribute('height', String(cardH));
+    bg.setAttribute('rx', '14');
+    bg.setAttribute('ry', '14');
+    bg.setAttribute('fill', id === centerId ? '#fff7dc' : '#ffffff');
+    bg.setAttribute('stroke', id === centerId ? '#f59e0b' : '#d8e0ea');
+    bg.setAttribute('stroke-width', id === centerId ? '2' : '1.2');
+    bg.setAttribute('filter', 'drop-shadow(0 6px 10px rgba(15,23,42,0.08))');
+    group.appendChild(bg);
 
-    const name = document.createElementNS('http://www.w3.org/2000/svg','text');
-    name.setAttribute('x', 10);
-    name.setAttribute('y', 24);
-    name.setAttribute('font-size', '14');
-    name.textContent = n.full_name || 'Unknown';
-    group.appendChild(name);
+    const clipId = `clip-${id.replace(/[^a-zA-Z0-9]/g,'')}`;
+    const clip = document.createElementNS(svgNS, 'clipPath');
+    clip.setAttribute('id', clipId);
+    const clipCircle = document.createElementNS(svgNS, 'circle');
+    clipCircle.setAttribute('cx', '30');
+    clipCircle.setAttribute('cy', '35');
+    clipCircle.setAttribute('r', '20');
+    clip.appendChild(clipCircle);
+    g.appendChild(clip);
 
-    const sub = document.createElementNS('http://www.w3.org/2000/svg','text');
-    sub.setAttribute('x', 10);
-    sub.setAttribute('y', 44);
-    sub.setAttribute('font-size', '12');
-    sub.setAttribute('fill','#666');
-    sub.textContent = n.birth_year || '';
-    group.appendChild(sub);
+    const img = document.createElementNS(svgNS, 'image');
+    img.setAttribute('href', n.photo_path || defaultAvatar);
+    img.setAttribute('x', '10');
+    img.setAttribute('y', '15');
+    img.setAttribute('width', '40');
+    img.setAttribute('height', '40');
+    img.setAttribute('preserveAspectRatio', 'xMidYMid slice');
+    img.setAttribute('clip-path', `url(#${clipId})`);
+    img.setAttribute('opacity', '1');
+    img.addEventListener('error', () => { img.setAttribute('href', defaultAvatar); });
+    group.appendChild(img);
 
-    // click to show info modal
+    const lines = wrapName(n.full_name || 'Unknown');
+    lines.forEach((line, idx)=>{
+      const text = document.createElementNS(svgNS, 'text');
+      text.setAttribute('x', '62');
+      text.setAttribute('y', String(28 + idx * 15));
+      text.setAttribute('font-size', idx === 0 ? '13' : '12');
+      text.setAttribute('font-weight', idx === 0 ? '700' : '500');
+      text.setAttribute('fill', '#0f172a');
+      text.textContent = line;
+      group.appendChild(text);
+    });
+
+    const year = document.createElementNS(svgNS, 'text');
+    year.setAttribute('x', '62');
+    year.setAttribute('y', '58');
+    year.setAttribute('font-size', '11');
+    year.setAttribute('fill', '#64748b');
+    year.textContent = n.birth_year || '—';
+    group.appendChild(year);
+
+    const infoBtn = document.createElementNS(svgNS, 'g');
+    infoBtn.setAttribute('transform', 'translate(150 13)');
+    infoBtn.style.cursor = 'pointer';
+    infoBtn.addEventListener('click', (evt)=>{ evt.preventDefault(); evt.stopPropagation(); showProfileModal(n, nodeMap, edges); });
+    const infoBox = document.createElementNS(svgNS, 'rect');
+    infoBox.setAttribute('x', '0');
+    infoBox.setAttribute('y', '0');
+    infoBox.setAttribute('width', '18');
+    infoBox.setAttribute('height', '18');
+    infoBox.setAttribute('rx', '5');
+    infoBox.setAttribute('fill', 'rgba(59,130,246,0.08)');
+    infoBox.setAttribute('stroke', '#60a5fa');
+    infoBtn.appendChild(infoBox);
+    for (let i = 0; i < 3; i++){
+      const dot = document.createElementNS(svgNS, 'circle');
+      dot.setAttribute('cx', String(9 + i * 0));
+      dot.setAttribute('cy', String(9));
+      dot.setAttribute('r', '2');
+      dot.setAttribute('fill', '#2563eb');
+      infoBtn.appendChild(dot);
+    }
+    group.appendChild(infoBtn);
+
+    const cardArea = document.createElementNS(svgNS, 'rect');
+    cardArea.setAttribute('x', '0');
+    cardArea.setAttribute('y', '0');
+    cardArea.setAttribute('width', String(cardW));
+    cardArea.setAttribute('height', String(cardH));
+    cardArea.setAttribute('fill', 'transparent');
+    cardArea.style.pointerEvents = 'all';
+    group.appendChild(cardArea);
+
     group.addEventListener('click', (evt)=>{ evt.stopPropagation(); showProfileModal(n, nodeMap, edges); });
-
     g.appendChild(group);
   }
 
