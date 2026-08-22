@@ -17,8 +17,8 @@
   <main class="center-card">
     <h2>Create your profile</h2>
     <form id="register-form">
-      <label>Username (optional)<input name="username" id="reg-username" /></label>
-      <label>Password (optional)<input name="password" id="reg-password" type="password" /></label>
+      <label>Username (this will be your login ID — must be unique)<input name="username" id="reg-username" autocomplete="username" required /></label>
+      <label>Password<input name="password" id="reg-password" type="password" autocomplete="new-password" required /></label>
       <label>Full name<input name="full_name" id="reg-fullname" required /></label>
       <label>Gender<select name="gender" id="reg-gender"><option value="male">Male</option><option value="female">Female</option><option value="other">Other</option></select></label>
       <label>Birth date<input name="birth_date" id="reg-birthdate" type="date" required /></label>

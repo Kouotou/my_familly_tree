@@ -24,49 +24,22 @@ function requireAdmin(req,res){
   return true;
 }
 
-// Public: login by full name + date of birth (ISO string or YYYY-MM-DD)
-router.post('/auth/login-by-dob', (req,res)=>{
-  const fullName = req.body.fullName || req.body.full_name || '';
-  const birthDateRaw = req.body.birth_date || req.body.birthDate || req.body.birth || null;
-  if (!fullName || !birthDateRaw) return res.status(400).json({error:'missing'});
-  const norm = normalizeName(fullName);
-  const people = db.prepare("SELECT * FROM people WHERE approval_status = 'approved'").all();
-
-  // Normalize incoming date to YYYY-MM-DD when possible
-  let inDate = null;
-  try{ inDate = new Date(birthDateRaw); if (!isFinite(inDate)) inDate = null; }
-  catch(e){ inDate = null; }
-  const inYear = inDate ? inDate.getFullYear() : (String(birthDateRaw||'').slice(0,4) || null);
-
-  const matches = people.filter(p=>{
-    if (normalizeName(p.full_name)!==norm) return false;
-    // if person has full birth_date stored, compare full date if provided, otherwise compare year
-    if (p.birth_date){
-      if (!inDate) return (String(p.birth_year)===String(inYear));
-      const pd = new Date(p.birth_date);
-      return pd.toISOString().slice(0,10) === inDate.toISOString().slice(0,10);
-    }
-    // fallback to birth_year
-    return String(p.birth_year)===String(inYear);
-  });
-
-  if (matches.length===1){
-    req.session.user = { id: matches[0].id, role: 'member', person_id: matches[0].id };
-    return res.json({ ok:true, person: matches[0] });
-  }
-  return res.status(404).json({ error: 'no matching profile' });
-});
-
-// Admin login username/password
-router.post('/auth/admin-login', (req,res)=>{
-  const { username, password } = req.body;
+// Login by username + password — used for both members and admins. Username is each
+// person's unique login id (assigned at registration, or by an admin for accounts they
+// create directly).
+function handleLogin(req, res){
+  const { username, password } = req.body || {};
+  if (!username || !password) return res.status(400).json({ error: 'username and password are required' });
   const user = db.prepare('SELECT * FROM users WHERE username = ?').get(username);
   if (!user) return res.status(401).json({ error: 'invalid' });
   const ok = bcrypt.compareSync(password, user.password_hash);
   if (!ok) return res.status(401).json({ error: 'invalid' });
   req.session.user = { id: user.id, role: user.role, person_id: user.person_id };
-  return res.json({ ok:true, role: user.role });
-});
+  return res.json({ ok:true, role: user.role, person_id: user.person_id });
+}
+router.post('/auth/login', handleLogin);
+// kept as an alias so the existing admin-login page keeps working unchanged
+router.post('/auth/admin-login', handleLogin);
 
 router.post('/auth/logout',(req,res)=>{ req.session.destroy(()=>res.json({ok:true})); });
 
@@ -116,6 +89,15 @@ router.post('/auth/register', upload.fields([
 ]), (req,res)=>{
   const body = req.body || {};
   const files = req.files || {};
+
+  // username/password are mandatory — the username becomes this person's unique login id.
+  if (!body.username || !body.password) return res.status(400).json({ error: 'Username and password are required.' });
+  const usernameTakenByPerson = db.prepare('SELECT id FROM people WHERE username = ?').get(body.username);
+  const usernameTakenByUser = db.prepare('SELECT id FROM users WHERE username = ?').get(body.username);
+  const pendingRequests = db.prepare("SELECT payload FROM requests WHERE status = 'pending'").all();
+  const usernameTakenByPending = pendingRequests.some(r=>{ try{ return JSON.parse(r.payload).username === body.username; }catch(e){ return false; } });
+  if (usernameTakenByPerson || usernameTakenByUser || usernameTakenByPending) return res.status(409).json({ error: 'That username is already taken. Please choose another.' });
+
   if (files.photo && files.photo[0]) body.photo_path = '/uploads/' + path.basename(files.photo[0].path);
   // prefer full birth_date (YYYY-MM-DD). If only year provided, store as birth_year.
   let birthDate = body.birth_date || null;

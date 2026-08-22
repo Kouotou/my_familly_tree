@@ -110,18 +110,18 @@ const loginForm = document.getElementById('login-form');
 if (loginForm){
   loginForm.addEventListener('submit', async e=>{
     e.preventDefault();
-    const fullName = document.getElementById('fullName').value;
-    const birthDate = document.getElementById('birthDate') ? document.getElementById('birthDate').value : null;
+    const username = document.getElementById('loginUsername').value;
+    const password = document.getElementById('loginPassword').value;
     const feedback = document.getElementById('login-feedback');
     try{
-      const r = await api('/auth/login-by-dob',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({fullName,birth_date:birthDate})});
+      const r = await api('/auth/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username,password})});
       if (r.ok){
-        showAppView(r.person);
+        location.href = (r.role === 'member') ? '/tree.html' : '/admin.html';
       } else {
-        feedback.textContent = 'No matching profile found. You can create your own profile.';
+        feedback.textContent = 'Incorrect username or password.';
       }
     }catch(err){
-      feedback.textContent = 'No matching profile found. You can create your own profile.';
+      feedback.textContent = 'Incorrect username or password.';
     }
   });
 }
@@ -307,19 +307,13 @@ if (registerForm){
       const res = await fetch('/api/auth/register', { method:'POST', body: data });
       const j = await res.json();
       if (j.ok){ if (feedback) feedback.textContent = 'Registration submitted and pending admin approval.'; setTimeout(()=>{ location.href = '/'; }, 1400); }
-      else if (feedback) feedback.textContent = 'Error: ' + JSON.stringify(j);
+      else if (feedback) feedback.textContent = j && j.error ? j.error : 'Something went wrong. Please try again.';
     }catch(err){ if (feedback) feedback.textContent = 'Network error'; }
   });
 }
 
 const backToLanding = document.getElementById('back-to-landing');
 if (backToLanding){ backToLanding.addEventListener('click', async ()=>{ await api('/auth/logout',{method:'POST'}); location.href = '/'; }); }
-
-function showAppView(person){
-  // after login, redirect user to dedicated tree page
-  // pass no sensitive info in URL — tree page will call /api/auth/me
-  location.href = '/tree.html';
-}
 
 async function loadTree(){
   const svg = document.getElementById('tree-svg');
@@ -633,13 +627,13 @@ function renderTreeSVG(svg, tree, centerId, rootId){
       group.appendChild(text);
     });
 
-    const year = document.createElementNS(svgNS, 'text');
-    year.setAttribute('x', '62');
-    year.setAttribute('y', '58');
-    year.setAttribute('font-size', '11');
-    year.setAttribute('fill', '#8a7860');
-    year.textContent = n.birth_year || '—';
-    group.appendChild(year);
+    const genderLabel = document.createElementNS(svgNS, 'text');
+    genderLabel.setAttribute('x', '62');
+    genderLabel.setAttribute('y', '58');
+    genderLabel.setAttribute('font-size', '11');
+    genderLabel.setAttribute('fill', '#8a7860');
+    genderLabel.textContent = n.gender ? (n.gender.charAt(0).toUpperCase() + n.gender.slice(1)) : '—';
+    group.appendChild(genderLabel);
 
     const infoBtn = document.createElementNS(svgNS, 'g');
     infoBtn.setAttribute('transform', 'translate(170 13)');
@@ -740,7 +734,7 @@ const translations = {
   en: {
     brand: 'Famille Nah Adja Mbethe',
     welcome: 'Welcome',
-    landingDesc: 'Find your place in the family tree — quick login with your name and birth year.',
+    landingDesc: 'Find your place in the family tree — log in with your username and password.',
     loginBtn: 'Log in',
     createProfile: 'Profile not found — create your own profile',
     adminLink: 'Administrator login',
@@ -758,7 +752,7 @@ const translations = {
   fr: {
     brand: 'Famille Nah Adja Mbethe',
     welcome: 'Bienvenue',
-    landingDesc: 'Trouvez votre place dans l\'arbre généalogique — connexion rapide avec votre nom et votre date de naissance.',
+    landingDesc: 'Trouvez votre place dans l\'arbre généalogique — connectez-vous avec votre nom d\'utilisateur et votre mot de passe.',
     loginBtn: 'Se connecter',
     createProfile: 'Profil introuvable — créez votre profil',
     adminLink: 'Connexion administrateur',
@@ -793,9 +787,9 @@ function applyLang(lang){
   setText('tab-approved', t.approved);
   setText('tab-rejected', t.rejected);
   setText('admin-login-title', t.adminLoginTitle);
-  // labels inside admin login
-  const lu = document.getElementById('label-username'); if (lu) lu.childNodes[0].textContent = t.username + '\n';
-  const lp = document.getElementById('label-password'); if (lp) lp.childNodes[0].textContent = t.password + '\n';
+  // labels inside admin login and the member login form
+  ['label-username','label-login-username'].forEach(id=>{ const el = document.getElementById(id); if (el) el.childNodes[0].textContent = t.username + '\n'; });
+  ['label-password','label-login-password'].forEach(id=>{ const el = document.getElementById(id); if (el) el.childNodes[0].textContent = t.password + '\n'; });
 }
 
 applyLang(localStorage.getItem('ft_lang') || 'en');

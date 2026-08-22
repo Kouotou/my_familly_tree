@@ -20,13 +20,13 @@
       <section id="landing">
         <div class="left-card">
           <h2 id="landing-title" style="margin-top:0">Welcome</h2>
-          <p id="landing-desc" style="color:var(--muted)">Find your place in the family tree — quick login with your name and birth year.</p>
+          <p id="landing-desc" style="color:var(--muted)">Find your place in the family tree — log in with your username and password.</p>
           <form id="login-form">
-            <label>Full name
-              <input id="fullName" type="text" placeholder="e.g. John Doe" />
+            <label id="label-login-username">Username
+              <input id="loginUsername" type="text" autocomplete="username" placeholder="e.g. jdoe" />
             </label>
-            <label>Birth date
-              <input id="birthDate" type="date" />
+            <label id="label-login-password">Password
+              <input id="loginPassword" type="password" autocomplete="current-password" />
             </label>
             <button id="login-btn" type="submit">Log in</button>
           </form>
@@ -50,8 +50,8 @@
       <section id="register" class="hidden">
         <h3>Create your profile</h3>
         <form id="register-form">
-          <label>Username (optional)<input name="username" id="reg-username" /></label>
-          <label>Password (optional)<input name="password" id="reg-password" type="password" /></label>
+          <label>Username<input name="username" id="reg-username" required /></label>
+          <label>Password<input name="password" id="reg-password" type="password" required /></label>
           <label>Full name<input name="full_name" id="reg-fullname" required /></label>
           <label>Gender<select name="gender" id="reg-gender"><option value="male">Male</option><option value="female">Female</option><option value="other">Other</option></select></label>
           <label>Birth date<input name="birth_date" id="reg-birthdate" type="date" required /></label>
