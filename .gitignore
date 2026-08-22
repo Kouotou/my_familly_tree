@@ -1,6 +1,9 @@
 node_modules/
 .env
 data.sqlite
+
+# session-continuity notes for Claude Code — kept local only, not pushed to GitHub
+IMPLEMENTATION_DETAIL.md
 server/uploads/
 public/uploads/
 *.log
