@@ -951,10 +951,20 @@ function renderTreeSVG(svg, tree, centerId, rootId){
     g.appendChild(group);
   }
 
-  // setup pan/zoom
-  initPanZoom(svg, g);
+  // setup pan/zoom, then center the initial view on the logged-in member's own card —
+  // otherwise a member whose card lands in a second column (e.g. they're a spouse, not
+  // the left-hand member of the pair) can find their own node rendered off-screen,
+  // especially on a narrow phone viewport
+  const panZoom = initPanZoom(svg, g);
+  svg.__panZoom = panZoom;
+  const myNode = svg.querySelector(`.node[data-id="${centerId}"]`);
+  if (myNode) panZoom.centerOnNode(myNode);
 }
 
+// Returns a controller so callers (auto-center on load, the "Center on me" button) can
+// move the view without desyncing from the pan/zoom gesture state — setting the SVG
+// transform directly from outside, without going through here, would get silently
+// overwritten by the next drag/wheel event since this closure wouldn't know about it.
 function initPanZoom(svg, viewport){
   let scale = 1; let tx = 0; let ty = 0; let dragging=false; let lastX=0; let lastY=0;
   function apply(){ viewport.setAttribute('transform', `translate(${tx},${ty}) scale(${scale})`); }
@@ -969,6 +979,24 @@ function initPanZoom(svg, viewport){
   });
   svg.addEventListener('pointermove', e=>{ if (!dragging) return; const dx = e.clientX - lastX; const dy = e.clientY - lastY; lastX = e.clientX; lastY = e.clientY; tx += dx; ty += dy; apply(); });
   svg.addEventListener('pointerup', e=>{ dragging=false; try{ svg.releasePointerCapture(e.pointerId); }catch(_){} });
+  return {
+    // Center the view on a node, at a given scale (defaults to whatever scale is already
+    // in effect). Reads the node's own translate(x,y) directly rather than getBBox() —
+    // getBBox() on the node returns its LOCAL content box (~0,0), not its position within
+    // #viewport, which silently centered on the wrong point.
+    centerOnNode(node, targetScale){
+      if (!node) return;
+      const m = (node.getAttribute('transform') || '').match(/translate\(([-\d.]+)[,\s]+([-\d.]+)\)/);
+      if (!m) return;
+      const nodeX = parseFloat(m[1]), nodeY = parseFloat(m[2]);
+      const box = node.getBBox(); // local size only (width/height), not position
+      if (typeof targetScale === 'number') scale = targetScale;
+      const svgW = svg.clientWidth || 1200, svgH = svg.clientHeight || 800;
+      tx = svgW/2 - (nodeX + box.width/2) * scale;
+      ty = svgH/2 - (nodeY + box.height/2) * scale;
+      apply();
+    }
+  };
 }
 
 // --- hamburger sidebar (Archives + Family tree summary) ---
@@ -1134,17 +1162,10 @@ if (centerBtn){
   centerBtn.addEventListener('click', async ()=>{
     const me = await api('/auth/me');
     const svg = document.getElementById('tree-svg');
-    if (!svg) return;
-    const viewport = svg.querySelector('#viewport');
-    if (!viewport) return;
+    if (!svg || !svg.__panZoom) return;
     const node = (me.person && svg.querySelector(`.node[data-id="${me.person.id}"]`)) || svg.querySelector('.node');
     if (!node) return;
-    // center logic: compute bbox of node and translate so it's centered in view
-    const bbox = node.getBBox();
-    const svgW = svg.clientWidth, svgH = svg.clientHeight;
-    const tx = svgW/2 - (bbox.x + bbox.width/2);
-    const ty = svgH/2 - (bbox.y + bbox.height/2);
-    viewport.setAttribute('transform', `translate(${tx},${ty}) scale(1)`);
+    svg.__panZoom.centerOnNode(node, 1);
   });
 }
 

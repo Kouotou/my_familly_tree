@@ -187,7 +187,7 @@ button.secondary:hover{ background:var(--accent-soft); }
 	margin-top:18px; background: linear-gradient(180deg, var(--card) 0%, var(--card-alt) 120%);
 	padding:16px; border-radius:var(--rounded-lg); box-shadow:var(--shadow); border:1px solid var(--border);
 }
-#tree-svg{ background: transparent; border-radius:10px }
+#tree-svg{ background: transparent; border-radius:10px; touch-action:none; display:block; max-width:100% }
 
 .tree-controls{ display:flex; gap:8px; margin:14px 0 4px }
 .tree-controls button{ margin-top:0 }
@@ -390,10 +390,38 @@ button.secondary:hover{ background:var(--accent-soft); }
 	line-height:1; display:grid; place-items:center; padding:0; margin:0; box-shadow:none;
 }
 
+/* --- admin toolbar rows (tabs + logout/refresh) --- */
+.admin-toolbar{ display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px }
+.admin-toolbar-group{ display:flex; gap:8px; align-items:center; flex-wrap:wrap }
+
+/* --- request/archive card body: photo + details, stacks on narrow screens --- */
+.request-item-body{ display:flex; gap:12px; margin-top:10px; flex-wrap:wrap }
+.request-item-media{ min-width:120px }
+
+/* html/body must never scroll sideways — anything that would overflow scrolls internally instead */
+html, body{ overflow-x:hidden; max-width:100% }
+
 @media(max-width:900px){
 	.topbar h1{ font-size:22px }
 	main{ padding:20px }
 	.left-card{ width:100% }
 	#landing{ flex-direction:column }
 	#tree-svg{ width:100%; height:600px }
+	.archive-grid{ grid-template-columns:repeat(auto-fill, minmax(200px,1fr)) }
+}
+
+@media(max-width:640px){
+	main{ padding:14px }
+	.topbar{ padding:14px 16px; flex-wrap:wrap; gap:10px }
+	.topbar h1{ font-size:19px }
+	.toggles button{ padding:7px 10px; font-size:12px }
+	.left-card, .center-card{ padding:20px }
+	#profile-card, #edit-profile-card, #add-relative-card, #new-post-card{ padding:18px; max-width:100% }
+	.request-item-media{ min-width:100%; }
+	.request-item-media img, .request-item-media > div{ width:100% !important; max-width:220px }
+	.tree-controls{ flex-wrap:wrap }
+	#sidebar-drawer{ width:100%; max-width:100% }
+	/* form inputs at 16px prevent iOS Safari's automatic zoom-on-focus */
+	input[type="text"], input[type="number"], input[type="password"], input[type="date"], input[type="tel"],
+	input:not([type]), select, textarea{ font-size:16px }
 }

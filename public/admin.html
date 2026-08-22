@@ -42,13 +42,13 @@
         </form>
       </div>
     </div>
-    <div style="display:flex;justify-content:space-between;align-items:center">
-      <div style="display:flex;gap:8px;align-items:center">
+    <div class="admin-toolbar">
+      <div class="admin-toolbar-group">
         <button id="tab-pending" class="active" data-i18n="pending">Pending</button>
         <button id="tab-approved" data-i18n="approved">Approved</button>
         <button id="tab-rejected" data-i18n="rejected">Rejected</button>
       </div>
-      <div style="display:flex;gap:8px;align-items:center">
+      <div class="admin-toolbar-group">
         <button id="admin-logout" data-i18n="admin_logout_btn">Logout</button>
         <button id="refresh-requests" data-i18n="admin_refresh_btn">Refresh</button>
       </div>
@@ -57,7 +57,7 @@
     <div id="requestsArea">Loading...</div>
 
     <h3 style="margin-top:32px" data-i18n="admin_archive_tab">Archive posts</h3>
-    <div style="display:flex;gap:8px;align-items:center;margin-bottom:12px">
+    <div class="admin-toolbar-group" style="margin-bottom:12px">
       <button id="atab-pending" class="active" data-i18n="pending">Pending</button>
       <button id="atab-approved" data-i18n="approved">Approved</button>
       <button id="atab-rejected" data-i18n="rejected">Rejected</button>
@@ -82,8 +82,8 @@
       header.appendChild(meta);
       container.appendChild(header);
 
-      const body = document.createElement('div'); body.style.display='flex'; body.style.gap='12px'; body.style.marginTop='10px';
-      const left = document.createElement('div'); left.style.minWidth='120px';
+      const body = document.createElement('div'); body.className = 'request-item-body';
+      const left = document.createElement('div'); left.className = 'request-item-media';
       if (req.payload.photo_path){ const img = document.createElement('img'); img.src = req.payload.photo_path; img.style.width='120px'; img.style.height='120px'; img.style.objectFit='cover'; img.style.borderRadius='8px'; left.appendChild(img); } else { const placeholder = document.createElement('div'); placeholder.style.width='120px'; placeholder.style.height='120px'; placeholder.style.background='#f3f4f6'; placeholder.style.borderRadius='8px'; placeholder.style.display='flex'; placeholder.style.alignItems='center'; placeholder.style.justifyContent='center'; placeholder.style.color='var(--muted)'; placeholder.textContent=t('req_no_photo'); left.appendChild(placeholder); }
       body.appendChild(left);
 
@@ -299,8 +299,8 @@
       header.innerHTML = `<strong>${title}</strong><div style="font-size:12px;color:var(--muted)">${t('admin_archive_field_type')}: ${item.type} — ${new Date(item.created_at).toLocaleString()}</div>`;
       container.appendChild(header);
 
-      const body = document.createElement('div'); body.style.display='flex'; body.style.gap='12px'; body.style.marginTop='10px';
-      const left = document.createElement('div'); left.style.minWidth='140px';
+      const body = document.createElement('div'); body.className = 'request-item-body';
+      const left = document.createElement('div'); left.className = 'request-item-media';
       if (item.type === 'photo' && item.file_path){
         const img = document.createElement('img'); img.src = item.file_path; img.style.width='140px'; img.style.height='140px'; img.style.objectFit='cover'; img.style.borderRadius='8px'; left.appendChild(img);
       } else if (item.type === 'video' && item.youtube_id){
