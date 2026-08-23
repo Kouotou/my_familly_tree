@@ -179,6 +179,7 @@ async function ensureSchema() {
       ALTER TABLE archive ADD COLUMN IF NOT EXISTS person_id TEXT;
       ALTER TABLE archive ADD COLUMN IF NOT EXISTS reviewed_by TEXT;
       ALTER TABLE archive ADD COLUMN IF NOT EXISTS reviewed_at TEXT;
+      ALTER TABLE archive ADD COLUMN IF NOT EXISTS event_type TEXT;
     `);
     console.log('[db] schema ready (postgres)');
   } finally {

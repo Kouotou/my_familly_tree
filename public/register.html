@@ -17,18 +17,19 @@
   <main class="center-card">
     <h2 data-i18n="reg_title">Create your profile</h2>
     <form id="register-form">
-      <label data-i18n="reg_username_label">Username (this will be your login ID — must be unique)<input name="username" id="reg-username" autocomplete="username" required /></label>
-      <label data-i18n="reg_password_label">Password<input name="password" id="reg-password" type="password" autocomplete="new-password" required /></label>
-      <label data-i18n="reg_fullname_label">Full name<input name="full_name" id="reg-fullname" required /></label>
+      <label data-i18n="reg_username_label">Username (this will be your login ID — must be unique)<span class="required-mark">*</span><input name="username" id="reg-username" autocomplete="username" required /></label>
+      <label data-i18n="reg_password_label">Password<span class="required-mark">*</span><input name="password" id="reg-password" type="password" autocomplete="new-password" required /></label>
+      <label data-i18n="reg_fullname_label">Full name<span class="required-mark">*</span><input name="full_name" id="reg-fullname" required /></label>
       <label data-i18n="reg_gender_label">Gender<select name="gender" id="reg-gender"><option value="male" data-i18n="male">Male</option><option value="female" data-i18n="female">Female</option><option value="other" data-i18n="other">Other</option></select></label>
       <label data-i18n="reg_birthdate_label">Birth date<input name="birth_date" id="reg-birthdate" type="date" required /></label>
+      <label data-i18n="reg_deathdate_label">Date of death (leave blank if living)<input name="death_date" id="reg-deathdate" type="date" /></label>
       <label data-i18n="reg_occupation_label">Occupation<input name="occupation" id="reg-occupation" /></label>
       <label data-i18n="reg_residence_label">Residence<input name="residence" id="reg-residence" /></label>
       <label data-i18n="reg_phone_label">Phone<input name="phone" id="reg-phone" /></label>
       <label data-i18n="reg_photo_label">Photo<input name="photo" id="reg-photo" type="file" accept="image/*" /></label>
       <fieldset class="parent-fieldset" data-parent="father">
-        <legend data-i18n="reg_father_legend">Father (optional)</legend>
-        <label data-i18n="reg_father_fullname_label">Father's full name<input id="father_name" name="father_name" /></label>
+        <legend data-i18n="reg_father_legend">Father<span class="required-mark">*</span></legend>
+        <label data-i18n="reg_father_fullname_label">Father's full name<input id="father_name" name="father_name" required /></label>
         <div id="father_matches" class="parent-matches"></div>
         <input type="hidden" id="father_id" name="father_id" />
         <div id="father_new_fields" class="parent-new-fields hidden">
@@ -47,8 +48,8 @@
         </div>
       </fieldset>
       <fieldset class="parent-fieldset" data-parent="mother">
-        <legend data-i18n="reg_mother_legend">Mother (optional)</legend>
-        <label data-i18n="reg_mother_fullname_label">Mother's full name<input id="mother_name" name="mother_name" /></label>
+        <legend data-i18n="reg_mother_legend">Mother<span class="required-mark">*</span></legend>
+        <label data-i18n="reg_mother_fullname_label">Mother's full name<input id="mother_name" name="mother_name" required /></label>
         <div id="mother_matches" class="parent-matches"></div>
         <input type="hidden" id="mother_id" name="mother_id" />
         <div id="mother_new_fields" class="parent-new-fields hidden">

@@ -202,6 +202,7 @@ function openEditProfileModal(person){
           <label data-i18n="ep_fullname">Full name<input type="text" id="ep-fullname" required /></label>
           <label data-i18n="ep_gender">Gender<select id="ep-gender"><option value="male" data-i18n="male">Male</option><option value="female" data-i18n="female">Female</option><option value="other" data-i18n="other">Other</option></select></label>
           <label data-i18n="ep_birthdate">Birth date<input type="date" id="ep-birthdate" /></label>
+          <label data-i18n="ep_deathdate">Date of death (leave blank if living)<input type="date" id="ep-deathdate" /></label>
           <label data-i18n="ep_occupation">Occupation<input type="text" id="ep-occupation" /></label>
           <label data-i18n="ep_residence">Residence<input type="text" id="ep-residence" /></label>
           <label data-i18n="ep_phone">Phone<input type="text" id="ep-phone" /></label>
@@ -230,6 +231,7 @@ function openEditProfileModal(person){
   modal.querySelector('#ep-fullname').value = person.full_name || '';
   modal.querySelector('#ep-gender').value = (person.gender || 'male').toLowerCase();
   modal.querySelector('#ep-birthdate').value = person.birth_date || '';
+  modal.querySelector('#ep-deathdate').value = person.death_date || '';
   modal.querySelector('#ep-occupation').value = person.occupation || '';
   modal.querySelector('#ep-residence').value = person.residence || '';
   modal.querySelector('#ep-phone').value = person.phone || '';
@@ -249,6 +251,7 @@ async function submitEditProfile(e){
   data.append('full_name', modal.querySelector('#ep-fullname').value);
   data.append('gender', modal.querySelector('#ep-gender').value);
   data.append('birth_date', modal.querySelector('#ep-birthdate').value);
+  data.append('death_date', modal.querySelector('#ep-deathdate').value);
   data.append('occupation', modal.querySelector('#ep-occupation').value);
   data.append('residence', modal.querySelector('#ep-residence').value);
   data.append('phone', modal.querySelector('#ep-phone').value);
@@ -293,6 +296,7 @@ async function openAddRelativeModal(relation, person){
           <p class="hint" data-i18n="ar_new_hint">No matching profile found. Fill in what you know — the admin will review it.</p>
           <label data-i18n="ar_gender">Gender<select id="ar-gender"><option value="male" data-i18n="male">Male</option><option value="female" data-i18n="female">Female</option><option value="other" data-i18n="other">Other</option></select></label>
           <label data-i18n="ar_birthdate">Birth date<input type="date" id="ar-birthdate" /></label>
+          <label data-i18n="ar_deathdate">Date of death (leave blank if living)<input type="date" id="ar-deathdate" /></label>
           <label data-i18n="ar_occupation">Occupation<input type="text" id="ar-occupation" /></label>
           <label data-i18n="ar_residence">Residence<input type="text" id="ar-residence" /></label>
           <label data-i18n="ar_phone">Phone<input type="text" id="ar-phone" /></label>
@@ -328,6 +332,7 @@ async function openAddRelativeModal(relation, person){
   feedback.textContent = '';
   modal.querySelector('#ar-gender').value = 'male';
   modal.querySelector('#ar-birthdate').value = '';
+  modal.querySelector('#ar-deathdate').value = '';
   modal.querySelector('#ar-occupation').value = '';
   modal.querySelector('#ar-residence').value = '';
   modal.querySelector('#ar-phone').value = '';
@@ -413,12 +418,15 @@ async function openAddRelativeModal(relation, person){
     } else {
       const name = nameInput.value.trim();
       if (!name){ feedback.textContent = t('ar_error_name_required'); return; }
+      // username/password are optional — e.g. a deceased relative, or a child, won't log
+      // in themselves. If given at all, both are required together.
       const username = modal.querySelector('#ar-username').value.trim();
       const password = modal.querySelector('#ar-password').value;
-      if (!username || !password){ feedback.textContent = t('ar_error_creds_required'); return; }
+      if ((username && !password) || (!username && password)){ feedback.textContent = t('ar_error_creds_required'); return; }
       data.append('full_name', name);
       data.append('gender', modal.querySelector('#ar-gender').value);
       data.append('birth_date', modal.querySelector('#ar-birthdate').value);
+      data.append('death_date', modal.querySelector('#ar-deathdate').value);
       data.append('occupation', modal.querySelector('#ar-occupation').value);
       data.append('residence', modal.querySelector('#ar-residence').value);
       data.append('phone', modal.querySelector('#ar-phone').value);
@@ -567,6 +575,7 @@ if (registerForm){
     data.append('full_name', maybe('reg-fullname'));
     data.append('gender', maybe('reg-gender'));
     data.append('birth_date', maybe('reg-birthdate'));
+    data.append('death_date', maybe('reg-deathdate'));
     data.append('occupation', maybe('reg-occupation'));
     data.append('residence', maybe('reg-residence'));
     data.append('phone', maybe('reg-phone'));
@@ -900,11 +909,15 @@ function renderTreeSVG(svg, tree, centerId, rootId){
     const n = nodeMap[id];
     if (!n) continue;
 
+    const deceased = !!n.death_date;
     const group = document.createElementNS(svgNS, 'g');
-    group.setAttribute('class', 'node' + (id===centerId ? ' me':'') + (id===anchorId ? ' root':''));
+    group.setAttribute('class', 'node' + (id===centerId ? ' me':'') + (id===anchorId ? ' root':'') + (deceased ? ' deceased':''));
     group.dataset.id = id;
     group.setAttribute('transform', `translate(${pos.x}, ${pos.y})`);
     group.style.cursor = 'pointer';
+    // faded but still clickable, so a deceased relative's card is visually distinct from
+    // living members without being hidden or harder to interact with
+    if (deceased) group.style.opacity = '0.55';
 
     const cardW = 200;
     const cardH = 70;
@@ -1070,7 +1083,107 @@ function initPanZoom(svg, viewport){
   const pdfBtn = document.getElementById('download-tree-pdf');
   if (imgBtn) imgBtn.addEventListener('click', downloadTreeImage);
   if (pdfBtn) pdfBtn.addEventListener('click', downloadTreePdf);
+
+  const searchStatsBtn = document.getElementById('sidebar-search-stats-btn');
+  if (searchStatsBtn) searchStatsBtn.addEventListener('click', ()=>{ close(); openSearchStatsModal(); });
 })();
+
+// --- Search & stats: name/residence/birth-year lookup across approved profiles, plus
+// simple headcount stats. Built client-side from the same /tree/full data the tree itself
+// uses (small family, so no server-side query/pagination needed) rather than a new
+// server endpoint.
+async function openSearchStatsModal(){
+  let modal = document.getElementById('search-stats-modal');
+  if (!modal){
+    modal = document.createElement('div'); modal.id = 'search-stats-modal';
+    modal.innerHTML = `
+      <div id="search-stats-card">
+        <button id="search-stats-close" aria-label="Close">&times;</button>
+        <h3 data-i18n="ss_title">Search &amp; stats</h3>
+        <div id="ss-stats-summary" class="ss-stats-summary"></div>
+        <div class="ss-filters">
+          <label data-i18n="ss_name_label">Name<input type="text" id="ss-name" /></label>
+          <label data-i18n="ss_residence_label">Residence<select id="ss-residence"><option value="" data-i18n="ss_all_residences">All</option></select></label>
+          <label data-i18n="ss_birth_from_label">Born from (year)<input type="number" id="ss-year-from" /></label>
+          <label data-i18n="ss_birth_to_label">Born to (year)<input type="number" id="ss-year-to" /></label>
+        </div>
+        <div id="ss-results" class="ss-results"></div>
+      </div>`;
+    document.body.appendChild(modal);
+    modal.querySelector('#search-stats-close').addEventListener('click', ()=> modal.style.display='none');
+    modal.addEventListener('click', (e)=>{ if (e.target === modal) modal.style.display='none'; });
+    applyI18n();
+  }
+
+  modal.style.display = 'flex';
+  const summaryEl = modal.querySelector('#ss-stats-summary');
+  const resultsEl = modal.querySelector('#ss-results');
+  summaryEl.textContent = t('ss_loading');
+  resultsEl.innerHTML = '';
+
+  let tree = { nodes: [], edges: [] };
+  try{ tree = await api('/tree/full'); }catch(e){ /* fall through with empty tree */ }
+  const nodes = Array.isArray(tree.nodes) ? tree.nodes : [];
+  const edges = Array.isArray(tree.edges) ? tree.edges : [];
+  const nodeMap = {}; nodes.forEach(n=> nodeMap[n.id]=n);
+
+  const total = nodes.length;
+  const male = nodes.filter(n=> (n.gender||'').toLowerCase()==='male').length;
+  const female = nodes.filter(n=> (n.gender||'').toLowerCase()==='female').length;
+  const deceased = nodes.filter(n=> !!n.death_date).length;
+  summaryEl.innerHTML = '';
+  [['ss_stat_total', total], ['ss_stat_male', male], ['ss_stat_female', female], ['ss_stat_deceased', deceased]].forEach(([key, val])=>{
+    const chip = document.createElement('div'); chip.className = 'ss-stat-chip';
+    chip.innerHTML = `<strong>${val}</strong><span>${t(key)}</span>`;
+    summaryEl.appendChild(chip);
+  });
+
+  const residenceSelect = modal.querySelector('#ss-residence');
+  const residences = Array.from(new Set(nodes.map(n=> (n.residence||'').trim()).filter(Boolean))).sort((a,b)=> a.localeCompare(b));
+  residenceSelect.querySelectorAll('option:not(:first-child)').forEach(o=> o.remove());
+  residences.forEach(r=>{ const opt = document.createElement('option'); opt.value = r; opt.textContent = r; residenceSelect.appendChild(opt); });
+
+  const nameInput = modal.querySelector('#ss-name');
+  const yearFromInput = modal.querySelector('#ss-year-from');
+  const yearToInput = modal.querySelector('#ss-year-to');
+
+  const normalize = (s)=> (s||'').trim().toLowerCase().replace(/\s+/g,' ');
+  function renderResults(){
+    const q = normalize(nameInput.value);
+    const residence = residenceSelect.value;
+    const yearFrom = yearFromInput.value ? Number(yearFromInput.value) : null;
+    const yearTo = yearToInput.value ? Number(yearToInput.value) : null;
+    const matches = nodes.filter(n=>{
+      if (q && !normalize(n.full_name).includes(q)) return false;
+      if (residence && (n.residence||'').trim() !== residence) return false;
+      if (yearFrom !== null && (!n.birth_year || n.birth_year < yearFrom)) return false;
+      if (yearTo !== null && (!n.birth_year || n.birth_year > yearTo)) return false;
+      return true;
+    });
+    resultsEl.innerHTML = '';
+    if (!matches.length){
+      resultsEl.innerHTML = `<div class="hint">${t('ss_no_matches')}</div>`;
+      return;
+    }
+    matches.slice(0, 100).forEach(p=>{
+      const row = document.createElement('button'); row.type = 'button'; row.className = 'ss-result-row';
+      const genderLabel = p.gender ? t((p.gender||'').toLowerCase()==='male'?'male':(p.gender||'').toLowerCase()==='female'?'female':'other') : '—';
+      row.innerHTML = `<strong>${p.full_name || ''}</strong><span>${genderLabel}${p.residence ? ' · '+p.residence : ''}${p.birth_year ? ' · '+p.birth_year : ''}</span>`;
+      row.addEventListener('click', ()=>{ modal.style.display = 'none'; showProfileModal(p, nodeMap, edges); });
+      resultsEl.appendChild(row);
+    });
+    if (matches.length > 100){
+      const more = document.createElement('div'); more.className = 'hint'; more.textContent = t('ss_more_matches', { n: matches.length - 100 });
+      resultsEl.appendChild(more);
+    }
+  }
+  nameInput.value = ''; residenceSelect.value = ''; yearFromInput.value = ''; yearToInput.value = '';
+  nameInput.oninput = renderResults;
+  residenceSelect.onchange = renderResults;
+  yearFromInput.oninput = renderResults;
+  yearToInput.oninput = renderResults;
+  renderResults();
+}
 
 function loadImageFromBlob(blob){
   return new Promise((resolve, reject)=>{
@@ -1277,12 +1390,13 @@ const I18N = {
     reg_fullname_label: 'Full name',
     reg_gender_label: 'Gender',
     reg_birthdate_label: 'Birth date',
+    reg_deathdate_label: 'Date of death (leave blank if living)',
     reg_occupation_label: 'Occupation',
     reg_residence_label: 'Residence',
     reg_phone_label: 'Phone',
     reg_photo_label: 'Photo',
-    reg_father_legend: 'Father (optional)',
-    reg_mother_legend: 'Mother (optional)',
+    reg_father_legend: 'Father',
+    reg_mother_legend: 'Mother',
     reg_father_fullname_label: "Father's full name",
     reg_mother_fullname_label: "Mother's full name",
     reg_new_father_hint: 'No matching profile found. Fill in what you know so the admin can add him to the tree alongside your registration.',
@@ -1392,7 +1506,7 @@ const I18N = {
     profile_add_spouse: '+ Add spouse', profile_add_child: '+ Add child', profile_add_sibling: '+ Add sibling',
 
     ep_title: 'Edit my profile',
-    ep_photo: 'Photo', ep_fullname: 'Full name', ep_gender: 'Gender', ep_birthdate: 'Birth date',
+    ep_photo: 'Photo', ep_fullname: 'Full name', ep_gender: 'Gender', ep_birthdate: 'Birth date', ep_deathdate: 'Date of death (leave blank if living)',
     ep_occupation: 'Occupation', ep_residence: 'Residence', ep_phone: 'Phone',
     ep_submit: 'Submit for admin approval',
     ep_submitting: 'Submitting...',
@@ -1409,9 +1523,9 @@ const I18N = {
     ar_title_spouse: 'Add spouse', ar_title_child: 'Add child', ar_title_sibling: 'Add sibling',
     ar_fullname: 'Full name',
     ar_new_hint: "No matching profile found. Fill in what you know — the admin will review it.",
-    ar_gender: 'Gender', ar_birthdate: 'Birth date', ar_occupation: 'Occupation', ar_residence: 'Residence',
+    ar_gender: 'Gender', ar_birthdate: 'Birth date', ar_deathdate: 'Date of death (leave blank if living)', ar_occupation: 'Occupation', ar_residence: 'Residence',
     ar_phone: 'Phone', ar_photo: 'Photo',
-    ar_username: 'Username (their login id)', ar_password: 'Password',
+    ar_username: 'Username (their login id — optional, leave blank if they won\'t log in, e.g. a child or a relative who has passed away)', ar_password: 'Password',
     ar_other_parent: 'Other parent', ar_other_parent_none: 'None / unknown',
     ar_via_father: 'Also a child of {name} (father)',
     ar_via_mother: 'Also a child of {name} (mother)',
@@ -1419,7 +1533,7 @@ const I18N = {
     ar_submitting: 'Submitting...',
     ar_submitted_ok: 'Submitted — pending admin approval.',
     ar_error_name_required: 'Please enter a full name.',
-    ar_error_creds_required: 'Username and password are required for a new profile.',
+    ar_error_creds_required: 'Provide both a username and password, or leave both blank.',
 
     tree_hello: 'Hello, {name}',
     tree_logout: 'Logout',
@@ -1430,10 +1544,19 @@ const I18N = {
 
     sidebar_menu_title: 'Menu',
     sidebar_archives: 'Archives',
+    sidebar_search_stats: 'Search & stats',
     sidebar_tree_summary: 'Family tree summary',
     sidebar_download_image: 'Download as Image',
     sidebar_download_pdf: 'Download as PDF',
     tree_export_error: "Couldn't export the tree. Please try again.",
+
+    ss_title: 'Search & stats',
+    ss_loading: 'Loading…',
+    ss_stat_total: 'Total', ss_stat_male: 'Male', ss_stat_female: 'Female', ss_stat_deceased: 'Deceased',
+    ss_name_label: 'Name', ss_residence_label: 'Residence', ss_all_residences: 'All',
+    ss_birth_from_label: 'Born from (year)', ss_birth_to_label: 'Born to (year)',
+    ss_no_matches: 'No one matches these filters.',
+    ss_more_matches: '…and {n} more — narrow your filters to see them.',
 
     archives_title: 'Family Archives',
     archives_back_link: 'Back to tree',
@@ -1452,10 +1575,14 @@ const I18N = {
     archives_edit_title: 'Edit post',
     archives_edit_submit: 'Save & resubmit for approval',
     archives_edit_keep_file_hint: 'Leave the file/link empty to keep the current one.',
+    archives_event_filter_label: 'Filter by event',
+    ev_all: 'All', ev_marriage: 'Marriage', ev_football_match: 'Football match', ev_meeting: 'Meeting',
+    ev_death: 'Death', ev_important_gathering: 'Important gathering', ev_important_notice: 'Important notice', ev_other: 'Other',
     np_title: 'New post',
     np_type: 'Type',
     np_type_photo: 'Photo', np_type_audio: 'Audio', np_type_video: 'YouTube video link',
-    np_file_photo: 'Photo file', np_file_audio: 'Audio file',
+    np_event_type: 'Event type', np_event_type_none: '— none —',
+    np_file_photo: 'Photo file(s) — you can select more than one', np_file_audio: 'Audio file',
     np_youtube_url: 'YouTube link',
     np_caption: 'Write something about this post',
     np_submit: 'Submit for admin approval',
@@ -1502,12 +1629,13 @@ const I18N = {
     reg_fullname_label: 'Nom complet',
     reg_gender_label: 'Genre',
     reg_birthdate_label: 'Date de naissance',
+    reg_deathdate_label: 'Date de décès (laisser vide si vivant(e))',
     reg_occupation_label: 'Profession',
     reg_residence_label: 'Résidence',
     reg_phone_label: 'Téléphone',
     reg_photo_label: 'Photo',
-    reg_father_legend: 'Père (optionnel)',
-    reg_mother_legend: 'Mère (optionnel)',
+    reg_father_legend: 'Père',
+    reg_mother_legend: 'Mère',
     reg_father_fullname_label: 'Nom complet du père',
     reg_mother_fullname_label: 'Nom complet de la mère',
     reg_new_father_hint: "Aucun profil correspondant trouvé. Indiquez ce que vous savez afin que l'administrateur puisse l'ajouter à l'arbre en même temps que votre inscription.",
@@ -1617,7 +1745,7 @@ const I18N = {
     profile_add_spouse: '+ Ajouter un(e) conjoint(e)', profile_add_child: '+ Ajouter un enfant', profile_add_sibling: '+ Ajouter un frère/une sœur',
 
     ep_title: 'Modifier mon profil',
-    ep_photo: 'Photo', ep_fullname: 'Nom complet', ep_gender: 'Genre', ep_birthdate: 'Date de naissance',
+    ep_photo: 'Photo', ep_fullname: 'Nom complet', ep_gender: 'Genre', ep_birthdate: 'Date de naissance', ep_deathdate: 'Date de décès (laisser vide si vivant(e))',
     ep_occupation: 'Profession', ep_residence: 'Résidence', ep_phone: 'Téléphone',
     ep_submit: "Soumettre pour approbation par l'administrateur",
     ep_submitting: 'Envoi en cours...',
@@ -1634,9 +1762,9 @@ const I18N = {
     ar_title_spouse: 'Ajouter un(e) conjoint(e)', ar_title_child: 'Ajouter un enfant', ar_title_sibling: 'Ajouter un frère/une sœur',
     ar_fullname: 'Nom complet',
     ar_new_hint: "Aucun profil correspondant trouvé. Indiquez ce que vous savez — l'administrateur vérifiera.",
-    ar_gender: 'Genre', ar_birthdate: 'Date de naissance', ar_occupation: 'Profession', ar_residence: 'Résidence',
+    ar_gender: 'Genre', ar_birthdate: 'Date de naissance', ar_deathdate: 'Date de décès (laisser vide si vivant(e))', ar_occupation: 'Profession', ar_residence: 'Résidence',
     ar_phone: 'Téléphone', ar_photo: 'Photo',
-    ar_username: "Nom d'utilisateur (leur identifiant)", ar_password: 'Mot de passe',
+    ar_username: "Nom d'utilisateur (leur identifiant — facultatif, laisser vide s'ils ne se connecteront pas, par ex. un enfant ou un proche décédé)", ar_password: 'Mot de passe',
     ar_other_parent: 'Autre parent', ar_other_parent_none: 'Aucun / inconnu',
     ar_via_father: 'Aussi enfant de {name} (père)',
     ar_via_mother: 'Aussi enfant de {name} (mère)',
@@ -1644,7 +1772,7 @@ const I18N = {
     ar_submitting: 'Envoi en cours...',
     ar_submitted_ok: "Envoyé — en attente d'approbation par l'administrateur.",
     ar_error_name_required: 'Veuillez saisir un nom complet.',
-    ar_error_creds_required: "Un nom d'utilisateur et un mot de passe sont requis pour un nouveau profil.",
+    ar_error_creds_required: "Indiquez un nom d'utilisateur et un mot de passe, ou laissez les deux vides.",
 
     tree_hello: 'Bonjour, {name}',
     tree_logout: 'Déconnexion',
@@ -1655,10 +1783,19 @@ const I18N = {
 
     sidebar_menu_title: 'Menu',
     sidebar_archives: 'Archives',
+    sidebar_search_stats: 'Recherche et statistiques',
     sidebar_tree_summary: "Résumé de l'arbre généalogique",
     sidebar_download_image: 'Télécharger en image',
     sidebar_download_pdf: 'Télécharger en PDF',
     tree_export_error: "Impossible d'exporter l'arbre. Veuillez réessayer.",
+
+    ss_title: 'Recherche et statistiques',
+    ss_loading: 'Chargement…',
+    ss_stat_total: 'Total', ss_stat_male: 'Hommes', ss_stat_female: 'Femmes', ss_stat_deceased: 'Décédé(e)s',
+    ss_name_label: 'Nom', ss_residence_label: 'Résidence', ss_all_residences: 'Toutes',
+    ss_birth_from_label: 'Né(e) à partir de (année)', ss_birth_to_label: "Né(e) jusqu'à (année)",
+    ss_no_matches: 'Personne ne correspond à ces filtres.',
+    ss_more_matches: '… et {n} de plus — affinez vos filtres pour les voir.',
 
     archives_title: 'Archives familiales',
     archives_back_link: "Retour à l'arbre",
@@ -1677,10 +1814,14 @@ const I18N = {
     archives_edit_title: 'Modifier la publication',
     archives_edit_submit: 'Enregistrer et soumettre à nouveau pour approbation',
     archives_edit_keep_file_hint: 'Laissez le fichier/lien vide pour conserver celui existant.',
+    archives_event_filter_label: 'Filtrer par événement',
+    ev_all: 'Tous', ev_marriage: 'Mariage', ev_football_match: 'Match de football', ev_meeting: 'Réunion',
+    ev_death: 'Décès', ev_important_gathering: 'Rassemblement important', ev_important_notice: 'Avis important', ev_other: 'Autre',
     np_title: 'Nouvelle publication',
     np_type: 'Type',
     np_type_photo: 'Photo', np_type_audio: 'Audio', np_type_video: 'Lien vidéo YouTube',
-    np_file_photo: 'Fichier photo', np_file_audio: 'Fichier audio',
+    np_event_type: "Type d'événement", np_event_type_none: '— aucun —',
+    np_file_photo: 'Fichier(s) photo — vous pouvez en sélectionner plusieurs', np_file_audio: 'Fichier audio',
     np_youtube_url: 'Lien YouTube',
     np_caption: 'Écrivez quelque chose à propos de cette publication',
     np_submit: "Soumettre pour approbation par l'administrateur",

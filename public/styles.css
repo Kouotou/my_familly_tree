@@ -246,6 +246,7 @@ button.secondary:hover{ background:var(--accent-soft); }
 .parent-new-fields{ margin-top:12px; padding-top:12px; border-top:1px dashed var(--border) }
 .parent-new-fields.hidden{ display:none }
 .hint{ font-size:12px; color:var(--muted); margin:6px 0 }
+.required-mark{ color:#c0392b; font-weight:700; margin-left:2px }
 
 #rootPanel{ position:relative; overflow:hidden }
 #rootPanel label{ display:block }
@@ -306,24 +307,42 @@ button.secondary:hover{ background:var(--accent-soft); }
 }
 .password-toggle:hover{ color:var(--accent-strong); background:var(--accent-soft); transform:translateY(-50%) }
 
-/* --- self-service modals: edit profile / add relative --- */
-#edit-profile-modal, #add-relative-modal{
+/* --- self-service modals: edit profile / add relative / search & stats --- */
+#edit-profile-modal, #add-relative-modal, #search-stats-modal{
 	position:fixed; inset:0; background:rgba(41,28,16,0.5); display:none; align-items:center; justify-content:center;
 	z-index:85; padding:20px;
 }
-#edit-profile-card, #add-relative-card{
+#edit-profile-card, #add-relative-card, #search-stats-card{
 	background:var(--card); padding:26px; border-radius:var(--rounded-lg); max-width:480px; width:100%;
 	max-height:88vh; overflow:auto; box-shadow:var(--shadow); position:relative; border:1px solid var(--border);
 }
-#edit-profile-card h3, #add-relative-card h3{ margin-top:0; font-family:var(--font-display) }
+#edit-profile-card h3, #add-relative-card h3, #search-stats-card h3{ margin-top:0; font-family:var(--font-display) }
 #edit-profile-card h4{ margin-bottom:0; font-family:var(--font-display) }
 #edit-profile-card hr{ border:none; border-top:1px solid var(--border); margin:22px 0 10px }
-#edit-profile-close, #add-relative-close{
+#edit-profile-close, #add-relative-close, #search-stats-close{
 	position:absolute; top:16px; right:16px; width:32px; height:32px; border-radius:50%;
 	background:var(--card-alt); color:var(--text); border:1px solid var(--border); font-size:18px;
 	line-height:1; display:grid; place-items:center; padding:0; margin:0; box-shadow:none;
 }
-#edit-profile-close:hover, #add-relative-close:hover{ background:var(--accent-soft); transform:none }
+#edit-profile-close:hover, #add-relative-close:hover, #search-stats-close:hover{ background:var(--accent-soft); transform:none }
+
+.ss-stats-summary{ display:flex; gap:10px; flex-wrap:wrap; margin:14px 0 4px }
+.ss-stat-chip{
+	flex:1; min-width:80px; text-align:center; background:var(--card-alt); border:1px solid var(--border);
+	border-radius:var(--rounded); padding:10px 8px;
+}
+.ss-stat-chip strong{ display:block; font-size:20px; font-family:var(--font-display); color:var(--accent-strong) }
+.ss-stat-chip span{ display:block; font-size:11px; color:var(--muted); margin-top:2px }
+.ss-filters{ display:grid; grid-template-columns:1fr 1fr; gap:0 12px; margin-top:6px }
+.ss-filters label{ grid-column:span 1 }
+.ss-filters label:first-child{ grid-column:1 / -1 }
+.ss-results{ margin-top:14px; max-height:280px; overflow:auto; display:flex; flex-direction:column; gap:6px }
+.ss-result-row{
+	width:100%; text-align:left; margin-top:0; background:var(--card-alt); border:1px solid var(--border);
+	border-radius:10px; padding:9px 12px; box-shadow:none; color:var(--text);
+}
+.ss-result-row:hover{ background:var(--accent-soft); transform:none }
+.ss-result-row span{ display:block; font-size:12px; color:var(--muted); margin-top:2px }
 .checkbox-label{ display:flex; align-items:center; gap:8px; font-weight:500; margin-top:10px }
 .checkbox-label input{ width:auto; margin:0 }
 
@@ -374,6 +393,19 @@ button.secondary:hover{ background:var(--accent-soft); }
 .archive-card-meta{ font-size:12px; color:var(--muted) }
 .archive-empty{ color:var(--muted); padding:20px; text-align:center }
 .archive-new-post{ margin:6px 0 8px }
+
+.archive-events-bar{ margin-bottom:0 }
+.archive-events-bar label{ display:flex; align-items:center; gap:8px; font-size:13px; color:var(--muted); margin-top:0 }
+.archive-events-bar select{ margin-top:0; padding:8px 10px; border-radius:10px; border:1.5px solid var(--border); background:var(--card); color:var(--text) }
+.archive-photo-media{ position:relative }
+.archive-photo-count-badge{ position:absolute; top:8px; right:8px; background:rgba(0,0,0,0.62); color:#fff; font-size:11px; font-weight:700; padding:3px 8px; border-radius:999px }
+.archive-event-thumb-strip{ display:flex; gap:6px; padding:8px 10px 0; overflow-x:auto }
+.archive-event-thumb-strip img{ width:44px; height:44px; object-fit:cover; border-radius:8px; cursor:pointer; border:2px solid transparent; flex-shrink:0 }
+.archive-event-thumb-strip img.active{ border-color:var(--accent-strong) }
+.archive-event-badge{
+	display:inline-block; font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:0.04em;
+	color:var(--accent-strong); background:var(--accent-soft); padding:3px 9px; border-radius:999px; margin-bottom:8px;
+}
 
 /* --- inline YouTube player: thumbnail + play overlay, swapped for an iframe on click --- */
 .archive-video-media{ position:relative; padding:0; border:0 }

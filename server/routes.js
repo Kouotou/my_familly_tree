@@ -174,9 +174,13 @@ router.post('/auth/register', upload.fields([
   const body = req.body || {};
   const files = req.files || {};
 
-  // username/password are mandatory — the username becomes this person's unique login id.
-  if (!body.username || !body.password) return res.status(400).json({ error: 'Username and password are required.' });
+  // username/password/full name are mandatory — the username becomes this person's unique
+  // login id. A father and mother link (existing profile or new-person details) are also
+  // mandatory, since every member's place in the tree comes from that connection.
+  if (!body.username || !body.password || !body.full_name) return res.status(400).json({ error: 'Username, password, and full name are required.' });
   if (await isUsernameTaken(body.username)) return res.status(409).json({ error: 'That username is already taken. Please choose another.' });
+  if (!body.father_id && !body.father_name) return res.status(400).json({ error: "Your father's name is required — link an existing profile or enter their details." });
+  if (!body.mother_id && !body.mother_name) return res.status(400).json({ error: "Your mother's name is required — link an existing profile or enter their details." });
 
   if (files.photo && files.photo[0]) body.photo_path = await uploadPhoto(files.photo[0], 'photos');
   // prefer full birth_date (YYYY-MM-DD). If only year provided, store as birth_year.
@@ -195,6 +199,7 @@ router.post('/auth/register', upload.fields([
     gender: body.gender,
     birth_year: birthYear,
     birth_date: birthDate,
+    death_date: body.death_date || null,
     occupation: body.occupation || null,
     residence: body.residence || null,
     phone: body.phone || null,
@@ -268,8 +273,8 @@ async function createPersonRecord(dbLike, p, reviewerId){
   // concurrent request just created the same username; NULL usernames never conflict
   // (Postgres treats each NULL as distinct), so this is a no-op for relative placeholders
   // created without a login.
-  await dbLike.prepare('INSERT INTO people (id, username, full_name, gender, birth_year, birth_date, occupation, residence, phone, photo_path, family_head, created_by, created_at, approval_status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT (username) DO NOTHING')
-    .run(id, p.username||null, p.full_name, p.gender||null, p.birth_year||null, p.birth_date||null, p.occupation||null, p.residence||null, p.phone||null, p.photo_path||null, p.family_head||null, reviewerId, now(), 'approved');
+  await dbLike.prepare('INSERT INTO people (id, username, full_name, gender, birth_year, birth_date, death_date, occupation, residence, phone, photo_path, family_head, created_by, created_at, approval_status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT (username) DO NOTHING')
+    .run(id, p.username||null, p.full_name, p.gender||null, p.birth_year||null, p.birth_date||null, p.death_date||null, p.occupation||null, p.residence||null, p.phone||null, p.photo_path||null, p.family_head||null, reviewerId, now(), 'approved');
   if (p.username){
     const existingByUser = await dbLike.prepare('SELECT id FROM people WHERE username = ?').get(p.username);
     if (existingByUser && existingByUser.id) return existingByUser.id;
@@ -355,8 +360,8 @@ async function processUpdatePerson(dbLike, payload, reviewerId){
   const current = await dbLike.prepare('SELECT * FROM people WHERE id = ?').get(payload.person_id);
   if (!current) return;
   const photoPath = payload.photo_path || current.photo_path;
-  await dbLike.prepare('UPDATE people SET full_name = ?, gender = ?, birth_year = ?, birth_date = ?, occupation = ?, residence = ?, phone = ?, photo_path = ?, last_edited_by = ?, last_edited_at = ? WHERE id = ?')
-    .run(payload.full_name || current.full_name, payload.gender || current.gender, payload.birth_year || null, payload.birth_date || null, payload.occupation || null, payload.residence || null, payload.phone || null, photoPath, reviewerId, now(), current.id);
+  await dbLike.prepare('UPDATE people SET full_name = ?, gender = ?, birth_year = ?, birth_date = ?, death_date = ?, occupation = ?, residence = ?, phone = ?, photo_path = ?, last_edited_by = ?, last_edited_at = ? WHERE id = ?')
+    .run(payload.full_name || current.full_name, payload.gender || current.gender, payload.birth_year || null, payload.birth_date || null, payload.death_date || null, payload.occupation || null, payload.residence || null, payload.phone || null, photoPath, reviewerId, now(), current.id);
 }
 
 // approve a member-submitted "add spouse/child/sibling" request: link to an existing
@@ -367,7 +372,7 @@ async function processAddRelative(dbLike, payload, reviewerId){
   if (!relativeId){
     relativeId = await createPersonRecord(dbLike, {
       full_name: payload.full_name, gender: payload.gender || null, birth_year: payload.birth_year || null,
-      birth_date: payload.birth_date || null, occupation: payload.occupation || null, residence: payload.residence || null,
+      birth_date: payload.birth_date || null, death_date: payload.death_date || null, occupation: payload.occupation || null, residence: payload.residence || null,
       phone: payload.phone || null, photo_path: payload.photo_path || null, username: payload.username || null
     }, reviewerId);
     await createLoginForPerson(dbLike, relativeId, payload.username, payload.password);
@@ -449,6 +454,7 @@ router.post('/member/profile/update', upload.single('photo'), wrap(async (req,re
     gender: body.gender || current.gender,
     birth_date: birthDate,
     birth_year: birthYear,
+    death_date: body.death_date || null,
     occupation: body.occupation || null,
     residence: body.residence || null,
     phone: body.phone || null,
@@ -494,8 +500,11 @@ router.post('/member/relatives/add', upload.single('photo'), wrap(async (req,res
     payload.matched_person_id = body.matched_person_id;
   } else {
     if (!body.full_name) return res.status(400).json({ error: 'Full name is required.' });
-    if (!body.username || !body.password) return res.status(400).json({ error: 'Username and password are required for the new profile.' });
-    if (await isUsernameTaken(body.username)) return res.status(409).json({ error: 'That username is already taken. Please choose another.' });
+    // username/password are optional here — e.g. a deceased relative, or a child, will
+    // never log in themselves. If a username IS given, a password must come with it, and
+    // it must not collide with an existing one.
+    if ((body.username && !body.password) || (!body.username && body.password)) return res.status(400).json({ error: 'Provide both a username and password, or leave both blank.' });
+    if (body.username && await isUsernameTaken(body.username)) return res.status(409).json({ error: 'That username is already taken. Please choose another.' });
 
     let birthDate = body.birth_date || null;
     let birthYear = null;
@@ -505,12 +514,13 @@ router.post('/member/relatives/add', upload.single('photo'), wrap(async (req,res
     payload.gender = body.gender || null;
     payload.birth_date = birthDate;
     payload.birth_year = birthYear;
+    payload.death_date = body.death_date || null;
     payload.occupation = body.occupation || null;
     payload.residence = body.residence || null;
     payload.phone = body.phone || null;
     payload.photo_path = req.file ? await uploadPhoto(req.file, 'photos') : null;
-    payload.username = body.username;
-    payload.password = body.password;
+    payload.username = body.username || null;
+    payload.password = body.password || null;
   }
 
   if (body.relation === 'child' && body.other_parent_id) payload.other_parent_id = body.other_parent_id;
@@ -577,6 +587,7 @@ router.post('/admin/requests/:id/edit-approve-multipart', upload.single('photo')
     gender: body.gender || null,
     birth_year: body.birth_year ? Number(body.birth_year) : null,
     birth_date: body.birth_date || null,
+    death_date: body.death_date || null,
     occupation: body.occupation || null,
     residence: body.residence || null,
     phone: body.phone || null,
@@ -615,8 +626,8 @@ router.post('/admin/people/:id/update', express.json(), wrap(async (req,res)=>{
   if (!p) return res.status(400).json({error:'missing payload'});
   try{
     await db.transaction(async (tx) => {
-      await tx.prepare('UPDATE people SET username = ?, full_name = ?, gender = ?, birth_year = ?, birth_date = ?, occupation = ?, residence = ?, phone = ?, photo_path = ?, last_edited_by = ?, last_edited_at = ? WHERE id = ?')
-        .run(p.username||null, p.full_name||null, p.gender||null, p.birth_year||null, p.birth_date||null, p.occupation||null, p.residence||null, p.phone||null, p.photo_path||null, req.session.user.id, now(), id);
+      await tx.prepare('UPDATE people SET username = ?, full_name = ?, gender = ?, birth_year = ?, birth_date = ?, death_date = ?, occupation = ?, residence = ?, phone = ?, photo_path = ?, last_edited_by = ?, last_edited_at = ? WHERE id = ?')
+        .run(p.username||null, p.full_name||null, p.gender||null, p.birth_year||null, p.birth_date||null, p.death_date||null, p.occupation||null, p.residence||null, p.phone||null, p.photo_path||null, req.session.user.id, now(), id);
       // ensure users table reflects username change: if username set, link user
       if (p.username){ await tx.prepare('UPDATE users SET person_id = ? WHERE username = ?').run(id, p.username); }
       if (p.new_password){
@@ -641,6 +652,7 @@ router.post('/admin/people/:id/update-multipart', upload.single('photo'), wrap(a
     gender: body.gender || null,
     birth_year: body.birth_year ? Number(body.birth_year) : null,
     birth_date: body.birth_date || null,
+    death_date: body.death_date || null,
     occupation: body.occupation || null,
     residence: body.residence || null,
     phone: body.phone || null,
@@ -650,8 +662,8 @@ router.post('/admin/people/:id/update-multipart', upload.single('photo'), wrap(a
   if (req.file) payload.photo_path = await uploadPhoto(req.file, 'photos');
   try{
     await db.transaction(async (tx) => {
-      await tx.prepare('UPDATE people SET username = ?, full_name = ?, gender = ?, birth_year = ?, birth_date = ?, occupation = ?, residence = ?, phone = ?, photo_path = ?, last_edited_by = ?, last_edited_at = ? WHERE id = ?')
-        .run(payload.username||null, payload.full_name||null, payload.gender||null, payload.birth_year||null, payload.birth_date||null, payload.occupation||null, payload.residence||null, payload.phone||null, payload.photo_path||null, req.session.user.id, now(), id);
+      await tx.prepare('UPDATE people SET username = ?, full_name = ?, gender = ?, birth_year = ?, birth_date = ?, death_date = ?, occupation = ?, residence = ?, phone = ?, photo_path = ?, last_edited_by = ?, last_edited_at = ? WHERE id = ?')
+        .run(payload.username||null, payload.full_name||null, payload.gender||null, payload.birth_year||null, payload.birth_date||null, payload.death_date||null, payload.occupation||null, payload.residence||null, payload.phone||null, payload.photo_path||null, req.session.user.id, now(), id);
       if (payload.username){ await tx.prepare('UPDATE users SET person_id = ? WHERE username = ?').run(id, payload.username); }
       if (body.new_password){
         if (String(body.new_password).length < 4) throw new Error('New password is too short.');
@@ -693,8 +705,8 @@ router.post('/admin/people/create-direct', upload.single('photo'), wrap(async (r
     let birthDate = body.birth_date || null;
     let birthYear = body.birth_year ? Number(body.birth_year) : null;
     if (birthDate && !birthYear){ const d = new Date(birthDate); if (isFinite(d)) birthYear = d.getFullYear(); }
-    await db.prepare('INSERT INTO people (id, username, full_name, gender, birth_year, birth_date, occupation, residence, phone, photo_path, created_by, created_at, approval_status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
-      .run(id, null, body.full_name, body.gender||null, birthYear, birthDate, body.occupation||null, body.residence||null, body.phone||null, photoPath, req.session.user.id, now(), 'approved');
+    await db.prepare('INSERT INTO people (id, username, full_name, gender, birth_year, birth_date, death_date, occupation, residence, phone, photo_path, created_by, created_at, approval_status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
+      .run(id, null, body.full_name, body.gender||null, birthYear, birthDate, body.death_date||null, body.occupation||null, body.residence||null, body.phone||null, photoPath, req.session.user.id, now(), 'approved');
     if (body.set_as_root === 'on' || body.set_as_root === 'true'){ await setSetting('root_person_id', id); }
     const person = await db.prepare('SELECT * FROM people WHERE id = ?').get(id);
     res.json({ ok:true, person });
@@ -824,9 +836,24 @@ function extractYouTubeId(url){
   return m ? m[1] : null;
 }
 
+// a photo post's file_path holds a JSON-encoded array of Blob URLs (supports multiple
+// photos per post); older rows created before that change hold a single plain URL string,
+// so this normalizes either shape into an array.
+function parsePhotoPaths(filePath){
+  if (!filePath) return [];
+  try{
+    const parsed = JSON.parse(filePath);
+    return Array.isArray(parsed) ? parsed : [String(parsed)];
+  }catch(e){
+    return [filePath];
+  }
+}
+
 async function withPosterInfo(row){
   const person = row.person_id ? await db.prepare('SELECT full_name FROM people WHERE id = ?').get(row.person_id) : null;
-  return { ...row, posted_by_name: person ? person.full_name : null, youtube_id: row.type === 'video' ? extractYouTubeId(row.url) : null };
+  const out = { ...row, posted_by_name: person ? person.full_name : null, youtube_id: row.type === 'video' ? extractYouTubeId(row.url) : null };
+  if (row.type === 'photo') out.file_paths = parsePhotoPaths(row.file_path);
+  return out;
 }
 
 // token-exchange handshake for archive audio's client-direct-to-Blob upload — bypasses
@@ -848,8 +875,10 @@ router.post('/archive/upload-token', express.json(), wrap(async (req,res)=>{
   res.json(jsonResponse);
 }));
 
-// submit a pending photo / audio / YouTube-link post
-router.post('/archive', upload.single('file'), wrap(async (req,res)=>{
+// submit a pending photo / audio / YouTube-link post. Photos may include multiple files in
+// one post (e.g. several shots from one family gathering) instead of forcing one post per
+// photo.
+router.post('/archive', upload.array('files', 10), wrap(async (req,res)=>{
   if (!requireLoggedInPerson(req,res)) return;
   const body = req.body || {};
   const type = body.type;
@@ -865,22 +894,24 @@ router.post('/archive', upload.single('file'), wrap(async (req,res)=>{
     if (!body.file_url) return res.status(400).json({ error: 'An audio file is required.' });
     filePath = body.file_url;
   } else {
-    if (!req.file) return res.status(400).json({ error: 'A photo file is required.' });
-    filePath = await uploadPhoto(req.file, 'archive');
+    if (!req.files || !req.files.length) return res.status(400).json({ error: 'At least one photo is required.' });
+    const urls = await Promise.all(req.files.map(f => uploadPhoto(f, 'archive')));
+    filePath = JSON.stringify(urls);
   }
 
   const id = uuidv4();
-  await db.prepare('INSERT INTO archive (id, title, url, description, file_path, type, person_id, created_by, created_at, approval_status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
-    .run(id, null, url, body.description || null, filePath, type, req.session.user.person_id, req.session.user.id, now(), 'pending');
+  await db.prepare('INSERT INTO archive (id, title, url, description, file_path, type, person_id, created_by, created_at, approval_status, event_type) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
+    .run(id, null, url, body.description || null, filePath, type, req.session.user.person_id, req.session.user.id, now(), 'pending', body.event_type || null);
   res.json({ ok:true, id });
 }));
 
-// owner-only: edit an existing post's caption (and, for photo/audio, optionally replace the
-// file; for video, optionally replace the link) and send it back through admin review —
-// the type itself can't change. File replacement follows the same paths as creating a post:
-// photo goes through this server-routed upload, audio was already uploaded directly to Blob
-// by the browser (file_url in the body), video re-validates the YouTube link.
-router.post('/archive/:id/edit', upload.single('file'), wrap(async (req,res)=>{
+// owner-only: edit an existing post's caption/event type (and, for photo/audio, optionally
+// replace the file(s); for video, optionally replace the link) and send it back through
+// admin review — the type itself can't change. File replacement follows the same paths as
+// creating a post: photo goes through this server-routed upload (replacing the whole photo
+// set if any new files are given), audio was already uploaded directly to Blob by the
+// browser (file_url in the body), video re-validates the YouTube link.
+router.post('/archive/:id/edit', upload.array('files', 10), wrap(async (req,res)=>{
   if (!requireLoggedInPerson(req,res)) return;
   const id = req.params.id;
   const row = await db.prepare('SELECT * FROM archive WHERE id = ?').get(id);
@@ -897,20 +928,27 @@ router.post('/archive/:id/edit', upload.single('file'), wrap(async (req,res)=>{
   } else if (row.type === 'audio'){
     if (body.file_url) filePath = body.file_url;
   } else if (row.type === 'photo'){
-    if (req.file) filePath = await uploadPhoto(req.file, 'archive');
+    if (req.files && req.files.length){
+      const urls = await Promise.all(req.files.map(f => uploadPhoto(f, 'archive')));
+      filePath = JSON.stringify(urls);
+    }
   }
 
-  await db.prepare("UPDATE archive SET description = ?, url = ?, file_path = ?, approval_status = 'pending', reviewed_by = NULL, reviewed_at = NULL WHERE id = ?")
-    .run(body.description || null, url, filePath, id);
+  await db.prepare("UPDATE archive SET description = ?, url = ?, file_path = ?, event_type = ?, approval_status = 'pending', reviewed_by = NULL, reviewed_at = NULL WHERE id = ?")
+    .run(body.description || null, url, filePath, body.event_type || row.event_type || null, id);
   res.json({ ok:true });
 }));
 
-// approved posts for members to browse, one type at a time
+// approved posts for members to browse, one type at a time — optionally filtered to a
+// single event type (e.g. "marriage"); omit/pass "all" to see everything of that type
 router.get('/archive', wrap(async (req,res)=>{
   if (!requireLoggedInPerson(req,res)) return;
   const type = req.query.type;
   if (!['photo','audio','video'].includes(type)) return res.status(400).json({ error: 'invalid type' });
-  const rows = await db.prepare("SELECT * FROM archive WHERE type = ? AND approval_status = 'approved' ORDER BY created_at DESC").all(type);
+  const eventType = req.query.event_type && req.query.event_type !== 'all' ? req.query.event_type : null;
+  const rows = eventType
+    ? await db.prepare("SELECT * FROM archive WHERE type = ? AND approval_status = 'approved' AND event_type = ? ORDER BY created_at DESC").all(type, eventType)
+    : await db.prepare("SELECT * FROM archive WHERE type = ? AND approval_status = 'approved' ORDER BY created_at DESC").all(type);
   res.json(await Promise.all(rows.map(withPosterInfo)));
 }));
 

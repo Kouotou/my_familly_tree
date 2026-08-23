@@ -19,6 +19,20 @@
       <a href="/tree.html" class="secondary-link" data-i18n="archives_back_link">Back to tree</a>
       <h2 style="margin-top:10px" data-i18n="archives_title">Family Archives</h2>
 
+      <div class="archive-tabs archive-events-bar">
+        <label id="event-filter-label" data-i18n="archives_event_filter_label">Filter by event
+          <select id="event-filter">
+            <option value="all" data-i18n="ev_all">All</option>
+            <option value="marriage" data-i18n="ev_marriage">Marriage</option>
+            <option value="football_match" data-i18n="ev_football_match">Football match</option>
+            <option value="meeting" data-i18n="ev_meeting">Meeting</option>
+            <option value="death" data-i18n="ev_death">Death</option>
+            <option value="important_gathering" data-i18n="ev_important_gathering">Important gathering</option>
+            <option value="important_notice" data-i18n="ev_important_notice">Important notice</option>
+            <option value="other" data-i18n="ev_other">Other</option>
+          </select>
+        </label>
+      </div>
       <div class="archive-tabs">
         <button id="tab-photos" class="active" data-i18n="archives_tab_photos">Photos</button>
         <button id="tab-audios" data-i18n="archives_tab_audios">Audios</button>
@@ -43,7 +57,19 @@
             <option value="video" data-i18n="np_type_video">YouTube video link</option>
           </select>
         </label>
-        <label id="np-photo-label" data-i18n="np_file_photo">Photo file<input type="file" id="np-photo-file" accept="image/*" /></label>
+        <label id="np-event-label" data-i18n="np_event_type">Event type
+          <select id="np-event-type">
+            <option value="" data-i18n="np_event_type_none">— none —</option>
+            <option value="marriage" data-i18n="ev_marriage">Marriage</option>
+            <option value="football_match" data-i18n="ev_football_match">Football match</option>
+            <option value="meeting" data-i18n="ev_meeting">Meeting</option>
+            <option value="death" data-i18n="ev_death">Death</option>
+            <option value="important_gathering" data-i18n="ev_important_gathering">Important gathering</option>
+            <option value="important_notice" data-i18n="ev_important_notice">Important notice</option>
+            <option value="other" data-i18n="ev_other">Other</option>
+          </select>
+        </label>
+        <label id="np-photo-label" data-i18n="np_file_photo">Photo file(s) — you can select more than one<input type="file" id="np-photo-file" accept="image/*" multiple /></label>
         <label id="np-audio-label" class="hidden" data-i18n="np_file_audio">Audio file<input type="file" id="np-audio-file" accept="audio/*" /></label>
         <label id="np-video-label" class="hidden" data-i18n="np_youtube_url">YouTube link<input type="text" id="np-video-url" placeholder="https://www.youtube.com/watch?v=..." /></label>
         <p id="np-edit-file-hint" class="hint hidden" data-i18n="archives_edit_keep_file_hint">Leave the file/link empty to keep the current one.</p>
@@ -83,9 +109,28 @@
 
       function renderCard(item){
         const card = document.createElement('div'); card.className = 'archive-card';
-        if (item.type === 'photo' && item.file_path){
-          const img = document.createElement('img'); img.className = 'archive-card-media'; img.src = item.file_path; img.alt = '';
-          card.appendChild(img);
+        if (item.type === 'photo' && Array.isArray(item.file_paths) && item.file_paths.length){
+          const media = document.createElement('div'); media.className = 'archive-photo-media';
+          const mainImg = document.createElement('img'); mainImg.className = 'archive-card-media'; mainImg.src = item.file_paths[0]; mainImg.alt = '';
+          media.appendChild(mainImg);
+          if (item.file_paths.length > 1){
+            const badge = document.createElement('span'); badge.className = 'archive-photo-count-badge'; badge.textContent = '+' + (item.file_paths.length - 1);
+            media.appendChild(badge);
+            const strip = document.createElement('div'); strip.className = 'archive-event-thumb-strip';
+            item.file_paths.forEach((url, i)=>{
+              const thumb = document.createElement('img'); thumb.src = url; thumb.alt = ''; thumb.className = i===0 ? 'active' : '';
+              thumb.addEventListener('click', ()=>{
+                mainImg.src = url;
+                strip.querySelectorAll('img').forEach(el=> el.classList.remove('active'));
+                thumb.classList.add('active');
+              });
+              strip.appendChild(thumb);
+            });
+            card.appendChild(media);
+            card.appendChild(strip);
+          } else {
+            card.appendChild(media);
+          }
         } else if (item.type === 'video' && item.youtube_id){
           // plays inline by default (click-to-load, so we're not embedding an iframe per
           // card up front); a separate link lets people open the real YouTube page if they
@@ -112,6 +157,7 @@
           wrap.appendChild(audio); card.appendChild(wrap);
         }
         const body = document.createElement('div'); body.className = 'archive-card-body';
+        if (item.event_type){ const badge = document.createElement('span'); badge.className = 'archive-event-badge'; badge.textContent = t('ev_' + item.event_type) || item.event_type; body.appendChild(badge); }
         if (item.description){ const p = document.createElement('p'); p.className = 'archive-card-caption'; p.textContent = item.description; body.appendChild(p); }
         if (item.type === 'video'){
           const ytLink = document.createElement('a'); ytLink.href = item.url; ytLink.target = '_blank'; ytLink.rel = 'noopener'; ytLink.className = 'archive-yt-link'; ytLink.textContent = t('archives_watch_on_youtube');
@@ -139,7 +185,9 @@
         const grid = document.getElementById('archive-grid');
         grid.innerHTML = '';
         try{
-          const items = await api('/archive?type=' + encodeURIComponent(type));
+          const eventFilter = document.getElementById('event-filter').value;
+          const qs = 'type=' + encodeURIComponent(type) + (eventFilter && eventFilter !== 'all' ? '&event_type=' + encodeURIComponent(eventFilter) : '');
+          const items = await api('/archive?' + qs);
           if (!Array.isArray(items) || items.length === 0){
             const empty = document.createElement('div'); empty.className = 'archive-empty';
             empty.textContent = t('archives_empty_' + type + 's');
@@ -153,6 +201,7 @@
       document.getElementById('tab-photos').addEventListener('click', ()=> loadTab('photo'));
       document.getElementById('tab-audios').addEventListener('click', ()=> loadTab('audio'));
       document.getElementById('tab-videos').addEventListener('click', ()=> loadTab('video'));
+      document.getElementById('event-filter').addEventListener('change', ()=> loadTab(currentTab));
 
       // new post / edit post modal (shared — editingItem selects which mode)
       const modal = document.getElementById('new-post-modal');
@@ -196,6 +245,7 @@
         editFileHint.classList.remove('hidden');
         syncTypeFields();
         document.getElementById('np-caption').value = item.description || '';
+        document.getElementById('np-event-type').value = item.event_type || '';
         if (item.type === 'video') document.getElementById('np-video-url').value = item.url || '';
         modalTitle.setAttribute('data-i18n', 'archives_edit_title'); modalTitle.textContent = t('archives_edit_title');
         submitBtn.setAttribute('data-i18n', 'archives_edit_submit'); submitBtn.textContent = t('archives_edit_submit');
@@ -212,6 +262,7 @@
         feedback.textContent = t('np_submitting');
         const type = typeSelect.value;
         const description = document.getElementById('np-caption').value;
+        const eventType = document.getElementById('np-event-type').value || null;
         const endpoint = editingItem ? ('/api/archive/' + editingItem.id + '/edit') : '/api/archive';
         try{
           if (type === 'audio'){
@@ -231,7 +282,7 @@
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               credentials: 'same-origin',
-              body: JSON.stringify(editingItem ? { description, file_url: fileUrl || undefined } : { type, description, file_url: fileUrl }),
+              body: JSON.stringify(editingItem ? { description, event_type: eventType, file_url: fileUrl || undefined } : { type, description, event_type: eventType, file_url: fileUrl }),
             });
             const j = await res.json();
             if (j.ok){ feedback.textContent = t('np_submitted_ok'); setTimeout(()=>{ modal.style.display='none'; loadTab(currentTab); }, 1400); }
@@ -240,10 +291,11 @@
             const data = new FormData();
             if (!editingItem) data.append('type', type);
             data.append('description', description);
+            data.append('event_type', eventType || '');
             if (type === 'photo'){
-              const f = document.getElementById('np-photo-file').files[0];
-              if (!editingItem && !f){ feedback.textContent = t('np_error_generic'); return; }
-              if (f) data.append('file', await downscalePhoto(f));
+              const files = Array.from(document.getElementById('np-photo-file').files || []);
+              if (!editingItem && !files.length){ feedback.textContent = t('np_error_generic'); return; }
+              for (const f of files){ data.append('files', await downscalePhoto(f)); }
             } else {
               const url = document.getElementById('np-video-url').value.trim();
               if (!editingItem && !url){ feedback.textContent = t('np_error_generic'); return; }

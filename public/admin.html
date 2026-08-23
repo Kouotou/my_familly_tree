@@ -35,6 +35,7 @@
           <label data-i18n="admin_root_create_fullname">Full name<input name="full_name" required /></label>
           <label data-i18n="admin_root_create_gender">Gender<select name="gender"><option value="male" data-i18n="male">Male</option><option value="female" data-i18n="female">Female</option><option value="other" data-i18n="other">Other</option></select></label>
           <label data-i18n="admin_root_create_birthdate">Birth date<input name="birth_date" type="date" /></label>
+          <label data-i18n="reg_deathdate_label">Date of death (leave blank if living)<input name="death_date" type="date" /></label>
           <label data-i18n="admin_root_create_occupation">Occupation<input name="occupation" /></label>
           <label data-i18n="admin_root_create_residence">Residence<input name="residence" /></label>
           <label data-i18n="admin_root_create_photo">Photo<input name="photo" type="file" accept="image/*" /></label>
@@ -281,6 +282,7 @@
       form.append('full_name', f.full_name.value);
       form.append('gender', f.gender.value);
       form.append('birth_date', f.birth_date.value || '');
+      form.append('death_date', f.death_date ? f.death_date.value || '' : '');
       form.append('occupation', f.occupation.value || '');
       form.append('residence', f.residence.value || '');
       form.append('set_as_root', 'on');
@@ -403,6 +405,7 @@
       set('gender', req.payload.gender || '');
       set('birth_date', req.payload.birth_date || '');
       set('birth_year', req.payload.birth_year || '');
+      set('death_date', req.payload.death_date || '');
       set('occupation', req.payload.occupation || '');
       set('residence', req.payload.residence || '');
       set('phone', req.payload.phone || '');
@@ -445,6 +448,7 @@
       set('gender', person.gender || '');
       set('birth_date', person.birth_date || '');
       set('birth_year', person.birth_year || '');
+      set('death_date', person.death_date || '');
       set('occupation', person.occupation || '');
       set('residence', person.residence || '');
       set('phone', person.phone || '');
@@ -511,6 +515,7 @@
         form.append('gender', f.gender.value);
         form.append('birth_date', f.birth_date.value || '');
         form.append('birth_year', f.birth_year.value || '');
+        form.append('death_date', f.death_date ? f.death_date.value || '' : '');
         form.append('occupation', f.occupation.value || '');
         form.append('residence', f.residence.value || '');
         form.append('phone', f.phone.value || '');
@@ -534,6 +539,7 @@
         gender: f.gender.value,
         birth_date: f.birth_date.value || null,
         birth_year: f.birth_year.value ? Number(f.birth_year.value) : null,
+        death_date: f.death_date ? f.death_date.value || null : null,
         occupation: f.occupation.value || null,
         residence: f.residence.value || null,
         phone: f.phone.value || null,
@@ -619,6 +625,7 @@
         <label data-i18n="reg_gender_label">Gender<select name="gender"><option value="male" data-i18n="male">Male</option><option value="female" data-i18n="female">Female</option><option value="other" data-i18n="other">Other</option></select></label>
         <label data-i18n="reg_birthdate_label">Birth date<input name="birth_date" type="date" /></label>
         <label data-i18n="req_field_birthyear">Birth year<input name="birth_year" type="number" /></label>
+        <label data-i18n="reg_deathdate_label">Date of death (leave blank if living)<input name="death_date" type="date" /></label>
         <label data-i18n="reg_occupation_label">Occupation<input name="occupation" /></label>
         <label data-i18n="reg_residence_label">Residence<input name="residence" /></label>
         <label data-i18n="reg_phone_label">Phone<input name="phone" /></label>
