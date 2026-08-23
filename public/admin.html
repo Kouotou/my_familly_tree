@@ -181,7 +181,7 @@
             const pid = await resolvePersonIdFromPayload(req);
             if (!pid){ alert(t('alert_person_not_found')); return; }
             const person = await api('/people/' + pid);
-            openEditModalForPerson(person);
+            await openEditModalForPerson(person);
           });
           actions.appendChild(setPwdBtn);
         }
@@ -195,7 +195,7 @@
           if (!pid){ alert(t('alert_person_not_found')); return; }
           // fetch person data and open modal for person
           const person = await api('/people/' + pid);
-          openEditModalForPerson(person);
+          await openEditModalForPerson(person);
         });
         const deleteBtn = document.createElement('button'); deleteBtn.textContent=t('btn_delete_account'); deleteBtn.style.marginLeft='8px'; deleteBtn.addEventListener('click', async ()=>{
           if (!await showConfirm(t('confirm_delete_account'))) return;
@@ -322,7 +322,29 @@
         (Array.isArray(people)?people:[]).forEach(p=> peopleById[p.id]=p);
         if (!Array.isArray(r) || r.length===0){ area.innerHTML = `<div>${t('admin_no_requests', {status: t(status)})}</div>`; return; }
         area.innerHTML='';
-        r.forEach(req=>{ area.appendChild(renderRequestCard(req, peopleById)); });
+        if (status === 'pending'){
+          // split so new registrations (which need placing on the tree) don't get lost
+          // among the higher-volume, lower-stakes profile-edit/password-reset requests
+          const isCreation = req => ['create_person','create','add_relative'].includes(req.payload && req.payload.type);
+          const creation = r.filter(isCreation);
+          const modification = r.filter(req => !isCreation(req));
+          const section = (titleKey, items) => {
+            const wrap = document.createElement('div'); wrap.className = 'pending-section';
+            const h = document.createElement('h4'); h.textContent = t(titleKey) + ' (' + items.length + ')';
+            wrap.appendChild(h);
+            if (!items.length){
+              const none = document.createElement('div'); none.className = 'hint'; none.textContent = t('pending_section_empty');
+              wrap.appendChild(none);
+            } else {
+              items.forEach(req=> wrap.appendChild(renderRequestCard(req, peopleById)));
+            }
+            return wrap;
+          };
+          area.appendChild(section('pending_section_creation', creation));
+          area.appendChild(section('pending_section_modification', modification));
+        } else {
+          r.forEach(req=>{ area.appendChild(renderRequestCard(req, peopleById)); });
+        }
       }catch(e){ area.innerHTML=t('error_loading'); console.error(e); }
     }
     // expose so app.js's language toggle can re-render request cards in the new language
@@ -407,17 +429,15 @@
     // Builds one relation-item row for the relations editor. `r` is the relation entry from
     // a request's payload ({which, from_family, relative_id} for a match against an existing
     // profile, or {which, from_family, relative:{...}} for a brand-new person the requester
-    // typed in) — or null/undefined to build a blank new-person row (used by "Add relation").
-    // A matched relation shows read-only info (nothing to edit — it already points at a real
-    // approved person); a new-person relation gets full editable fields, since this is the
-    // admin's only chance to fix mistakes in what the requester typed before that person's
-    // account is created. Either kind can be removed entirely, which is how the admin
-    // declines to create/link that specific parent while still approving the rest.
+    // typed in) — or null/undefined to build a blank row (used by "Add relation"). Unlike the
+    // original version of this editor, a matched relation isn't read-only: the admin can hit
+    // "Change" to search for and link a *different* existing profile, or fall back to typing
+    // a brand-new person's details — this is what lets an isolated account (registered with
+    // just a parent's name, never linked further up the tree) actually get corrected instead
+    // of only being fixable at the moment of initial approval.
     function buildRelationItem(r, peopleById){
       peopleById = peopleById || {};
       const item = document.createElement('div'); item.className = 'relation-item';
-      const isMatched = !!(r && r.relative_id);
-      if (isMatched) item.dataset.relativeId = r.relative_id;
 
       const header = document.createElement('div'); header.className = 'relation-item-header';
       const whichSel = document.createElement('select'); whichSel.name = 'rel-which';
@@ -425,25 +445,49 @@
       whichSel.value = (r && (r.which || r.type)) || 'father';
       header.appendChild(whichSel);
 
-      if (isMatched){
-        const matched = peopleById[r.relative_id];
-        const info = document.createElement('span'); info.className = 'relation-matched-info';
-        info.textContent = t('edit_rel_linked_to', { name: matched ? matched.full_name : r.relative_id });
-        header.appendChild(info);
-      } else {
-        const fromLabel = document.createElement('label'); fromLabel.className = 'checkbox-label'; fromLabel.style.fontSize = '12px';
-        const fromCb = document.createElement('input'); fromCb.type = 'checkbox'; fromCb.name = 'rel-from'; fromCb.checked = !!(r && r.from_family);
-        fromLabel.appendChild(fromCb); fromLabel.append(' ' + t('edit_rel_from_family'));
-        header.appendChild(fromLabel);
-      }
+      const fromLabel = document.createElement('label'); fromLabel.className = 'checkbox-label'; fromLabel.style.fontSize = '12px';
+      const fromCb = document.createElement('input'); fromCb.type = 'checkbox'; fromCb.name = 'rel-from'; fromCb.checked = r ? (r.from_family !== false) : true;
+      fromLabel.appendChild(fromCb); fromLabel.append(' ' + t('edit_rel_from_family'));
+      header.appendChild(fromLabel);
 
       const removeBtn = document.createElement('button'); removeBtn.type = 'button'; removeBtn.className = 'remove-rel secondary'; removeBtn.textContent = t('edit_rel_remove');
       removeBtn.addEventListener('click', ()=> item.remove());
       header.appendChild(removeBtn);
       item.appendChild(header);
 
-      if (!isMatched){
-        const rel = (r && r.relative) || {};
+      // swaps between "linked to X" (a real matched profile) and "search / type a new
+      // person" — see renderMatched/renderSearch below
+      const linkArea = document.createElement('div'); linkArea.className = 'relation-link-area';
+      item.appendChild(linkArea);
+
+      function renderMatched(person){
+        item.dataset.relativeId = person.id;
+        linkArea.innerHTML = '';
+        const chosen = document.createElement('div'); chosen.className = 'parent-match-chosen';
+        const dob = person.birth_date || person.birth_year || '';
+        chosen.innerHTML = `<span>${t('parent_match_linked')} <strong>${person.full_name}</strong>${dob ? ' (' + dob + ')' : ''}</span>`;
+        const change = document.createElement('button'); change.type = 'button'; change.className = 'secondary'; change.textContent = t('parent_match_change');
+        change.addEventListener('click', ()=> renderSearch());
+        chosen.appendChild(change);
+        linkArea.appendChild(chosen);
+      }
+
+      function renderSearch(prefillName){
+        delete item.dataset.relativeId;
+        linkArea.innerHTML = '';
+        const rel = (r && !r.relative_id && r.relative) || {};
+
+        const searchRow = document.createElement('div'); searchRow.className = 'parent-search-row';
+        const nameInput = document.createElement('input'); nameInput.name = 'rel-name';
+        nameInput.placeholder = t('edit_rel_name_placeholder');
+        nameInput.value = prefillName !== undefined ? prefillName : (rel.full_name || '');
+        const searchBtn = document.createElement('button'); searchBtn.type = 'button'; searchBtn.className = 'secondary'; searchBtn.textContent = t('parent_search_btn');
+        searchRow.appendChild(nameInput); searchRow.appendChild(searchBtn);
+        linkArea.appendChild(searchRow);
+
+        const resultsEl = document.createElement('div'); resultsEl.className = 'parent-matches';
+        linkArea.appendChild(resultsEl);
+
         item.dataset.photoPath = rel.photo_path || '';
         const fields = document.createElement('div'); fields.className = 'relation-item-fields';
         const mkInput = (name, type, placeholderKey, value) => {
@@ -452,13 +496,40 @@
           inp.value = value || '';
           return inp;
         };
-        fields.appendChild(mkInput('rel-name', 'text', 'edit_rel_name_placeholder', rel.full_name));
         fields.appendChild(mkInput('rel-birthdate', 'date', null, rel.birth_date));
         fields.appendChild(mkInput('rel-occupation', 'text', 'edit_rel_occupation_placeholder', rel.occupation));
         fields.appendChild(mkInput('rel-residence', 'text', 'edit_rel_residence_placeholder', rel.residence));
         fields.appendChild(mkInput('rel-phone', 'text', 'edit_rel_phone_placeholder', rel.phone));
-        item.appendChild(fields);
+        linkArea.appendChild(fields);
+
+        async function runSearch(){
+          const q = nameInput.value.trim();
+          resultsEl.innerHTML = '';
+          if (!q) return;
+          let people = [];
+          try{ people = await api('/people/search?name=' + encodeURIComponent(q)); }catch(e){ people = []; }
+          if (!Array.isArray(people) || people.length === 0){
+            resultsEl.innerHTML = `<div class="hint">${t('parent_match_not_found')}</div>`;
+            return;
+          }
+          const list = document.createElement('div'); list.className = 'parent-match-list';
+          people.forEach(p=>{
+            const row = document.createElement('div'); row.className = 'parent-match-row';
+            row.innerHTML = `<span>${p.full_name} <span class="hint">(${p.birth_date || p.birth_year || t('parent_match_no_dob')})</span></span>`;
+            const btn = document.createElement('button'); btn.type = 'button'; btn.textContent = t('parent_match_this_is_them');
+            btn.addEventListener('click', ()=> renderMatched(p));
+            row.appendChild(btn);
+            list.appendChild(row);
+          });
+          resultsEl.appendChild(list);
+        }
+        searchBtn.addEventListener('click', runSearch);
+        nameInput.addEventListener('keydown', e=>{ if (e.key === 'Enter'){ e.preventDefault(); runSearch(); } });
       }
+
+      if (r && r.relative_id) renderMatched(peopleById[r.relative_id] || { id: r.relative_id, full_name: r.relative_id });
+      else renderSearch();
+
       return item;
     }
 
@@ -468,6 +539,7 @@
       if (!form){ console.warn('Edit form not found'); return; }
       const set = (name, value) => { const el = form.querySelector('[name="'+name+'"]'); if (el) el.value = value===null? '': value; };
       set('requestId', req.id);
+      set('personId', '');
       set('username', req.payload.username || '');
       set('full_name', req.payload.full_name || '');
       set('gender', req.payload.gender || '');
@@ -478,6 +550,10 @@
       set('residence', req.payload.residence || '');
       set('phone', req.payload.phone || '');
       set('new_password', '');
+      // relations here always came in with the request itself (even an empty array is a
+      // real, known answer — "no parents listed"), so it's always safe to submit them
+      set('relationsLoaded', '1');
+      const titleEl = document.getElementById('edit-modal-title'); if (titleEl) titleEl.textContent = t('edit_modal_title');
       const photoPathEl = form.querySelector('[name="photo_path"]'); if (photoPathEl) photoPathEl.value = req.payload.photo_path || '';
       // populate existing relations (each may be a link to an existing profile, or a new
       // father/mother the requester typed in — see buildRelationItem)
@@ -488,12 +564,16 @@
       modal.style.display = 'block';
     }
 
-    // open modal populated with an existing person record
-    function openEditModalForPerson(person){
+    // open modal populated with an existing person record, including their *current*
+    // father/mother links (fetched fresh — this is what lets the admin correct an isolated
+    // account after the fact, not just at initial approval). relationsLoaded only gets set
+    // to '1' once that fetch actually succeeds — see the submit handler below for why: it's
+    // what stops a failed fetch from being misread as "this person has no parents" and
+    // wiping out a real link on save.
+    async function openEditModalForPerson(person){
       const modal = document.getElementById('edit-modal');
       const form = document.getElementById('edit-form');
       if (!form || !person){ console.warn('Missing form or person'); return; }
-      // set personId to indicate update path
       const set = (name, value) => { const el = form.querySelector('[name="'+name+'"]'); if (el) el.value = value===null? '': value; };
       set('personId', person.id);
       set('requestId', '');
@@ -508,9 +588,23 @@
       set('phone', person.phone || '');
       set('photo_path', person.photo_path || '');
       set('new_password', '');
-      // relations: we don't have easy mapping here; clear list
+      set('relationsLoaded', '');
+      const titleEl = document.getElementById('edit-modal-title'); if (titleEl) titleEl.textContent = t('edit_modal_title_person');
       const list = document.getElementById('relations-list'); list.innerHTML = '';
       modal.style.display = 'block';
+      try{
+        const parents = await api('/admin/people/' + person.id + '/parents');
+        const byId = {};
+        if (parents.father) byId[parents.father.id] = parents.father;
+        if (parents.mother) byId[parents.mother.id] = parents.mother;
+        list.innerHTML = '';
+        if (parents.father) list.appendChild(buildRelationItem({ type:'parent', which:'father', from_family: parents.father.from_family, relative_id: parents.father.id }, byId));
+        if (parents.mother) list.appendChild(buildRelationItem({ type:'parent', which:'mother', from_family: parents.mother.from_family, relative_id: parents.mother.id }, byId));
+        set('relationsLoaded', '1');
+      }catch(e){
+        console.error('Failed to load current parents', e);
+        list.innerHTML = `<div class="hint">${t('error_loading')}</div>`;
+      }
     }
 
     // try to resolve person id from a request payload by username or matching full_name+birth_date
@@ -556,21 +650,27 @@
       const rels = [];
       document.querySelectorAll('#relations-list .relation-item').forEach(rn=>{
         const which = rn.querySelector('[name="rel-which"]').value;
+        const fromFamily = rn.querySelector('[name="rel-from"]').checked;
         if (rn.dataset.relativeId){
-          rels.push({ type: 'parent', which, from_family: true, relative_id: rn.dataset.relativeId });
+          rels.push({ type: 'parent', which, from_family: fromFamily, relative_id: rn.dataset.relativeId });
           return;
         }
-        const name = rn.querySelector('[name="rel-name"]').value;
+        const nameEl = rn.querySelector('[name="rel-name"]');
+        const name = nameEl ? nameEl.value.trim() : '';
+        if (!name) return; // this slot was left blank — skip rather than creating an "Unknown" person
         const birthDate = rn.querySelector('[name="rel-birthdate"]').value;
         const occupation = rn.querySelector('[name="rel-occupation"]').value;
         const residence = rn.querySelector('[name="rel-residence"]').value;
         const phone = rn.querySelector('[name="rel-phone"]').value;
-        const fromFamily = rn.querySelector('[name="rel-from"]').checked;
         rels.push({ type: 'parent', which, from_family: fromFamily, relative: {
           full_name: name, birth_date: birthDate || null, occupation: occupation || null,
           residence: residence || null, phone: phone || null, photo_path: rn.dataset.photoPath || null,
         } });
       });
+      // only submit relation changes at all once we know they reflect the real current
+      // state (see openEditModalForPerson) — otherwise a failed fetch could read as "no
+      // parents" and wipe out a real link that was simply never loaded into the form
+      const relationsLoaded = f.relationsLoaded && f.relationsLoaded.value === '1';
 
       // if a photo file is provided, send multipart to the new endpoint
       const photoEl = document.getElementById('edit-photo');
@@ -588,7 +688,7 @@
         form.append('phone', f.phone.value || '');
         form.append('photo', await downscalePhoto(photoEl.files[0]));
         if (f.new_password && f.new_password.value) form.append('new_password', f.new_password.value);
-        form.append('relations', JSON.stringify(rels));
+        if (relationsLoaded) form.append('relations', JSON.stringify(rels));
         const personId = f.personId && f.personId.value ? f.personId.value : null;
         const endpoint = personId ? ('/api/admin/people/' + personId + '/update-multipart') : ('/api/admin/requests/' + id + '/edit-approve-multipart');
         const res = await fetch(endpoint, { method:'POST', credentials:'same-origin', body: form });
@@ -611,11 +711,11 @@
         residence: f.residence.value || null,
         phone: f.phone.value || null,
         photo_path: f.photo_path ? f.photo_path.value || null : null,
-        new_password: f.new_password ? f.new_password.value || null : null,
-        relations: rels
+        new_password: f.new_password ? f.new_password.value || null : null
       };
       // if editing an existing person (admin modify), personId will be set
       const personId = f.personId && f.personId.value ? f.personId.value : null;
+      if (!personId || relationsLoaded) payload.relations = rels;
       if (personId){
         // no photo: send json update
         const res = await fetch('/api/admin/people/' + personId + '/update', { method:'POST', headers:{'Content-Type':'application/json'}, credentials:'same-origin', body: JSON.stringify({ payload }) });
@@ -682,11 +782,12 @@
   <!-- Edit modal -->
   <div id="edit-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.4);align-items:center;justify-content:center;z-index:60">
     <div style="background:var(--card);padding:18px;border-radius:10px;max-width:680px;max-height:80vh;margin:48px auto;box-shadow:var(--shadow);overflow:auto;">
-      <h3 data-i18n="edit_modal_title">Edit request and approve</h3>
+      <h3 id="edit-modal-title" data-i18n="edit_modal_title">Edit request and approve</h3>
       <form id="edit-form">
         <input type="hidden" name="requestId" />
         <input type="hidden" name="personId" />
         <input type="hidden" name="photo_path" />
+        <input type="hidden" name="relationsLoaded" />
         <label data-i18n="edit_field_username">Username (optional)<input name="username" /></label>
         <label data-i18n="reg_fullname_label">Full name<input name="full_name" required /></label>
         <label data-i18n="reg_gender_label">Gender<select name="gender"><option value="male" data-i18n="male">Male</option><option value="female" data-i18n="female">Female</option><option value="other" data-i18n="other">Other</option></select></label>

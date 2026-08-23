@@ -387,6 +387,12 @@ button.secondary:hover{ background:var(--accent-soft); }
 .relation-matched-info{ font-size:13px; color:var(--muted); flex:1 }
 .relation-item-fields{ display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-top:8px }
 .relation-item-fields input{ margin-top:0 }
+.relation-link-area{ margin-top:8px }
+.relation-link-area .parent-search-row input{ flex:1; margin-top:0 }
+
+.pending-section{ margin-top:18px }
+.pending-section h4{ margin-bottom:8px }
+.pending-section:first-of-type{ margin-top:8px }
 
 /* --- hamburger menu + sliding sidebar drawer --- */
 .hamburger-btn{

@@ -253,6 +253,12 @@ router.post('/auth/register', upload.fields([
 router.get('/admin/requests', wrap(async (req,res)=>{
   if (!req.session.user) return res.status(401).json({error:'not logged in'});
   if (!req.session.user.role || req.session.user.role==='member') return res.status(403).json({error:'forbidden'});
+  // the Rejected tab (both actual rejections and the "delete account" audit trail — see
+  // /admin/people/:id/delete below, which files itself as a rejected delete_person request)
+  // is meant to be a brief undo window, not a permanent log — purge anything past 24h.
+  // Lazily, on read, rather than via a scheduled job: this app is a single serverless
+  // function with no persistent process to run a cron in.
+  await db.prepare("DELETE FROM requests WHERE status = 'rejected' AND reviewed_at IS NOT NULL AND reviewed_at::timestamptz < NOW() - INTERVAL '24 hours'").run();
   const status = (req.query.status || 'pending').toLowerCase();
   if (!['pending','approved','rejected'].includes(status)) return res.status(400).json({error:'invalid status'});
   const rows = await db.prepare('SELECT * FROM requests WHERE status = ? ORDER BY created_at DESC').all(status);
@@ -320,6 +326,56 @@ async function createLoginForPerson(dbLike, personId, username, password){
   const pwdHash = bcrypt.hashSync(password, 10);
   await dbLike.prepare('INSERT INTO users (id, username, password_hash, role, person_id) VALUES (?, ?, ?, ?, ?) ON CONFLICT (username) DO NOTHING').run(uuidv4(), username, pwdHash, 'member', personId);
   await dbLike.prepare('UPDATE users SET person_id = ? WHERE username = ?').run(personId, username);
+}
+
+async function unlinkParentChild(dbLike, childId, parentId){
+  await dbLike.prepare("DELETE FROM relationships WHERE (person_id = ? AND relative_id = ? AND type = 'parent') OR (person_id = ? AND relative_id = ? AND type = 'child')").run(childId, parentId, parentId, childId);
+}
+
+// admin-only: correct who a person's father/mother actually are, including for a person
+// who's already approved and in the tree — unlike processCreatePerson (which only ever
+// inserts, since the person is brand new), this must also *remove* a wrong existing link
+// before adding the right one. This is what lets the admin fix an isolated account (e.g. a
+// parent stub created during someone else's registration, never linked further up) after
+// the fact, instead of only being able to set relations once at initial approval.
+// `relations` is the same shape used everywhere else: [{type:'parent', which, from_family,
+// relative_id} | {type:'parent', which, from_family, relative:{full_name,...}}]. A `which`
+// with no entry in `relations` means the admin removed that parent link entirely.
+async function applyParentEdits(dbLike, personId, relations, reviewerId){
+  if (!Array.isArray(relations)) return;
+  const { fatherId: currentFatherId, motherId: currentMotherId } = await getParentIds(dbLike, personId);
+  const current = { father: currentFatherId, mother: currentMotherId };
+
+  for (const which of ['father','mother']){
+    const rel = relations.find(r=> r.type==='parent' && r.which===which);
+    const currentId = current[which];
+
+    if (!rel){
+      if (currentId) await unlinkParentChild(dbLike, personId, currentId);
+      current[which] = null;
+      continue;
+    }
+
+    let targetId = rel.relative_id || null;
+    if (!targetId){
+      const relative = rel.relative || {};
+      if (!relative.full_name || !relative.full_name.trim()) continue; // nothing usable submitted for this slot — leave as-is
+      targetId = await createPersonRecord(dbLike, {
+        full_name: relative.full_name, birth_year: relative.birth_year||null, birth_date: relative.birth_date||null,
+        gender: which==='father' ? 'male' : 'female', occupation: relative.occupation||null, residence: relative.residence||null,
+        phone: relative.phone||null, photo_path: relative.photo_path||null
+      }, reviewerId);
+    }
+
+    const note = rel.from_family === false ? 'married-in' : 'blood';
+    if (currentId && currentId !== targetId) await unlinkParentChild(dbLike, personId, currentId);
+    if (currentId !== targetId) await linkParentChild(dbLike, personId, targetId, note);
+    else await dbLike.prepare("UPDATE relationships SET notes = ? WHERE (person_id = ? AND relative_id = ? AND type = 'parent') OR (person_id = ? AND relative_id = ? AND type = 'child')").run(note, personId, targetId, targetId, personId);
+
+    current[which] = targetId;
+  }
+
+  if (current.father && current.mother) await linkSpouse(dbLike, current.father, current.mother);
 }
 
 // helper to process create_person payload into the DB and return the created person id
@@ -643,9 +699,26 @@ router.post('/admin/people/:id/update', express.json(), wrap(async (req,res)=>{
         if (String(p.new_password).length < 4) throw new Error('New password is too short.');
         await tx.prepare('UPDATE users SET password_hash = ? WHERE person_id = ?').run(bcrypt.hashSync(p.new_password, 10), id);
       }
+      if (Array.isArray(p.relations)) await applyParentEdits(tx, id, p.relations, req.session.user.id);
     });
     res.json({ ok:true });
   }catch(err){ console.error('Update person error', err && err.stack || err); res.status(500).json({ error: String(err && err.message ? err.message : err) }); }
+}));
+
+// admin: current father/mother of a person, for prefilling the relationship editor when
+// modifying an already-approved account (the "Modify account" flow doesn't otherwise know
+// who their parents currently are)
+router.get('/admin/people/:id/parents', wrap(async (req,res)=>{
+  if (!requireAdmin(req,res)) return;
+  const { fatherId, motherId } = await getParentIds(db, req.params.id);
+  async function withNote(parentId){
+    if (!parentId) return null;
+    const person = await db.prepare('SELECT * FROM people WHERE id = ?').get(parentId);
+    if (!person) return null;
+    const rel = await db.prepare("SELECT notes FROM relationships WHERE person_id = ? AND relative_id = ? AND type = 'parent'").get(req.params.id, parentId);
+    return Object.assign({}, person, { from_family: !rel || rel.notes !== 'married-in' });
+  }
+  res.json({ father: await withNote(fatherId), mother: await withNote(motherId) });
 }));
 
 // Admin: update person with multipart (photo). Also handles new_password, same as above.
@@ -669,6 +742,12 @@ router.post('/admin/people/:id/update-multipart', upload.single('photo'), wrap(a
     photo_path: current ? current.photo_path : null
   };
   if (req.file) payload.photo_path = await uploadPhoto(req.file, 'photos');
+  // undefined (not []) when the client omits this field entirely — see the relationsLoaded
+  // guard in admin.html: relations are only ever submitted after successfully fetching the
+  // person's current father/mother, so a missing key here means "don't touch relations",
+  // never "the admin removed both parents"
+  let relations;
+  if (body.relations){ try{ relations = JSON.parse(body.relations); }catch(e){ relations = undefined; } }
   try{
     await db.transaction(async (tx) => {
       await tx.prepare('UPDATE people SET username = ?, full_name = ?, gender = ?, birth_year = ?, birth_date = ?, death_date = ?, occupation = ?, residence = ?, phone = ?, photo_path = ?, last_edited_by = ?, last_edited_at = ? WHERE id = ?')
@@ -678,6 +757,7 @@ router.post('/admin/people/:id/update-multipart', upload.single('photo'), wrap(a
         if (String(body.new_password).length < 4) throw new Error('New password is too short.');
         await tx.prepare('UPDATE users SET password_hash = ? WHERE person_id = ?').run(bcrypt.hashSync(body.new_password, 10), id);
       }
+      if (Array.isArray(relations)) await applyParentEdits(tx, id, relations, req.session.user.id);
     });
     res.json({ ok:true });
   }catch(err){ console.error('Update person multipart error', err && err.stack || err); res.status(500).json({ error: String(err && err.message ? err.message : err) }); }
