@@ -365,6 +365,11 @@
       } else {
         const rev = document.createElement('div'); rev.style.fontSize='13px'; rev.style.color='var(--muted)'; rev.textContent = t('reviewed_by_line', { by: item.reviewed_by || 'n/a', at: item.reviewed_at || '' });
         actions.appendChild(rev);
+        const deleteBtn = document.createElement('button'); deleteBtn.textContent = t('btn_delete_post'); deleteBtn.style.marginTop='8px'; deleteBtn.addEventListener('click', async ()=>{
+          if (!await showConfirm(t('confirm_delete_post'))) return;
+          try{ const res = await fetch('/api/admin/archive/'+item.id+'/delete', { method:'POST', credentials:'same-origin' }); const j = await res.json(); if (j.ok){ await loadArchiveRequests(currentArchiveStatus); } else alert(t('alert_error_prefix',{msg: JSON.stringify(j)})); }catch(e){ alert(t('network_error')+' '+e.message); }
+        });
+        actions.appendChild(deleteBtn);
       }
       container.appendChild(actions);
       return container;

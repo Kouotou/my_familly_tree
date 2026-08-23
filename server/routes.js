@@ -939,4 +939,13 @@ router.post('/admin/archive/:id/reject', wrap(async (req,res)=>{
   res.json({ ok:true });
 }));
 
+// admin: permanently delete a post, even one that was already approved
+router.post('/admin/archive/:id/delete', wrap(async (req,res)=>{
+  if (!requireAdmin(req,res)) return;
+  const row = await db.prepare('SELECT id FROM archive WHERE id = ?').get(req.params.id);
+  if (!row) return res.status(404).json({ error: 'not found' });
+  await db.prepare('DELETE FROM archive WHERE id = ?').run(req.params.id);
+  res.json({ ok:true });
+}));
+
 module.exports = router;

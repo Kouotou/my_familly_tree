@@ -1348,8 +1348,10 @@ const I18N = {
     btn_approve: 'Approve', btn_edit_approve: 'Edit & Approve', btn_reject: 'Reject',
     btn_modify_account: 'Modify account', btn_delete_account: 'Delete account',
     btn_set_new_password: 'Set new password',
+    btn_delete_post: 'Delete post',
     confirm_approve: 'Approve this request?',
     confirm_reject: 'Reject this request?',
+    confirm_delete_post: 'Delete this post? This removes it permanently, even though it was already approved.',
     confirm_delete_account: 'Delete this account? This removes them (and their relationships) from the family tree.',
     prompt_rejection_reason: 'Reason for rejection',
     alert_approve_failed: 'Approve failed: {msg}',
@@ -1571,8 +1573,10 @@ const I18N = {
     btn_approve: 'Approuver', btn_edit_approve: 'Modifier et approuver', btn_reject: 'Rejeter',
     btn_modify_account: 'Modifier le compte', btn_delete_account: 'Supprimer le compte',
     btn_set_new_password: 'Définir un nouveau mot de passe',
+    btn_delete_post: 'Supprimer la publication',
     confirm_approve: 'Approuver cette demande ?',
     confirm_reject: 'Rejeter cette demande ?',
+    confirm_delete_post: 'Supprimer cette publication ? Elle sera retirée définitivement, même si elle avait déjà été approuvée.',
     confirm_delete_account: "Supprimer ce compte ? Cela retire cette personne (et ses relations) de l'arbre généalogique.",
     prompt_rejection_reason: 'Motif du rejet',
     alert_approve_failed: "Échec de l'approbation : {msg}",
@@ -1705,13 +1709,14 @@ function t(key, vars){
 function applyI18nKey(el, value){
   if (!el) return;
   if (el.children.length === 0){ el.textContent = value; return; }
-  // element has child elements too (e.g. <label>Text<input/></label>) — only replace the
-  // leading text node so nested controls aren't clobbered
-  if (el.childNodes.length && el.childNodes[0].nodeType === Node.TEXT_NODE){
-    el.childNodes[0].nodeValue = value;
-  } else {
-    el.insertBefore(document.createTextNode(value), el.firstChild);
-  }
+  // element has child elements too (e.g. <label>Text<input/></label>) — remove every
+  // existing direct-child text node first (not just the first one), then insert exactly
+  // one fresh text node at the front. This can never accumulate duplicate text no matter
+  // how many times it's called or what the element's exact structure is, and it's
+  // self-healing for any text that had already been duplicated by a past version of this
+  // function.
+  Array.from(el.childNodes).forEach(n => { if (n.nodeType === Node.TEXT_NODE) el.removeChild(n); });
+  el.insertBefore(document.createTextNode(value), el.firstChild);
 }
 
 function applyI18n(){
