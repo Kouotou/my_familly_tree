@@ -5,7 +5,12 @@ if (!connectionString) {
   throw new Error('DATABASE_URL (or POSTGRES_URL) is not set — run `vercel env pull .env.local` or set it in .env');
 }
 
-const pool = new Pool({ connectionString, max: 4, idleTimeoutMillis: 10000 });
+// query_timeout is a hard safety net: no single query can hang a request (and, via the
+// db.ready gate every request awaits, the whole site) forever — it gets cancelled and
+// throws instead. This is deliberately here after a real incident where a stuck query took
+// the entire site down for everyone until Vercel's unrelated 300s function timeout finally
+// killed each hung invocation.
+const pool = new Pool({ connectionString, max: 4, idleTimeoutMillis: 10000, query_timeout: 10000 });
 // an idle client emitting an error (e.g. the remote end closing the connection) would
 // otherwise be an unhandled 'error' event and crash the process
 pool.on('error', (err) => { console.error('[db] idle client error', err); });
@@ -102,13 +107,23 @@ async function connectWithRetry() {
   }
 }
 
-// --- schema (idempotent, advisory-lock-guarded so concurrent cold starts can't race it) ---
-const SCHEMA_LOCK_ID = 727501;
-
+// --- schema (idempotent — every statement is CREATE ... IF NOT EXISTS / ADD COLUMN IF NOT
+// EXISTS, safe to run concurrently from multiple cold starts without any locking) ---
+//
+// A previous version of this guarded the DDL with a session-scoped Postgres advisory lock
+// (pg_advisory_lock/pg_advisory_unlock). That's unsafe over a *pooled* connection (which
+// DATABASE_URL is, via PgBouncer): individual statements on the same `client` object aren't
+// guaranteed to hit the same actual Postgres backend outside of an explicit transaction, so
+// the unlock call could silently land on a different backend than the one that acquired the
+// lock — leaving it held forever. Every subsequent cold start then blocked on
+// pg_advisory_lock (which waits indefinitely by design) behind that stuck lock, and since
+// every request awaits db.ready before doing anything else, this took the entire site down
+// until Vercel's unrelated 300s function timeout eventually killed each hung invocation.
+// Removed rather than "fixed with pg_advisory_xact_lock" — the DDL below doesn't need
+// locking to be safe, so the lock was pure downside.
 async function ensureSchema() {
   const client = await connectWithRetry();
   try {
-    await client.query('SELECT pg_advisory_lock($1)', [SCHEMA_LOCK_ID]);
     await client.query(`
       CREATE TABLE IF NOT EXISTS people (
         id TEXT PRIMARY KEY,
@@ -183,12 +198,20 @@ async function ensureSchema() {
     `);
     console.log('[db] schema ready (postgres)');
   } finally {
-    await client.query('SELECT pg_advisory_unlock($1)', [SCHEMA_LOCK_ID]).catch(() => {});
     client.release();
   }
 }
 
-db.ready = ensureSchema();
+// Belt-and-suspenders on top of removing the advisory lock above: every request awaits
+// db.ready before doing anything else (see the gate middleware in app.js), so this promise
+// must never hang forever, no matter what goes wrong inside ensureSchema() in the future.
+// Cap it at 15s and resolve (not reject) either way — worst case a route hits a real error
+// against a not-yet-migrated table and returns a normal 500, instead of every request on
+// the site hanging until Vercel's unrelated 300s function timeout kills it.
+db.ready = Promise.race([
+  ensureSchema().catch(err => { console.error('[db] schema init failed', err); }),
+  new Promise(resolve => setTimeout(() => { console.error('[db] schema init exceeded 15s, proceeding anyway'); resolve(); }, 15000)),
+]);
 db.pool = pool;
 
 module.exports = db;
