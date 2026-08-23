@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>Admin Panel</title>
   <link rel="stylesheet" href="/styles.css">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/cropperjs@1.6.2/dist/cropper.min.css">
 </head>
 <body>
   <header class="topbar">
@@ -18,6 +19,7 @@
     </div>
   </header>
 
+  <script src="https://cdn.jsdelivr.net/npm/cropperjs@1.6.2/dist/cropper.min.js"></script>
   <script src="/app.js"></script>
   <main style="max-width:1000px;margin:24px auto;padding:12px">
     <div id="rootPanel" style="padding:16px;background:var(--card);border-radius:10px;box-shadow:var(--shadow);margin-bottom:20px">
@@ -87,6 +89,12 @@
   <script>
     document.addEventListener('DOMContentLoaded', ()=>{
     async function api(path, opts={}){ const merged = Object.assign({}, opts, { credentials: 'same-origin' }); const res = await fetch('/api'+path, merged); const ct = res.headers.get('content-type')||''; if (ct.includes('application/json')) return res.json(); return res.text(); }
+    // offer to crop a photo right after it's chosen, same as everywhere else photos are uploaded
+    if (typeof attachPhotoCropper === 'function'){
+      const rootPhotoInput = document.querySelector('#rootCreateForm [name="photo"]');
+      if (rootPhotoInput) attachPhotoCropper(rootPhotoInput);
+      attachPhotoCropper(document.getElementById('edit-photo'));
+    }
     // initial loadRequests removed (replaced by tab-aware loader below)
     // render a single request as a polished card with photo preview and actions
     function renderRequestCard(req, peopleById){
@@ -170,8 +178,7 @@
         if (req.payload.type === 'password_reset'){
           const setPwdBtn = document.createElement('button'); setPwdBtn.textContent = t('btn_set_new_password'); setPwdBtn.style.marginLeft='8px';
           setPwdBtn.addEventListener('click', async ()=>{
-            let pid = req.payload.person_id;
-            if (!pid) pid = await resolvePersonIdFromPayload(req.payload);
+            const pid = await resolvePersonIdFromPayload(req);
             if (!pid){ alert(t('alert_person_not_found')); return; }
             const person = await api('/people/' + pid);
             openEditModalForPerson(person);
@@ -184,7 +191,7 @@
         // allow admin to modify or delete an approved account
         const modifyBtn = document.createElement('button'); modifyBtn.textContent = t('btn_modify_account'); modifyBtn.style.marginLeft='8px'; modifyBtn.addEventListener('click', async ()=>{
           // try to resolve the person id from payload
-          const pid = await resolvePersonIdFromPayload(req.payload);
+          const pid = await resolvePersonIdFromPayload(req);
           if (!pid){ alert(t('alert_person_not_found')); return; }
           // fetch person data and open modal for person
           const person = await api('/people/' + pid);
@@ -193,7 +200,7 @@
         const deleteBtn = document.createElement('button'); deleteBtn.textContent=t('btn_delete_account'); deleteBtn.style.marginLeft='8px'; deleteBtn.addEventListener('click', async ()=>{
           if (!await showConfirm(t('confirm_delete_account'))) return;
           try{
-            const pid = await resolvePersonIdFromPayload(req.payload);
+            const pid = await resolvePersonIdFromPayload(req);
             if (!pid){ alert(t('alert_person_not_found')); return; }
             const res = await fetch('/api/admin/people/'+pid+'/delete', { method:'POST', credentials:'same-origin' });
             const ct = res.headers.get('content-type')||''; const body = ct.includes('application/json')? await res.json() : await res.text();
@@ -507,7 +514,19 @@
     }
 
     // try to resolve person id from a request payload by username or matching full_name+birth_date
-    async function resolvePersonIdFromPayload(payload){
+    // Finds which person an approved request actually corresponds to, for the "Modify
+    // account" / "Delete account" buttons. Prefers the id the server itself recorded at
+    // approval time (req.resolved_person_id, or payload.person_id/matched_person_id for
+    // request shapes that already carry it directly) — these are exact and can't fail.
+    // Falls back to fuzzy username/name/birth-date matching only for older approved
+    // requests from before resolved_person_id existed; that fallback is inherently
+    // guesswork (e.g. it breaks if a name was corrected after approval) and was the actual
+    // cause of "could not locate the person record" errors on otherwise-normal accounts.
+    async function resolvePersonIdFromPayload(req){
+      const payload = req.payload || {};
+      if (req.resolved_person_id) return req.resolved_person_id;
+      if (payload.person_id) return payload.person_id;
+      if (payload.matched_person_id) return payload.matched_person_id;
       try{
         const people = await api('/people');
         if (payload.username){ const byUser = people.find(p=> p.username && p.username === payload.username); if (byUser) return byUser.id; }

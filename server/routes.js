@@ -358,10 +358,11 @@ async function processCreatePerson(dbLike, payload, reviewerId){
 // unless a new one was uploaded with the request
 async function processUpdatePerson(dbLike, payload, reviewerId){
   const current = await dbLike.prepare('SELECT * FROM people WHERE id = ?').get(payload.person_id);
-  if (!current) return;
+  if (!current) return null;
   const photoPath = payload.photo_path || current.photo_path;
   await dbLike.prepare('UPDATE people SET full_name = ?, gender = ?, birth_year = ?, birth_date = ?, death_date = ?, occupation = ?, residence = ?, phone = ?, photo_path = ?, last_edited_by = ?, last_edited_at = ? WHERE id = ?')
     .run(payload.full_name || current.full_name, payload.gender || current.gender, payload.birth_year || null, payload.birth_date || null, payload.death_date || null, payload.occupation || null, payload.residence || null, payload.phone || null, photoPath, reviewerId, now(), current.id);
+  return current.id;
 }
 
 // approve a member-submitted "add spouse/child/sibling" request: link to an existing
@@ -405,14 +406,20 @@ router.post('/admin/requests/:id/approve', wrap(async (req,res)=>{
   const payload = JSON.parse(reqRow.payload);
   try{
     await db.transaction(async (tx) => {
+      // stash the id of whichever person this request actually resolved to, so the admin
+      // UI can look them up directly later (for "Modify"/"Delete account" on this approved
+      // request) instead of having to re-derive it by fuzzy-matching name/username against
+      // the current people table — that guesswork was the cause of a real bug where those
+      // buttons failed with "could not locate the person record" for legitimate accounts.
+      let resolvedPersonId = null;
       if (payload.type==='create_person' || payload.type==='create'){
-        await processCreatePerson(tx, payload, req.session.user.id);
+        resolvedPersonId = await processCreatePerson(tx, payload, req.session.user.id);
       } else if (payload.type==='update_person'){
-        await processUpdatePerson(tx, payload, req.session.user.id);
+        resolvedPersonId = await processUpdatePerson(tx, payload, req.session.user.id);
       } else if (payload.type==='add_relative'){
-        await processAddRelative(tx, payload, req.session.user.id);
+        resolvedPersonId = await processAddRelative(tx, payload, req.session.user.id);
       }
-      await tx.prepare('UPDATE requests SET status = ?, reviewed_by = ?, reviewed_at = ? WHERE id = ?').run('approved', req.session.user.id, now(), id);
+      await tx.prepare('UPDATE requests SET status = ?, reviewed_by = ?, reviewed_at = ?, resolved_person_id = ? WHERE id = ?').run('approved', req.session.user.id, now(), resolvedPersonId, id);
     });
     res.json({ok:true});
   }catch(err){
@@ -558,10 +565,11 @@ router.post('/admin/requests/:id/edit-approve', express.json(), wrap(async (req,
   try{
     await db.transaction(async (tx) => {
       await tx.prepare('UPDATE requests SET payload = ? WHERE id = ?').run(JSON.stringify(newPayload), id);
+      let resolvedPersonId = null;
       if (newPayload.type==='create_person' || newPayload.type==='create'){
-        await processCreatePerson(tx, newPayload, req.session.user.id);
+        resolvedPersonId = await processCreatePerson(tx, newPayload, req.session.user.id);
       }
-      await tx.prepare('UPDATE requests SET status = ?, reviewed_by = ?, reviewed_at = ? WHERE id = ?').run('approved', req.session.user.id, now(), id);
+      await tx.prepare('UPDATE requests SET status = ?, reviewed_by = ?, reviewed_at = ?, resolved_person_id = ? WHERE id = ?').run('approved', req.session.user.id, now(), resolvedPersonId, id);
     });
     res.json({ ok:true });
   }catch(err){
@@ -604,10 +612,11 @@ router.post('/admin/requests/:id/edit-approve-multipart', upload.single('photo')
   try{
     await db.transaction(async (tx) => {
       await tx.prepare('UPDATE requests SET payload = ? WHERE id = ?').run(JSON.stringify(payload), id);
+      let resolvedPersonId = null;
       if (payload.type==='create_person' || payload.type==='create'){
-        await processCreatePerson(tx, payload, req.session.user.id);
+        resolvedPersonId = await processCreatePerson(tx, payload, req.session.user.id);
       }
-      await tx.prepare("UPDATE requests SET status = 'approved', reviewed_by = ?, reviewed_at = ? WHERE id = ?").run(req.session.user.id, now(), id);
+      await tx.prepare("UPDATE requests SET status = 'approved', reviewed_by = ?, reviewed_at = ?, resolved_person_id = ? WHERE id = ?").run(req.session.user.id, now(), resolvedPersonId, id);
     });
     res.json({ ok:true });
   }catch(err){

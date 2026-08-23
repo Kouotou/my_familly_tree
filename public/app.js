@@ -45,6 +45,84 @@ async function downscalePhoto(file, maxEdge=1600, quality=0.8){
   }
 }
 
+// Wires a photo <input type=file> so choosing a file opens a crop dialog first; the
+// resulting (possibly cropped) file replaces the input's own file list via DataTransfer, so
+// every existing upload code path (which just reads input.files[0] at submit time) keeps
+// working completely unchanged — cropping happens transparently at selection time, and
+// downscalePhoto() still runs on the result at submit time as before. Needs Cropper.js
+// loaded on the page (registration, the self-service modals on tree.html, and the admin
+// panel all load it); if it isn't available for any reason, the original file is kept as-is
+// rather than blocking the upload.
+function attachPhotoCropper(input){
+  if (!input || input.dataset.cropperAttached) return;
+  input.dataset.cropperAttached = '1';
+  input.addEventListener('change', async ()=>{
+    const file = input.files && input.files[0];
+    if (!file || !file.type || !file.type.startsWith('image/') || typeof Cropper === 'undefined') return;
+    try{
+      const cropped = await cropPhotoFile(file);
+      if (cropped && cropped !== file){
+        const dt = new DataTransfer();
+        dt.items.add(cropped);
+        input.files = dt.files;
+      }
+    }catch(e){ console.warn('crop skipped', e); }
+  });
+}
+
+// Shows the crop dialog for one file and resolves with the cropped result (or the original
+// file if the user chooses to skip cropping, or if Cropper.js fails to initialize).
+// Square-cropped by default, matching how profile photos are always displayed (circular
+// avatars, both in the tree and the profile modal).
+function cropPhotoFile(file){
+  return new Promise((resolve)=>{
+    let modal = document.getElementById('crop-modal');
+    if (!modal){
+      modal = document.createElement('div'); modal.id = 'crop-modal';
+      modal.innerHTML = `
+        <div id="crop-card">
+          <h3 data-i18n="crop_title">Crop your photo</h3>
+          <div id="crop-image-wrap"><img id="crop-image" alt="" /></div>
+          <div id="crop-actions">
+            <button type="button" id="crop-confirm" data-i18n="crop_use_btn">Use this crop</button>
+            <button type="button" id="crop-skip" class="secondary" data-i18n="crop_skip_btn">Use original photo</button>
+          </div>
+        </div>`;
+      document.body.appendChild(modal);
+      applyI18n();
+    }
+    const imgEl = modal.querySelector('#crop-image');
+    const confirmBtn = modal.querySelector('#crop-confirm');
+    const skipBtn = modal.querySelector('#crop-skip');
+
+    const url = URL.createObjectURL(file);
+    let cropper = null;
+    const cleanup = ()=>{
+      if (cropper){ cropper.destroy(); cropper = null; }
+      URL.revokeObjectURL(url);
+      modal.style.display = 'none';
+      confirmBtn.onclick = null; skipBtn.onclick = null; imgEl.onload = null;
+    };
+
+    imgEl.onload = ()=>{
+      cropper = new Cropper(imgEl, { aspectRatio: 1, viewMode: 1, autoCropArea: 1, background: false });
+    };
+    imgEl.src = url;
+    modal.style.display = 'flex';
+
+    confirmBtn.onclick = ()=>{
+      if (!cropper){ cleanup(); resolve(file); return; }
+      cropper.getCroppedCanvas({ maxWidth: 1600, maxHeight: 1600 }).toBlob((blob)=>{
+        cleanup();
+        if (!blob){ resolve(file); return; }
+        const newName = (file.name || 'photo').replace(/\.\w+$/, '') + '.jpg';
+        resolve(new File([blob], newName, { type: 'image/jpeg' }));
+      }, 'image/jpeg', 0.9);
+    };
+    skipBtn.onclick = ()=>{ cleanup(); resolve(file); };
+  });
+}
+
 function showProfileModal(person, nodeMap, edges){
   let modal = document.getElementById('profile-modal');
   if (!modal){
@@ -103,6 +181,8 @@ function showProfileModal(person, nodeMap, edges){
   const img = document.createElement('img'); img.className = 'profile-photo';
   img.src = person.photo_path || '/profile_icons/Female_profile_icon.jfif';
   img.addEventListener('error', ()=>{ img.src = '/profile_icons/Female_profile_icon.jfif'; });
+  img.style.cursor = 'pointer';
+  img.addEventListener('click', ()=> openPhotoLightbox(img.src));
   header.appendChild(img);
   const headText = document.createElement('div');
   const nameRow = document.createElement('h3'); nameRow.className='profile-name'; nameRow.textContent = person.full_name || 'Unknown';
@@ -168,6 +248,22 @@ function showProfileModal(person, nodeMap, edges){
   }
 
   modal.style.display='flex';
+}
+
+// Enlarged view of a profile photo — click anywhere outside the image, or the back arrow at
+// the top-left, to return to the profile modal underneath.
+function openPhotoLightbox(src){
+  let lightbox = document.getElementById('photo-lightbox');
+  if (!lightbox){
+    lightbox = document.createElement('div'); lightbox.id = 'photo-lightbox';
+    lightbox.innerHTML = `<button id="photo-lightbox-back" aria-label="Back">‹</button><img id="photo-lightbox-img" alt="" />`;
+    document.body.appendChild(lightbox);
+    const close = ()=>{ lightbox.style.display = 'none'; };
+    lightbox.querySelector('#photo-lightbox-back').addEventListener('click', close);
+    lightbox.addEventListener('click', (e)=>{ if (e.target === lightbox) close(); });
+  }
+  lightbox.querySelector('#photo-lightbox-img').src = src;
+  lightbox.style.display = 'flex';
 }
 
 // --- password visibility toggle, applied to every password field on every page ---
@@ -238,6 +334,7 @@ function openEditProfileModal(person){
     modal.querySelector('#edit-profile-form').addEventListener('submit', submitEditProfile);
     modal.querySelector('#change-password-form').addEventListener('submit', submitChangePassword);
     initPasswordToggles(modal);
+    attachPhotoCropper(modal.querySelector('#ep-photo'));
     applyI18n();
   }
   modal.querySelector('#ep-fullname').value = person.full_name || '';
@@ -324,6 +421,7 @@ async function openAddRelativeModal(relation, person){
     modal.querySelector('#add-relative-close').addEventListener('click', ()=> modal.style.display='none');
     modal.addEventListener('click', (e)=>{ if (e.target === modal) modal.style.display='none'; });
     initPasswordToggles(modal);
+    attachPhotoCropper(modal.querySelector('#ar-photo'));
     applyI18n();
   }
 
@@ -584,6 +682,10 @@ function setupParentMatcher(prefix){
 }
 setupParentMatcher('father');
 setupParentMatcher('mother');
+
+// offer to crop each profile photo right after it's chosen (registration's own photo, plus
+// the father/mother photos in the "new person" sub-forms)
+['reg-photo', 'father_photo', 'mother_photo'].forEach(id => attachPhotoCropper(document.getElementById(id)));
 
 // registration form submit
 const registerForm = document.getElementById('register-form');
@@ -1417,6 +1519,7 @@ const I18N = {
     reg_residence_label: 'Residence',
     reg_phone_label: 'Phone',
     reg_photo_label: 'Photo',
+    crop_title: 'Crop your photo', crop_use_btn: 'Use this crop', crop_skip_btn: 'Use original photo',
     reg_father_legend: 'Father',
     reg_mother_legend: 'Mother',
     reg_father_fullname_label: "Father's full name",
@@ -1660,6 +1763,7 @@ const I18N = {
     reg_residence_label: 'Résidence',
     reg_phone_label: 'Téléphone',
     reg_photo_label: 'Photo',
+    crop_title: 'Recadrer votre photo', crop_use_btn: 'Utiliser ce recadrage', crop_skip_btn: "Utiliser la photo d'origine",
     reg_father_legend: 'Père',
     reg_mother_legend: 'Mère',
     reg_father_fullname_label: 'Nom complet du père',

@@ -276,6 +276,19 @@ button.secondary:hover{ background:var(--accent-soft); }
 	background: linear-gradient(180deg, var(--card-alt), var(--card));
 }
 .profile-photo{ width:88px; height:88px; object-fit:cover; border-radius:50%; border:3px solid var(--card); box-shadow:0 4px 12px rgba(90,62,33,0.18); flex-shrink:0 }
+
+/* --- enlarged profile-photo lightbox --- */
+#photo-lightbox{
+	position:fixed; inset:0; background:rgba(0,0,0,0.82); display:none; align-items:center; justify-content:center;
+	z-index:120; padding:20px;
+}
+#photo-lightbox-img{ max-width:min(90vw,720px); max-height:85vh; border-radius:var(--rounded-lg); box-shadow:0 12px 40px rgba(0,0,0,0.5); object-fit:contain }
+#photo-lightbox-back{
+	position:absolute; top:20px; left:20px; width:40px; height:40px; border-radius:50%;
+	background:rgba(255,255,255,0.15); color:#fff; border:1px solid rgba(255,255,255,0.35); font-size:22px;
+	line-height:1; display:grid; place-items:center; padding:0; margin:0; box-shadow:none; cursor:pointer;
+}
+#photo-lightbox-back:hover{ background:rgba(255,255,255,0.3); transform:none }
 .profile-name{ margin:0; font-family:var(--font-display); font-size:22px; color:var(--text) }
 .profile-sub{ margin-top:4px; font-size:13px; color:var(--muted) }
 .profile-details{ padding:16px 24px; border-top:1px solid var(--border) }
@@ -328,6 +341,21 @@ button.secondary:hover{ background:var(--accent-soft); }
 	line-height:1; display:grid; place-items:center; padding:0; margin:0; box-shadow:none;
 }
 #edit-profile-close:hover, #add-relative-close:hover, #search-stats-close:hover{ background:var(--accent-soft); transform:none }
+
+/* --- photo crop dialog (shown right after choosing a photo file, before upload) --- */
+#crop-modal{
+	position:fixed; inset:0; background:rgba(0,0,0,0.75); display:none; align-items:center; justify-content:center;
+	z-index:130; padding:20px;
+}
+#crop-card{
+	background:var(--card); padding:22px; border-radius:var(--rounded-lg); max-width:480px; width:100%;
+	box-shadow:var(--shadow); border:1px solid var(--border);
+}
+#crop-card h3{ margin-top:0; font-family:var(--font-display) }
+#crop-image-wrap{ max-height:60vh; overflow:hidden; background:#000; border-radius:var(--rounded) }
+#crop-image{ display:block; max-width:100%; }
+#crop-actions{ display:flex; gap:10px; margin-top:16px }
+#crop-actions button{ margin-top:0; flex:1 }
 
 .ss-stats-summary{ display:flex; gap:10px; flex-wrap:wrap; margin:14px 0 4px }
 .ss-stat-chip{
