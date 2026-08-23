@@ -31,10 +31,18 @@
             <button id="login-btn" type="submit" data-i18n="login_btn">Log in</button>
           </form>
           <p id="login-feedback" style="color:var(--muted)"></p>
-          <div style="display:flex;gap:12px;margin-top:12px">
+          <div style="display:flex;gap:12px;margin-top:12px;flex-wrap:wrap">
             <a id="create-profile" href="/register.html" class="secondary-link" data-i18n="create_profile_link">Profile not found — create your own profile</a>
             <a id="admin-link" href="/admin-login.html" class="secondary-link" data-i18n="admin_link">Administrator login</a>
+            <a id="forgot-password-link" href="#" class="secondary-link" data-i18n="forgot_password_link">Forgot password?</a>
           </div>
+          <form id="forgot-password-form" class="hidden" style="margin-top:12px">
+            <label data-i18n="forgot_password_username_label">Username
+              <input id="fp-username" type="text" autocomplete="username" required />
+            </label>
+            <button type="submit" data-i18n="forgot_password_submit_btn">Request password reset</button>
+            <p id="forgot-password-feedback" class="hint"></p>
+          </form>
         </div>
         <div class="right-visual">
           <div style="background:linear-gradient(180deg,#eefcff,#ffffff);padding:24px;border-radius:12px;box-shadow:var(--shadow)">

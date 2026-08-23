@@ -34,9 +34,9 @@
   <div id="new-post-modal">
     <div id="new-post-card">
       <button id="new-post-close" aria-label="Close">&times;</button>
-      <h3 data-i18n="np_title">New post</h3>
+      <h3 id="new-post-title" data-i18n="np_title">New post</h3>
       <form id="new-post-form">
-        <label data-i18n="np_type">Type
+        <label id="np-type-label" data-i18n="np_type">Type
           <select id="np-type" name="type">
             <option value="photo" data-i18n="np_type_photo">Photo</option>
             <option value="audio" data-i18n="np_type_audio">Audio</option>
@@ -46,8 +46,9 @@
         <label id="np-photo-label" data-i18n="np_file_photo">Photo file<input type="file" id="np-photo-file" accept="image/*" /></label>
         <label id="np-audio-label" class="hidden" data-i18n="np_file_audio">Audio file<input type="file" id="np-audio-file" accept="audio/*" /></label>
         <label id="np-video-label" class="hidden" data-i18n="np_youtube_url">YouTube link<input type="text" id="np-video-url" placeholder="https://www.youtube.com/watch?v=..." /></label>
+        <p id="np-edit-file-hint" class="hint hidden" data-i18n="archives_edit_keep_file_hint">Leave the file/link empty to keep the current one.</p>
         <label data-i18n="np_caption">Write something about this post<textarea id="np-caption" rows="3"></textarea></label>
-        <button type="submit" data-i18n="np_submit">Submit for admin approval</button>
+        <button type="submit" id="new-post-submit-btn" data-i18n="np_submit">Submit for admin approval</button>
       </form>
       <div id="new-post-feedback" class="hint"></div>
     </div>
@@ -67,6 +68,8 @@
   <script>
     (function(){
       let currentTab = 'photo';
+      let myPersonId = null;
+      let editingItem = null;
       const tabs = { photo: 'tab-photos', audio: 'tab-audios', video: 'tab-videos' };
 
       function setActiveTab(type){
@@ -84,9 +87,25 @@
           const img = document.createElement('img'); img.className = 'archive-card-media'; img.src = item.file_path; img.alt = '';
           card.appendChild(img);
         } else if (item.type === 'video' && item.youtube_id){
-          const a = document.createElement('a'); a.href = item.url; a.target = '_blank'; a.rel = 'noopener';
-          const img = document.createElement('img'); img.className = 'archive-card-media'; img.src = 'https://img.youtube.com/vi/'+item.youtube_id+'/hqdefault.jpg'; img.alt = '';
-          a.appendChild(img); card.appendChild(a);
+          // plays inline by default (click-to-load, so we're not embedding an iframe per
+          // card up front); a separate link lets people open the real YouTube page if they
+          // want to
+          const media = document.createElement('div'); media.className = 'archive-card-media archive-video-media';
+          const playBtn = document.createElement('button'); playBtn.type = 'button'; playBtn.className = 'archive-video-play'; playBtn.setAttribute('aria-label', t('archives_play_video'));
+          const img = document.createElement('img'); img.src = 'https://img.youtube.com/vi/'+item.youtube_id+'/hqdefault.jpg'; img.alt = '';
+          const playIcon = document.createElement('span'); playIcon.className = 'archive-video-play-icon'; playIcon.textContent = '▶';
+          playBtn.appendChild(img); playBtn.appendChild(playIcon);
+          playBtn.addEventListener('click', ()=>{
+            const iframe = document.createElement('iframe');
+            iframe.src = 'https://www.youtube.com/embed/' + item.youtube_id + '?autoplay=1';
+            iframe.allow = 'accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture';
+            iframe.allowFullscreen = true;
+            iframe.setAttribute('frameborder', '0');
+            media.innerHTML = '';
+            media.appendChild(iframe);
+          });
+          media.appendChild(playBtn);
+          card.appendChild(media);
         } else if (item.type === 'audio' && item.file_path){
           const wrap = document.createElement('div'); wrap.style.padding = '18px 14px 0';
           const audio = document.createElement('audio'); audio.controls = true; audio.style.width = '100%'; audio.src = item.file_path;
@@ -94,11 +113,23 @@
         }
         const body = document.createElement('div'); body.className = 'archive-card-body';
         if (item.description){ const p = document.createElement('p'); p.className = 'archive-card-caption'; p.textContent = item.description; body.appendChild(p); }
+        if (item.type === 'video'){
+          const ytLink = document.createElement('a'); ytLink.href = item.url; ytLink.target = '_blank'; ytLink.rel = 'noopener'; ytLink.className = 'archive-yt-link'; ytLink.textContent = t('archives_watch_on_youtube');
+          body.appendChild(ytLink);
+        }
         const meta = document.createElement('div'); meta.className = 'archive-card-meta';
         meta.textContent = item.posted_by_name
           ? t('archives_posted_by', { name: item.posted_by_name, date: formatDate(item.created_at) })
           : t('archives_posted_by_unknown', { date: formatDate(item.created_at) });
         body.appendChild(meta);
+        if (item.person_id && item.person_id === myPersonId){
+          // editing re-submits the post for admin approval, same as a new post — it won't
+          // show up in this (approved-only) list again until then, matching how a brand-new
+          // post also isn't visible to its author until approved
+          const editBtn = document.createElement('button'); editBtn.type = 'button'; editBtn.className = 'secondary archive-edit-btn'; editBtn.textContent = t('archives_edit_btn');
+          editBtn.addEventListener('click', ()=> openEditPostModal(item));
+          body.appendChild(editBtn);
+        }
         card.appendChild(body);
         return card;
       }
@@ -123,12 +154,16 @@
       document.getElementById('tab-audios').addEventListener('click', ()=> loadTab('audio'));
       document.getElementById('tab-videos').addEventListener('click', ()=> loadTab('video'));
 
-      // new post modal
+      // new post / edit post modal (shared — editingItem selects which mode)
       const modal = document.getElementById('new-post-modal');
       const typeSelect = document.getElementById('np-type');
+      const typeLabel = document.getElementById('np-type-label');
       const photoLabel = document.getElementById('np-photo-label');
       const audioLabel = document.getElementById('np-audio-label');
       const videoLabel = document.getElementById('np-video-label');
+      const editFileHint = document.getElementById('np-edit-file-hint');
+      const modalTitle = document.getElementById('new-post-title');
+      const submitBtn = document.getElementById('new-post-submit-btn');
 
       function syncTypeFields(){
         const v = typeSelect.value;
@@ -139,12 +174,35 @@
       typeSelect.addEventListener('change', syncTypeFields);
 
       document.getElementById('new-post-btn').addEventListener('click', ()=>{
+        editingItem = null;
         document.getElementById('new-post-form').reset();
         typeSelect.value = currentTab;
+        typeSelect.disabled = false;
+        typeLabel.classList.remove('hidden');
+        editFileHint.classList.add('hidden');
         syncTypeFields();
+        modalTitle.setAttribute('data-i18n', 'np_title'); modalTitle.textContent = t('np_title');
+        submitBtn.setAttribute('data-i18n', 'np_submit'); submitBtn.textContent = t('np_submit');
         document.getElementById('new-post-feedback').textContent = '';
         modal.style.display = 'flex';
       });
+
+      window.openEditPostModal = function(item){
+        editingItem = item;
+        document.getElementById('new-post-form').reset();
+        typeSelect.value = item.type;
+        typeSelect.disabled = true;
+        typeLabel.classList.add('hidden');
+        editFileHint.classList.remove('hidden');
+        syncTypeFields();
+        document.getElementById('np-caption').value = item.description || '';
+        if (item.type === 'video') document.getElementById('np-video-url').value = item.url || '';
+        modalTitle.setAttribute('data-i18n', 'archives_edit_title'); modalTitle.textContent = t('archives_edit_title');
+        submitBtn.setAttribute('data-i18n', 'archives_edit_submit'); submitBtn.textContent = t('archives_edit_submit');
+        document.getElementById('new-post-feedback').textContent = '';
+        modal.style.display = 'flex';
+      };
+
       document.getElementById('new-post-close').addEventListener('click', ()=> modal.style.display = 'none');
       modal.addEventListener('click', (e)=>{ if (e.target === modal) modal.style.display = 'none'; });
 
@@ -154,38 +212,46 @@
         feedback.textContent = t('np_submitting');
         const type = typeSelect.value;
         const description = document.getElementById('np-caption').value;
+        const endpoint = editingItem ? ('/api/archive/' + editingItem.id + '/edit') : '/api/archive';
         try{
           if (type === 'audio'){
             const f = document.getElementById('np-audio-file').files[0];
-            if (!f){ feedback.textContent = t('np_error_generic'); return; }
-            // uploads straight to Blob from the browser, bypassing the server entirely for
-            // the file bytes — see the module script above
-            const blob = await window.__blobUpload(f.name, f, {
-              access: 'public',
-              handleUploadUrl: '/api/archive/upload-token',
-            });
-            const res = await fetch('/api/archive', {
+            if (!editingItem && !f){ feedback.textContent = t('np_error_generic'); return; }
+            let fileUrl = null;
+            if (f){
+              // uploads straight to Blob from the browser, bypassing the server entirely for
+              // the file bytes — see the module script above
+              const blob = await window.__blobUpload(f.name, f, {
+                access: 'public',
+                handleUploadUrl: '/api/archive/upload-token',
+              });
+              fileUrl = blob.url;
+            }
+            const res = await fetch(endpoint, {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               credentials: 'same-origin',
-              body: JSON.stringify({ type, description, file_url: blob.url }),
+              body: JSON.stringify(editingItem ? { description, file_url: fileUrl || undefined } : { type, description, file_url: fileUrl }),
             });
             const j = await res.json();
-            if (j.ok){ feedback.textContent = t('np_submitted_ok'); setTimeout(()=>{ modal.style.display='none'; }, 1400); }
+            if (j.ok){ feedback.textContent = t('np_submitted_ok'); setTimeout(()=>{ modal.style.display='none'; loadTab(currentTab); }, 1400); }
             else feedback.textContent = j.error || t('np_error_generic');
           } else {
             const data = new FormData();
-            data.append('type', type);
+            if (!editingItem) data.append('type', type);
             data.append('description', description);
             if (type === 'photo'){
               const f = document.getElementById('np-photo-file').files[0];
+              if (!editingItem && !f){ feedback.textContent = t('np_error_generic'); return; }
               if (f) data.append('file', await downscalePhoto(f));
             } else {
-              data.append('url', document.getElementById('np-video-url').value.trim());
+              const url = document.getElementById('np-video-url').value.trim();
+              if (!editingItem && !url){ feedback.textContent = t('np_error_generic'); return; }
+              if (url) data.append('url', url);
             }
-            const res = await fetch('/api/archive', { method:'POST', body:data, credentials:'same-origin' });
+            const res = await fetch(endpoint, { method:'POST', body:data, credentials:'same-origin' });
             const j = await res.json();
-            if (j.ok){ feedback.textContent = t('np_submitted_ok'); setTimeout(()=>{ modal.style.display='none'; }, 1400); }
+            if (j.ok){ feedback.textContent = t('np_submitted_ok'); setTimeout(()=>{ modal.style.display='none'; loadTab(currentTab); }, 1400); }
             else feedback.textContent = j.error || t('np_error_generic');
           }
         }catch(err){ console.error(err); feedback.textContent = t('network_error'); }
@@ -193,8 +259,10 @@
 
       (async ()=>{
         try{
-          const me = await fetch('/api/auth/me', { credentials:'same-origin' });
-          if (!me.ok){ window.location.href = '/'; return; }
+          const res = await fetch('/api/auth/me', { credentials:'same-origin' });
+          if (!res.ok){ window.location.href = '/'; return; }
+          const me = await res.json();
+          myPersonId = me.person ? me.person.id : null;
         }catch(e){}
         loadTab('photo');
       })();

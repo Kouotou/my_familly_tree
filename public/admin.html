@@ -49,8 +49,24 @@
         <button id="tab-rejected" data-i18n="rejected">Rejected</button>
       </div>
       <div class="admin-toolbar-group">
+        <button id="admin-change-password-btn" class="secondary" data-i18n="ep_change_password_title">Change password</button>
         <button id="admin-logout" data-i18n="admin_logout_btn">Logout</button>
         <button id="refresh-requests" data-i18n="admin_refresh_btn">Refresh</button>
+      </div>
+    </div>
+
+    <!-- Change my own password (also used by admin accounts, which have no linked profile) -->
+    <div id="admin-change-password-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.4);align-items:center;justify-content:center;z-index:60">
+      <div style="background:var(--card);padding:18px;border-radius:10px;max-width:420px;margin:48px auto;box-shadow:var(--shadow);">
+        <button id="admin-change-password-close" aria-label="Close" style="float:right">&times;</button>
+        <h3 data-i18n="ep_change_password_title">Change password</h3>
+        <form id="admin-change-password-form">
+          <label data-i18n="ep_current_password">Current password<input type="password" id="acp-current" required /></label>
+          <label data-i18n="ep_new_password">New password<input type="password" id="acp-new" required /></label>
+          <label data-i18n="ep_confirm_password">Confirm new password<input type="password" id="acp-confirm" required /></label>
+          <button type="submit" data-i18n="ep_change_password_btn">Change password</button>
+        </form>
+        <div id="admin-change-password-feedback" class="hint"></div>
       </div>
     </div>
     <h3 style="margin-top:12px" data-i18n="admin_pending_heading">Requests</h3>
@@ -75,7 +91,8 @@
       const header = document.createElement('div'); header.style.display='flex'; header.style.justifyContent='space-between'; header.style.alignItems='center';
       const titleMap = {
         update_person: t('req_update_title', { name: req.payload.target_name || t('req_unknown_person') }),
-        add_relative: t('req_add_relative_title', { relation: t('req_relation_'+(req.payload.relation||'spouse')), name: req.payload.requester_name || t('req_unknown_person') })
+        add_relative: t('req_add_relative_title', { relation: t('req_relation_'+(req.payload.relation||'spouse')), name: req.payload.requester_name || t('req_unknown_person') }),
+        password_reset: t('req_password_reset_title', { name: req.payload.full_name || req.payload.username || t('req_unknown_person') })
       };
       const title = titleMap[req.payload.type] || req.payload.full_name || t('req_new_person');
       const meta = document.createElement('div'); meta.innerHTML = `<strong>${title}</strong><div style="font-size:12px;color:var(--muted)">ID: ${req.id} — By: ${req.created_by} — ${new Date(req.created_at).toLocaleString()}</div>`;
@@ -83,13 +100,18 @@
       container.appendChild(header);
 
       const body = document.createElement('div'); body.className = 'request-item-body';
-      const left = document.createElement('div'); left.className = 'request-item-media';
-      if (req.payload.photo_path){ const img = document.createElement('img'); img.src = req.payload.photo_path; img.style.width='120px'; img.style.height='120px'; img.style.objectFit='cover'; img.style.borderRadius='8px'; left.appendChild(img); } else { const placeholder = document.createElement('div'); placeholder.style.width='120px'; placeholder.style.height='120px'; placeholder.style.background='#f3f4f6'; placeholder.style.borderRadius='8px'; placeholder.style.display='flex'; placeholder.style.alignItems='center'; placeholder.style.justifyContent='center'; placeholder.style.color='var(--muted)'; placeholder.textContent=t('req_no_photo'); left.appendChild(placeholder); }
-      body.appendChild(left);
+      if (req.payload.type !== 'password_reset'){
+        const left = document.createElement('div'); left.className = 'request-item-media';
+        if (req.payload.photo_path){ const img = document.createElement('img'); img.src = req.payload.photo_path; img.style.width='120px'; img.style.height='120px'; img.style.objectFit='cover'; img.style.borderRadius='8px'; left.appendChild(img); } else { const placeholder = document.createElement('div'); placeholder.style.width='120px'; placeholder.style.height='120px'; placeholder.style.background='#f3f4f6'; placeholder.style.borderRadius='8px'; placeholder.style.display='flex'; placeholder.style.alignItems='center'; placeholder.style.justifyContent='center'; placeholder.style.color='var(--muted)'; placeholder.textContent=t('req_no_photo'); left.appendChild(placeholder); }
+        body.appendChild(left);
+      }
 
       const info = document.createElement('div'); info.style.flex='1';
 
-      if (req.payload.type === 'add_relative' && req.payload.matched_person_id){
+      if (req.payload.type === 'password_reset'){
+        const el = document.createElement('div'); el.style.marginBottom='6px'; el.innerHTML = `<strong>${t('req_field_username')}:</strong> ${req.payload.username || ''}`;
+        info.appendChild(el);
+      } else if (req.payload.type === 'add_relative' && req.payload.matched_person_id){
         const matched = peopleById[req.payload.matched_person_id];
         const el = document.createElement('div'); el.style.marginBottom='6px';
         el.innerHTML = `<strong>${t('req_linking_existing')}</strong> ${matched ? matched.full_name : req.payload.matched_person_id}`;
@@ -140,6 +162,17 @@
         if (!req.payload.type || req.payload.type === 'create_person' || req.payload.type === 'create'){
           const editBtn = document.createElement('button'); editBtn.textContent=t('btn_edit_approve'); editBtn.style.marginLeft='8px'; editBtn.addEventListener('click', ()=> openEditModal(req));
           actions.appendChild(editBtn);
+        }
+        if (req.payload.type === 'password_reset'){
+          const setPwdBtn = document.createElement('button'); setPwdBtn.textContent = t('btn_set_new_password'); setPwdBtn.style.marginLeft='8px';
+          setPwdBtn.addEventListener('click', async ()=>{
+            let pid = req.payload.person_id;
+            if (!pid) pid = await resolvePersonIdFromPayload(req.payload);
+            if (!pid){ alert(t('alert_person_not_found')); return; }
+            const person = await api('/people/' + pid);
+            openEditModalForPerson(person);
+          });
+          actions.appendChild(setPwdBtn);
         }
         const rejectBtn = document.createElement('button'); rejectBtn.textContent=t('btn_reject'); rejectBtn.style.marginLeft='8px'; rejectBtn.addEventListener('click', async ()=>{ const ok = await showConfirm(t('confirm_reject')); if (!ok) return; const note = prompt(t('prompt_rejection_reason'),''); try{ const res = await fetch('/api/admin/requests/'+req.id+'/reject',{method:'POST', headers:{'Content-Type':'application/json'}, credentials:'same-origin', body: JSON.stringify({note})}); const ct = res.headers.get('content-type')||''; const body = ct.includes('application/json')? await res.json() : await res.text(); if (res.ok){ await loadRequests(currentStatus); } else { alert(t('alert_reject_failed',{msg: body && (body.error||body.message) ? (body.error||body.message) : JSON.stringify(body)})); } }catch(e){ alert(t('network_error')+' '+e.message); } });
         actions.appendChild(rejectBtn);
@@ -525,6 +558,31 @@
     const tabApproved = document.getElementById('tab-approved'); if (tabApproved) tabApproved.addEventListener('click', ()=> loadRequests('approved'));
     const tabRejected = document.getElementById('tab-rejected'); if (tabRejected) tabRejected.addEventListener('click', ()=> loadRequests('rejected'));
     const logoutBtn = document.getElementById('admin-logout'); if (logoutBtn) logoutBtn.addEventListener('click', async ()=>{ await api('/auth/logout',{method:'POST'}); window.location.href='/'; });
+
+    // change my own password (works for admin accounts too, which have no linked profile)
+    const acpModal = document.getElementById('admin-change-password-modal');
+    const acpBtn = document.getElementById('admin-change-password-btn');
+    const acpClose = document.getElementById('admin-change-password-close');
+    const acpForm = document.getElementById('admin-change-password-form');
+    const acpFeedback = document.getElementById('admin-change-password-feedback');
+    if (acpBtn) acpBtn.addEventListener('click', ()=>{ acpForm.reset(); acpFeedback.textContent=''; acpModal.style.display='flex'; });
+    if (acpClose) acpClose.addEventListener('click', ()=> acpModal.style.display='none');
+    if (acpModal) acpModal.addEventListener('click', (e)=>{ if (e.target===acpModal) acpModal.style.display='none'; });
+    if (acpForm) acpForm.addEventListener('submit', async (e)=>{
+      e.preventDefault();
+      const current = document.getElementById('acp-current').value;
+      const nextPwd = document.getElementById('acp-new').value;
+      const confirmPwd = document.getElementById('acp-confirm').value;
+      if (nextPwd !== confirmPwd){ acpFeedback.textContent = t('ep_password_mismatch'); return; }
+      acpFeedback.textContent = t('ep_password_updating');
+      try{
+        const res = await fetch('/api/member/password', { method:'POST', headers:{'Content-Type':'application/json'}, credentials:'same-origin', body: JSON.stringify({ current_password: current, new_password: nextPwd }) });
+        const j = await res.json();
+        if (j.ok){ acpFeedback.textContent = t('ep_password_changed'); acpForm.reset(); }
+        else acpFeedback.textContent = j.error || t('ep_error_generic');
+      }catch(err){ acpFeedback.textContent = t('network_error'); }
+    });
+
     // initial load
     loadRequests();
     

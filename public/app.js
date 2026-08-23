@@ -468,6 +468,28 @@ if (loginForm){
   });
 }
 
+const forgotPasswordLink = document.getElementById('forgot-password-link');
+const forgotPasswordForm = document.getElementById('forgot-password-form');
+if (forgotPasswordLink && forgotPasswordForm){
+  forgotPasswordLink.addEventListener('click', e=>{
+    e.preventDefault();
+    forgotPasswordForm.classList.toggle('hidden');
+  });
+  forgotPasswordForm.addEventListener('submit', async e=>{
+    e.preventDefault();
+    const username = document.getElementById('fp-username').value;
+    const feedback = document.getElementById('forgot-password-feedback');
+    feedback.textContent = t('forgot_password_submitting');
+    try{
+      const r = await api('/auth/request-password-reset',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username})});
+      feedback.textContent = r.ok ? t('forgot_password_submitted_ok') : (r.error || t('forgot_password_error_generic'));
+      if (r.ok) forgotPasswordForm.reset();
+    }catch(err){
+      feedback.textContent = t('network_error');
+    }
+  });
+}
+
 const createProfileLink = document.getElementById('create-profile');
 if (createProfileLink){
   createProfileLink.addEventListener('click', e=>{
@@ -1237,6 +1259,12 @@ const I18N = {
     login_feedback_fail: 'Incorrect username or password.',
     create_profile_link: 'Profile not found — create your own profile',
     admin_link: 'Administrator login',
+    forgot_password_link: 'Forgot password?',
+    forgot_password_username_label: 'Username',
+    forgot_password_submit_btn: 'Request password reset',
+    forgot_password_submitting: 'Sending request...',
+    forgot_password_submitted_ok: "If that username exists, an admin has been notified and will set a new password for you — they'll let you know once it's done.",
+    forgot_password_error_generic: 'Could not send the request. Please try again.',
     right_title: 'Family Tree',
     right_desc: "Explore ancestors, add/update profiles, and submit changes for admin approval. We keep your family's history safe and accurate.",
     admin_logout: 'Logout',
@@ -1313,11 +1341,13 @@ const I18N = {
     req_not_linked_mother: 'Not linked via mother',
     req_update_title: 'Profile update — {name}',
     req_add_relative_title: 'Add {relation} — requested by {name}',
+    req_password_reset_title: 'Password reset requested — {name}',
     req_relation_spouse: 'spouse', req_relation_child: 'child', req_relation_sibling: 'sibling',
     req_unknown_person: 'unknown person',
     req_from_family: '(from family)',
     btn_approve: 'Approve', btn_edit_approve: 'Edit & Approve', btn_reject: 'Reject',
     btn_modify_account: 'Modify account', btn_delete_account: 'Delete account',
+    btn_set_new_password: 'Set new password',
     confirm_approve: 'Approve this request?',
     confirm_reject: 'Reject this request?',
     confirm_delete_account: 'Delete this account? This removes them (and their relationships) from the family tree.',
@@ -1414,6 +1444,12 @@ const I18N = {
     archives_empty_videos: 'No approved videos yet.',
     archives_posted_by: 'Posted by {name} — {date}',
     archives_posted_by_unknown: 'Posted by a family member — {date}',
+    archives_play_video: 'Play video',
+    archives_watch_on_youtube: 'Watch on YouTube ↗',
+    archives_edit_btn: 'Edit',
+    archives_edit_title: 'Edit post',
+    archives_edit_submit: 'Save & resubmit for approval',
+    archives_edit_keep_file_hint: 'Leave the file/link empty to keep the current one.',
     np_title: 'New post',
     np_type: 'Type',
     np_type_photo: 'Photo', np_type_audio: 'Audio', np_type_video: 'YouTube video link',
@@ -1446,6 +1482,12 @@ const I18N = {
     login_feedback_fail: "Nom d'utilisateur ou mot de passe incorrect.",
     create_profile_link: 'Profil introuvable — créez votre profil',
     admin_link: 'Connexion administrateur',
+    forgot_password_link: 'Mot de passe oublié ?',
+    forgot_password_username_label: "Nom d'utilisateur",
+    forgot_password_submit_btn: 'Demander une réinitialisation',
+    forgot_password_submitting: 'Envoi de la demande...',
+    forgot_password_submitted_ok: "Si ce nom d'utilisateur existe, un administrateur a été prévenu et vous définira un nouveau mot de passe — il vous préviendra une fois que ce sera fait.",
+    forgot_password_error_generic: "Impossible d'envoyer la demande. Veuillez réessayer.",
     right_title: 'Arbre généalogique',
     right_desc: "Explorez les ancêtres, ajoutez ou mettez à jour des profils, et soumettez des modifications pour approbation par l'administrateur. Nous gardons l'histoire familiale en sécurité.",
     admin_logout: 'Se déconnecter',
@@ -1522,11 +1564,13 @@ const I18N = {
     req_not_linked_mother: 'Non lié à la mère',
     req_update_title: 'Mise à jour de profil — {name}',
     req_add_relative_title: 'Ajout de {relation} — demandé par {name}',
+    req_password_reset_title: 'Réinitialisation de mot de passe demandée — {name}',
     req_relation_spouse: 'conjoint(e)', req_relation_child: 'enfant', req_relation_sibling: 'frère/sœur',
     req_unknown_person: 'personne inconnue',
     req_from_family: '(de la famille)',
     btn_approve: 'Approuver', btn_edit_approve: 'Modifier et approuver', btn_reject: 'Rejeter',
     btn_modify_account: 'Modifier le compte', btn_delete_account: 'Supprimer le compte',
+    btn_set_new_password: 'Définir un nouveau mot de passe',
     confirm_approve: 'Approuver cette demande ?',
     confirm_reject: 'Rejeter cette demande ?',
     confirm_delete_account: "Supprimer ce compte ? Cela retire cette personne (et ses relations) de l'arbre généalogique.",
@@ -1623,6 +1667,12 @@ const I18N = {
     archives_empty_videos: 'Aucune vidéo approuvée pour le moment.',
     archives_posted_by: 'Publié par {name} — {date}',
     archives_posted_by_unknown: 'Publié par un membre de la famille — {date}',
+    archives_play_video: 'Lire la vidéo',
+    archives_watch_on_youtube: 'Voir sur YouTube ↗',
+    archives_edit_btn: 'Modifier',
+    archives_edit_title: 'Modifier la publication',
+    archives_edit_submit: 'Enregistrer et soumettre à nouveau pour approbation',
+    archives_edit_keep_file_hint: 'Laissez le fichier/lien vide pour conserver celui existant.',
     np_title: 'Nouvelle publication',
     np_type: 'Type',
     np_type_photo: 'Photo', np_type_audio: 'Audio', np_type_video: 'Lien vidéo YouTube',

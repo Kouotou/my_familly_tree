@@ -51,6 +51,13 @@ function requireLoggedInPerson(req,res){
   return true;
 }
 
+// any logged-in account at all, member or admin — used for actions (like changing one's
+// own password) that don't need a linked person profile
+function requireLoggedIn(req,res){
+  if (!req.session.user){ res.status(401).json({error:'not logged in'}); return false; }
+  return true;
+}
+
 async function isUsernameTaken(username){
   if (!username) return false;
   if (await db.prepare('SELECT id FROM people WHERE username = ?').get(username)) return true;
@@ -98,6 +105,27 @@ router.post('/auth/login', wrap(handleLogin));
 router.post('/auth/admin-login', wrap(handleLogin));
 
 router.post('/auth/logout',(req,res)=>{ req.session.destroy(()=>res.json({ok:true})); });
+
+// self-service: "forgot password" — creates a pending request an admin sees in the normal
+// requests queue, who then sets a new password via the existing "Modify account" flow and
+// tells the member out of band. Always responds the same way regardless of whether the
+// username exists, so this can't be used to enumerate valid usernames.
+router.post('/auth/request-password-reset', express.json(), wrap(async (req,res)=>{
+  const username = ((req.body && req.body.username) || '').trim();
+  if (!username) return res.status(400).json({ error: 'Username is required.' });
+  const user = await db.prepare('SELECT id, person_id FROM users WHERE username = ?').get(username);
+  if (user) {
+    let fullName = username;
+    if (user.person_id) {
+      const person = await db.prepare('SELECT full_name FROM people WHERE id = ?').get(user.person_id);
+      if (person) fullName = person.full_name;
+    }
+    const payload = { type: 'password_reset', username, person_id: user.person_id || null, full_name: fullName };
+    await db.prepare('INSERT INTO requests (id, type, payload, status, created_by, created_at) VALUES (?, ?, ?, ?, ?, ?)')
+      .run(uuidv4(), 'password_reset', JSON.stringify(payload), 'pending', 'self-service', now());
+  }
+  res.json({ ok: true });
+}));
 
 // get current session
 router.get('/auth/me', wrap(async (req,res)=>{
@@ -434,7 +462,7 @@ router.post('/member/profile/update', upload.single('photo'), wrap(async (req,re
 // change one's own password immediately — a security setting, not tree data, so it
 // doesn't go through admin review
 router.post('/member/password', express.json(), wrap(async (req,res)=>{
-  if (!requireLoggedInPerson(req,res)) return;
+  if (!requireLoggedIn(req,res)) return;
   const { current_password, new_password } = req.body || {};
   if (!current_password || !new_password) return res.status(400).json({ error: 'Current and new password are required.' });
   if (String(new_password).length < 4) return res.status(400).json({ error: 'New password is too short.' });
@@ -845,6 +873,36 @@ router.post('/archive', upload.single('file'), wrap(async (req,res)=>{
   await db.prepare('INSERT INTO archive (id, title, url, description, file_path, type, person_id, created_by, created_at, approval_status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
     .run(id, null, url, body.description || null, filePath, type, req.session.user.person_id, req.session.user.id, now(), 'pending');
   res.json({ ok:true, id });
+}));
+
+// owner-only: edit an existing post's caption (and, for photo/audio, optionally replace the
+// file; for video, optionally replace the link) and send it back through admin review —
+// the type itself can't change. File replacement follows the same paths as creating a post:
+// photo goes through this server-routed upload, audio was already uploaded directly to Blob
+// by the browser (file_url in the body), video re-validates the YouTube link.
+router.post('/archive/:id/edit', upload.single('file'), wrap(async (req,res)=>{
+  if (!requireLoggedInPerson(req,res)) return;
+  const id = req.params.id;
+  const row = await db.prepare('SELECT * FROM archive WHERE id = ?').get(id);
+  if (!row) return res.status(404).json({ error: 'not found' });
+  if (row.person_id !== req.session.user.person_id) return res.status(403).json({ error: 'forbidden' });
+
+  const body = req.body || {};
+  let filePath = row.file_path, url = row.url;
+  if (row.type === 'video'){
+    if (body.url) {
+      if (!extractYouTubeId(body.url)) return res.status(400).json({ error: "That doesn't look like a valid YouTube link." });
+      url = body.url;
+    }
+  } else if (row.type === 'audio'){
+    if (body.file_url) filePath = body.file_url;
+  } else if (row.type === 'photo'){
+    if (req.file) filePath = await uploadPhoto(req.file, 'archive');
+  }
+
+  await db.prepare("UPDATE archive SET description = ?, url = ?, file_path = ?, approval_status = 'pending', reviewed_by = NULL, reviewed_at = NULL WHERE id = ?")
+    .run(body.description || null, url, filePath, id);
+  res.json({ ok:true });
 }));
 
 // approved posts for members to browse, one type at a time
