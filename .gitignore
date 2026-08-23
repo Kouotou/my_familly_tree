@@ -16,3 +16,10 @@ coverage/
 # OS files
 Thumbs.db
 Desktop.ini
+.vercel
+.env*
+
+# auto-installed agent-skill metadata from `vercel install neon` — tooling docs, not app code
+.agents/
+.claude/
+skills-lock.json

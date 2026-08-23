@@ -252,7 +252,7 @@
       form.append('residence', f.residence.value || '');
       form.append('set_as_root', 'on');
       const photoEl = f.querySelector('[name="photo"]');
-      if (photoEl && photoEl.files && photoEl.files[0]) form.append('photo', photoEl.files[0]);
+      if (photoEl && photoEl.files && photoEl.files[0]) form.append('photo', await downscalePhoto(photoEl.files[0]));
       try{
         const res = await fetch('/api/admin/people/create-direct', { method:'POST', credentials:'same-origin', body: form });
         const j = await res.json();
@@ -368,6 +368,7 @@
       set('occupation', req.payload.occupation || '');
       set('residence', req.payload.residence || '');
       set('phone', req.payload.phone || '');
+      set('new_password', '');
       const photoPathEl = form.querySelector('[name="photo_path"]'); if (photoPathEl) photoPathEl.value = req.payload.photo_path || '';
       // populate existing relations
       const list = document.getElementById('relations-list'); list.innerHTML='';
@@ -410,6 +411,7 @@
       set('residence', person.residence || '');
       set('phone', person.phone || '');
       set('photo_path', person.photo_path || '');
+      set('new_password', '');
       // relations: we don't have easy mapping here; clear list
       const list = document.getElementById('relations-list'); list.innerHTML = '';
       modal.style.display = 'block';
@@ -474,7 +476,8 @@
         form.append('occupation', f.occupation.value || '');
         form.append('residence', f.residence.value || '');
         form.append('phone', f.phone.value || '');
-        form.append('photo', photoEl.files[0]);
+        form.append('photo', await downscalePhoto(photoEl.files[0]));
+        if (f.new_password && f.new_password.value) form.append('new_password', f.new_password.value);
         form.append('relations', JSON.stringify(rels));
         const personId = f.personId && f.personId.value ? f.personId.value : null;
         const endpoint = personId ? ('/api/admin/people/' + personId + '/update-multipart') : ('/api/admin/requests/' + id + '/edit-approve-multipart');
@@ -497,6 +500,7 @@
         residence: f.residence.value || null,
         phone: f.phone.value || null,
         photo_path: f.photo_path ? f.photo_path.value || null : null,
+        new_password: f.new_password ? f.new_password.value || null : null,
         relations: rels
       };
       // if editing an existing person (admin modify), personId will be set
@@ -556,6 +560,7 @@
         <label data-i18n="reg_residence_label">Residence<input name="residence" /></label>
         <label data-i18n="reg_phone_label">Phone<input name="phone" /></label>
         <label data-i18n="edit_field_photo">Photo (replace)<input id="edit-photo" name="photo" type="file" accept="image/*" /></label>
+        <label data-i18n="edit_field_new_password">Set new password (only applies to an existing member account — leave blank to keep unchanged)<input name="new_password" type="password" autocomplete="new-password" /></label>
         <div id="relations-container" style="margin-top:8px">
           <strong data-i18n="edit_relations_heading">Relations</strong>
           <div id="relations-list"></div>

@@ -6,6 +6,33 @@ async function api(path, opts={}){
   return res.text();
 }
 
+// Downscale a photo client-side before upload (max ~1600px edge, ~80% JPEG quality) so
+// phone-camera photos stay comfortably under the server's upload size limit, which itself
+// sits under Vercel's fixed 4.5MB serverless request-body ceiling. Falls back to the
+// original file untouched if anything goes wrong (e.g. a non-image file slipping through,
+// or an older browser lacking canvas support) rather than blocking the upload.
+async function downscalePhoto(file, maxEdge=1600, quality=0.8){
+  if (!file || !file.type || !file.type.startsWith('image/')) return file;
+  try{
+    const bitmap = await createImageBitmap(file);
+    const scale = Math.min(1, maxEdge / Math.max(bitmap.width, bitmap.height));
+    if (scale >= 1){ bitmap.close && bitmap.close(); return file; }
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.round(bitmap.width * scale);
+    canvas.height = Math.round(bitmap.height * scale);
+    const ctx = canvas.getContext('2d');
+    ctx.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+    bitmap.close && bitmap.close();
+    const blob = await new Promise(resolve => canvas.toBlob(resolve, 'image/jpeg', quality));
+    if (!blob) return file;
+    const newName = file.name ? file.name.replace(/\.\w+$/, '') + '.jpg' : 'photo.jpg';
+    return new File([blob], newName, { type: 'image/jpeg' });
+  }catch(e){
+    console.warn('photo downscale skipped', e);
+    return file;
+  }
+}
+
 function showProfileModal(person, nodeMap, edges){
   let modal = document.getElementById('profile-modal');
   if (!modal){
@@ -226,7 +253,7 @@ async function submitEditProfile(e){
   data.append('residence', modal.querySelector('#ep-residence').value);
   data.append('phone', modal.querySelector('#ep-phone').value);
   const photoEl = modal.querySelector('#ep-photo');
-  if (photoEl.files && photoEl.files[0]) data.append('photo', photoEl.files[0]);
+  if (photoEl.files && photoEl.files[0]) data.append('photo', await downscalePhoto(photoEl.files[0]));
   try{
     const res = await fetch('/api/member/profile/update', { method:'POST', body:data, credentials:'same-origin' });
     const j = await res.json();
@@ -398,7 +425,7 @@ async function openAddRelativeModal(relation, person){
       data.append('username', username);
       data.append('password', password);
       const photoEl = modal.querySelector('#ar-photo');
-      if (photoEl.files && photoEl.files[0]) data.append('photo', photoEl.files[0]);
+      if (photoEl.files && photoEl.files[0]) data.append('photo', await downscalePhoto(photoEl.files[0]));
     }
     if (relation === 'child'){
       const sel = modal.querySelector('#ar-other-parent');
@@ -522,11 +549,11 @@ if (registerForm){
     data.append('residence', maybe('reg-residence'));
     data.append('phone', maybe('reg-phone'));
     const photoEl = document.getElementById('reg-photo');
-    if (photoEl && photoEl.files && photoEl.files[0]) data.append('photo', photoEl.files[0]);
+    if (photoEl && photoEl.files && photoEl.files[0]) data.append('photo', await downscalePhoto(photoEl.files[0]));
 
     // parent fields (optional): either linked to an existing matched profile (id set by the
     // matcher UI) or full details for a brand-new profile to be created alongside this one.
-    const appendParent = (prefix)=>{
+    const appendParent = async (prefix)=>{
       if (!document.getElementById(prefix + '_name')) return;
       data.append(prefix + '_name', maybe(prefix + '_name'));
       const idVal = maybe(prefix + '_id');
@@ -537,10 +564,10 @@ if (registerForm){
       data.append(prefix + '_phone', maybe(prefix + '_phone'));
       data.append(prefix + '_origin', maybe(prefix + '_origin'));
       const photoEl = document.getElementById(prefix + '_photo');
-      if (photoEl && photoEl.files && photoEl.files[0]) data.append(prefix + '_photo', photoEl.files[0]);
+      if (photoEl && photoEl.files && photoEl.files[0]) data.append(prefix + '_photo', await downscalePhoto(photoEl.files[0]));
     };
-    appendParent('father');
-    appendParent('mother');
+    await appendParent('father');
+    await appendParent('mother');
 
     const feedback = document.getElementById('register-feedback');
     if (feedback) feedback.textContent = t('reg_submitting');
@@ -1302,6 +1329,7 @@ const I18N = {
     edit_modal_title: 'Edit request and approve',
     edit_field_username: 'Username (optional)',
     edit_field_photo: 'Photo (replace)',
+    edit_field_new_password: 'Set new password (only applies to an existing member account — leave blank to keep unchanged)',
     edit_relations_heading: 'Relations',
     edit_rel_father: 'Father', edit_rel_mother: 'Mother',
     edit_rel_name_placeholder: 'Name', edit_rel_year_placeholder: 'Birth year',
@@ -1510,6 +1538,7 @@ const I18N = {
     edit_modal_title: 'Modifier la demande et approuver',
     edit_field_username: "Nom d'utilisateur (optionnel)",
     edit_field_photo: 'Photo (remplacer)',
+    edit_field_new_password: "Définir un nouveau mot de passe (uniquement pour un compte membre existant — laisser vide pour ne pas changer)",
     edit_relations_heading: 'Relations',
     edit_rel_father: 'Père', edit_rel_mother: 'Mère',
     edit_rel_name_placeholder: 'Nom', edit_rel_year_placeholder: 'Année de naissance',

@@ -1,90 +1,161 @@
-const Database = require('better-sqlite3');
-const path = require('path');
-const dbfile = process.env.DB_FILE || path.join(__dirname, 'data.sqlite');
-const db = new Database(dbfile);
+const { Pool } = require('pg');
 
-function init() {
-  // people
-  db.exec(`
-  CREATE TABLE IF NOT EXISTS people (
-    id TEXT PRIMARY KEY,
-    username TEXT UNIQUE,
-    full_name TEXT NOT NULL,
-    gender TEXT,
-    birth_year INTEGER,
-    birth_date TEXT,
-    death_date TEXT,
-    occupation TEXT,
-    residence TEXT,
-    phone TEXT,
-    photo_path TEXT,
-    family_head TEXT,
-    created_by TEXT,
-    created_at TEXT,
-    last_edited_by TEXT,
-    last_edited_at TEXT,
-    approval_status TEXT DEFAULT 'approved',
-    reviewed_by TEXT
-  );
-
-  CREATE TABLE IF NOT EXISTS relationships (
-    id TEXT PRIMARY KEY,
-    person_id TEXT NOT NULL,
-    relative_id TEXT NOT NULL,
-    type TEXT NOT NULL,
-    notes TEXT
-  );
-
-  CREATE TABLE IF NOT EXISTS users (
-    id TEXT PRIMARY KEY,
-    username TEXT UNIQUE,
-    password_hash TEXT,
-    role TEXT DEFAULT 'member',
-    person_id TEXT
-  );
-
-  CREATE TABLE IF NOT EXISTS requests (
-    id TEXT PRIMARY KEY,
-    type TEXT,
-    payload TEXT,
-    status TEXT DEFAULT 'pending',
-    created_by TEXT,
-    created_at TEXT,
-    reviewed_by TEXT,
-    reviewed_at TEXT,
-    review_note TEXT
-  );
-
-  CREATE TABLE IF NOT EXISTS archive (
-    id TEXT PRIMARY KEY,
-    title TEXT,
-    url TEXT,
-    description TEXT,
-    created_by TEXT,
-    created_at TEXT,
-    approval_status TEXT DEFAULT 'pending'
-  );
-
-  CREATE TABLE IF NOT EXISTS settings (
-    key TEXT PRIMARY KEY,
-    value TEXT
-  );
-  `);
-
-  // migrate the archive table forward for family-post support (photo/audio/video-link
-  // posts), without disturbing any rows already in an existing database
-  const archiveCols = db.prepare("PRAGMA table_info(archive)").all().map(c => c.name);
-  const addArchiveCol = (name, def) => { if (!archiveCols.includes(name)) db.exec(`ALTER TABLE archive ADD COLUMN ${name} ${def}`); };
-  addArchiveCol('type', "TEXT DEFAULT 'photo'");
-  addArchiveCol('file_path', 'TEXT');
-  addArchiveCol('person_id', 'TEXT');
-  addArchiveCol('reviewed_by', 'TEXT');
-  addArchiveCol('reviewed_at', 'TEXT');
+const connectionString = process.env.DATABASE_URL || process.env.POSTGRES_URL;
+if (!connectionString) {
+  throw new Error('DATABASE_URL (or POSTGRES_URL) is not set — run `vercel env pull .env.local` or set it in .env');
 }
 
-init();
-// attach the resolved DB file path for runtime inspection
-db.__dbfile = dbfile;
-console.log('[db] using sqlite file:', dbfile);
+const pool = new Pool({ connectionString, max: 4, idleTimeoutMillis: 10000 });
+// an idle client emitting an error (e.g. the remote end closing the connection) would
+// otherwise be an unhandled 'error' event and crash the process
+pool.on('error', (err) => { console.error('[db] idle client error', err); });
+
+// --- ? -> $1,$2,... placeholder conversion -------------------------------------------
+// Every query in this codebase uses SQLite-style `?` positional placeholders, and (checked
+// against every query in routes.js as of this migration) none of them contain a literal `?`
+// inside a string/JSON value or a Postgres `?` jsonb operator — so a straight sequential
+// conversion is safe. If a future query needs a literal `?`, this assumption breaks and the
+// placeholder-count assertion below will catch the mismatch loudly rather than silently
+// binding the wrong parameter.
+const placeholderCache = new Map();
+function toPositional(sql) {
+  let converted = placeholderCache.get(sql);
+  if (converted === undefined) {
+    let n = 0;
+    converted = sql.replace(/\?/g, () => `$${++n}`);
+    placeholderCache.set(sql, converted);
+  }
+  return converted;
+}
+function placeholderCount(sql) {
+  const m = sql.match(/\?/g);
+  return m ? m.length : 0;
+}
+
+// --- prepare().get/all/run() shim, bindable to either the pool or a transaction client ---
+function bind(runner) {
+  function prepare(sql) {
+    const expected = placeholderCount(sql);
+    const positional = toPositional(sql);
+    async function exec(params) {
+      if (params.length !== expected) {
+        throw new Error(`placeholder count mismatch: query expects ${expected}, got ${params.length}\n${sql}`);
+      }
+      return runner.query(positional, params);
+    }
+    return {
+      async get(...params) { const r = await exec(params); return r.rows[0]; },
+      async all(...params) { const r = await exec(params); return r.rows; },
+      async run(...params) { const r = await exec(params); return { changes: r.rowCount }; },
+    };
+  }
+  return { prepare, query: (text, params) => runner.query(text, params) };
+}
+
+const db = bind(pool);
+
+// runs fn with a single dedicated client wrapped in BEGIN/COMMIT/ROLLBACK
+db.transaction = async function transaction(fn) {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const result = await fn(bind(client));
+    await client.query('COMMIT');
+    return result;
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    throw err;
+  } finally {
+    client.release();
+  }
+};
+
+// --- schema (idempotent, advisory-lock-guarded so concurrent cold starts can't race it) ---
+const SCHEMA_LOCK_ID = 727501;
+
+async function ensureSchema() {
+  const client = await pool.connect();
+  try {
+    await client.query('SELECT pg_advisory_lock($1)', [SCHEMA_LOCK_ID]);
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS people (
+        id TEXT PRIMARY KEY,
+        username TEXT UNIQUE,
+        full_name TEXT NOT NULL,
+        gender TEXT,
+        birth_year INTEGER,
+        birth_date TEXT,
+        death_date TEXT,
+        occupation TEXT,
+        residence TEXT,
+        phone TEXT,
+        photo_path TEXT,
+        family_head TEXT,
+        created_by TEXT,
+        created_at TEXT,
+        last_edited_by TEXT,
+        last_edited_at TEXT,
+        approval_status TEXT DEFAULT 'approved',
+        reviewed_by TEXT
+      );
+
+      CREATE TABLE IF NOT EXISTS relationships (
+        id TEXT PRIMARY KEY,
+        person_id TEXT NOT NULL,
+        relative_id TEXT NOT NULL,
+        type TEXT NOT NULL,
+        notes TEXT
+      );
+
+      CREATE TABLE IF NOT EXISTS users (
+        id TEXT PRIMARY KEY,
+        username TEXT UNIQUE,
+        password_hash TEXT,
+        role TEXT DEFAULT 'member',
+        person_id TEXT
+      );
+
+      CREATE TABLE IF NOT EXISTS requests (
+        id TEXT PRIMARY KEY,
+        type TEXT,
+        payload TEXT,
+        status TEXT DEFAULT 'pending',
+        created_by TEXT,
+        created_at TEXT,
+        reviewed_by TEXT,
+        reviewed_at TEXT,
+        review_note TEXT
+      );
+
+      CREATE TABLE IF NOT EXISTS archive (
+        id TEXT PRIMARY KEY,
+        title TEXT,
+        url TEXT,
+        description TEXT,
+        created_by TEXT,
+        created_at TEXT,
+        approval_status TEXT DEFAULT 'pending'
+      );
+
+      CREATE TABLE IF NOT EXISTS settings (
+        key TEXT PRIMARY KEY,
+        value TEXT
+      );
+
+      ALTER TABLE archive ADD COLUMN IF NOT EXISTS type TEXT DEFAULT 'photo';
+      ALTER TABLE archive ADD COLUMN IF NOT EXISTS file_path TEXT;
+      ALTER TABLE archive ADD COLUMN IF NOT EXISTS person_id TEXT;
+      ALTER TABLE archive ADD COLUMN IF NOT EXISTS reviewed_by TEXT;
+      ALTER TABLE archive ADD COLUMN IF NOT EXISTS reviewed_at TEXT;
+    `);
+    console.log('[db] schema ready (postgres)');
+  } finally {
+    await client.query('SELECT pg_advisory_unlock($1)', [SCHEMA_LOCK_ID]).catch(() => {});
+    client.release();
+  }
+}
+
+db.ready = ensureSchema();
+db.pool = pool;
 
 module.exports = db;

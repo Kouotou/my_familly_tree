@@ -54,6 +54,16 @@
   </div>
 
   <script src="/app.js"></script>
+  <script type="module">
+    // Archive audio uploads go straight from the browser to Vercel Blob (bypassing the
+    // platform's 4.5MB serverless request-body ceiling, which a server-routed upload would
+    // hit for real voice-memo/song-clip recordings) via the client-direct-upload helper.
+    // Pinned to the exact installed @vercel/blob version so the client/server protocol
+    // always matches — this app has no bundler, so a versioned CDN import is used instead
+    // of a local dependency.
+    import { upload } from 'https://esm.sh/@vercel/blob@2.8.0/client';
+    window.__blobUpload = upload;
+  </script>
   <script>
     (function(){
       let currentTab = 'photo';
@@ -142,25 +152,43 @@
         e.preventDefault();
         const feedback = document.getElementById('new-post-feedback');
         feedback.textContent = t('np_submitting');
-        const data = new FormData();
         const type = typeSelect.value;
-        data.append('type', type);
-        data.append('description', document.getElementById('np-caption').value);
-        if (type === 'photo'){
-          const f = document.getElementById('np-photo-file').files[0];
-          if (f) data.append('file', f);
-        } else if (type === 'audio'){
-          const f = document.getElementById('np-audio-file').files[0];
-          if (f) data.append('file', f);
-        } else {
-          data.append('url', document.getElementById('np-video-url').value.trim());
-        }
+        const description = document.getElementById('np-caption').value;
         try{
-          const res = await fetch('/api/archive', { method:'POST', body:data, credentials:'same-origin' });
-          const j = await res.json();
-          if (j.ok){ feedback.textContent = t('np_submitted_ok'); setTimeout(()=>{ modal.style.display='none'; }, 1400); }
-          else feedback.textContent = j.error || t('np_error_generic');
-        }catch(err){ feedback.textContent = t('network_error'); }
+          if (type === 'audio'){
+            const f = document.getElementById('np-audio-file').files[0];
+            if (!f){ feedback.textContent = t('np_error_generic'); return; }
+            // uploads straight to Blob from the browser, bypassing the server entirely for
+            // the file bytes — see the module script above
+            const blob = await window.__blobUpload(f.name, f, {
+              access: 'public',
+              handleUploadUrl: '/api/archive/upload-token',
+            });
+            const res = await fetch('/api/archive', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              credentials: 'same-origin',
+              body: JSON.stringify({ type, description, file_url: blob.url }),
+            });
+            const j = await res.json();
+            if (j.ok){ feedback.textContent = t('np_submitted_ok'); setTimeout(()=>{ modal.style.display='none'; }, 1400); }
+            else feedback.textContent = j.error || t('np_error_generic');
+          } else {
+            const data = new FormData();
+            data.append('type', type);
+            data.append('description', description);
+            if (type === 'photo'){
+              const f = document.getElementById('np-photo-file').files[0];
+              if (f) data.append('file', await downscalePhoto(f));
+            } else {
+              data.append('url', document.getElementById('np-video-url').value.trim());
+            }
+            const res = await fetch('/api/archive', { method:'POST', body:data, credentials:'same-origin' });
+            const j = await res.json();
+            if (j.ok){ feedback.textContent = t('np_submitted_ok'); setTimeout(()=>{ modal.style.display='none'; }, 1400); }
+            else feedback.textContent = j.error || t('np_error_generic');
+          }
+        }catch(err){ console.error(err); feedback.textContent = t('network_error'); }
       });
 
       (async ()=>{
