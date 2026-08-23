@@ -237,6 +237,9 @@ button.secondary:hover{ background:var(--accent-soft); }
 /* --- Registration: parent search-and-match UI --- */
 .parent-fieldset{ border:1.5px solid var(--border); border-radius:var(--rounded); padding:16px 18px; margin-top:18px; background:var(--card-alt) }
 .parent-fieldset legend{ font-weight:700; padding:0 8px; color:var(--accent-strong); font-family:var(--font-display); font-size:17px }
+.parent-search-row{ display:flex; align-items:flex-end; gap:8px }
+.parent-search-row label{ flex:1; margin-top:0 }
+.parent-search-btn{ margin-top:0; white-space:nowrap; padding:11px 16px }
 .parent-matches{ margin-top:8px }
 .parent-match-list{ display:flex; flex-direction:column; gap:6px }
 .parent-match-row{ display:flex; justify-content:space-between; align-items:center; padding:9px 12px; background:var(--card); border-radius:10px; border:1px solid var(--border) }
@@ -346,6 +349,17 @@ button.secondary:hover{ background:var(--accent-soft); }
 .checkbox-label{ display:flex; align-items:center; gap:8px; font-weight:500; margin-top:10px }
 .checkbox-label input{ width:auto; margin:0 }
 
+.relation-item{
+	margin-top:10px; padding:10px 12px; border:1px solid var(--border); border-radius:10px; background:var(--card-alt);
+}
+.relation-item-header{ display:flex; align-items:center; gap:10px; flex-wrap:wrap }
+.relation-item-header select{ margin-top:0; width:auto }
+.relation-item-header .checkbox-label{ margin-top:0; font-size:12px }
+.relation-item-header .remove-rel{ margin-top:0; margin-left:auto; padding:6px 12px; font-size:13px }
+.relation-matched-info{ font-size:13px; color:var(--muted); flex:1 }
+.relation-item-fields{ display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-top:8px }
+.relation-item-fields input{ margin-top:0 }
+
 /* --- hamburger menu + sliding sidebar drawer --- */
 .hamburger-btn{
 	margin-top:0; margin-right:14px; padding:8px 10px; background:var(--topbar-btn-bg); border:1px solid var(--topbar-btn-border);
@@ -353,7 +367,14 @@ button.secondary:hover{ background:var(--accent-soft); }
 }
 .hamburger-btn:hover{ background:var(--topbar-btn-bg-hover) }
 .hamburger-btn span{ display:block; width:20px; height:2px; background:var(--topbar-text); border-radius:2px }
-.topbar-left{ display:flex; align-items:center }
+.topbar-left{ display:flex; align-items:center; gap:12px }
+
+.page-back-btn{
+	margin-top:0; padding:8px 12px; background:var(--topbar-btn-bg); border:1px solid var(--topbar-btn-border);
+	border-radius:8px; cursor:pointer; box-shadow:none; color:var(--topbar-text); font-size:18px; line-height:1;
+	display:flex; align-items:center; justify-content:center;
+}
+.page-back-btn:hover{ background:var(--topbar-btn-bg-hover); transform:none }
 
 #sidebar-overlay{ position:fixed; inset:0; background:rgba(15,10,5,0.45); display:none; z-index:90 }
 #sidebar-overlay.open{ display:block }

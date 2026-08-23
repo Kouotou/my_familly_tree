@@ -8,7 +8,10 @@
 </head>
 <body>
   <header class="topbar">
-    <h1 id="admin-brand" data-i18n="admin_brand">Famille Nah Adja Mbethe — Admin</h1>
+    <div class="topbar-left">
+      <button type="button" id="page-back-btn" class="page-back-btn" aria-label="Back">‹</button>
+      <h1 id="admin-brand" data-i18n="admin_brand">Famille Nah Adja Mbethe — Admin</h1>
+    </div>
     <div class="toggles">
       <button id="lang-toggle">FR/EN</button>
       <button id="theme-toggle">Light/Dark</button>
@@ -161,7 +164,7 @@
         actions.appendChild(approveBtn);
         // the edit-before-approve modal only understands the create_person shape
         if (!req.payload.type || req.payload.type === 'create_person' || req.payload.type === 'create'){
-          const editBtn = document.createElement('button'); editBtn.textContent=t('btn_edit_approve'); editBtn.style.marginLeft='8px'; editBtn.addEventListener('click', ()=> openEditModal(req));
+          const editBtn = document.createElement('button'); editBtn.textContent=t('btn_edit_approve'); editBtn.style.marginLeft='8px'; editBtn.addEventListener('click', ()=> openEditModal(req, peopleById));
           actions.appendChild(editBtn);
         }
         if (req.payload.type === 'password_reset'){
@@ -394,7 +397,65 @@
     loadArchiveRequests();
 
     // Edit modal
-    function openEditModal(req){
+    // Builds one relation-item row for the relations editor. `r` is the relation entry from
+    // a request's payload ({which, from_family, relative_id} for a match against an existing
+    // profile, or {which, from_family, relative:{...}} for a brand-new person the requester
+    // typed in) — or null/undefined to build a blank new-person row (used by "Add relation").
+    // A matched relation shows read-only info (nothing to edit — it already points at a real
+    // approved person); a new-person relation gets full editable fields, since this is the
+    // admin's only chance to fix mistakes in what the requester typed before that person's
+    // account is created. Either kind can be removed entirely, which is how the admin
+    // declines to create/link that specific parent while still approving the rest.
+    function buildRelationItem(r, peopleById){
+      peopleById = peopleById || {};
+      const item = document.createElement('div'); item.className = 'relation-item';
+      const isMatched = !!(r && r.relative_id);
+      if (isMatched) item.dataset.relativeId = r.relative_id;
+
+      const header = document.createElement('div'); header.className = 'relation-item-header';
+      const whichSel = document.createElement('select'); whichSel.name = 'rel-which';
+      whichSel.innerHTML = `<option value="father">${t('edit_rel_father')}</option><option value="mother">${t('edit_rel_mother')}</option>`;
+      whichSel.value = (r && (r.which || r.type)) || 'father';
+      header.appendChild(whichSel);
+
+      if (isMatched){
+        const matched = peopleById[r.relative_id];
+        const info = document.createElement('span'); info.className = 'relation-matched-info';
+        info.textContent = t('edit_rel_linked_to', { name: matched ? matched.full_name : r.relative_id });
+        header.appendChild(info);
+      } else {
+        const fromLabel = document.createElement('label'); fromLabel.className = 'checkbox-label'; fromLabel.style.fontSize = '12px';
+        const fromCb = document.createElement('input'); fromCb.type = 'checkbox'; fromCb.name = 'rel-from'; fromCb.checked = !!(r && r.from_family);
+        fromLabel.appendChild(fromCb); fromLabel.append(' ' + t('edit_rel_from_family'));
+        header.appendChild(fromLabel);
+      }
+
+      const removeBtn = document.createElement('button'); removeBtn.type = 'button'; removeBtn.className = 'remove-rel secondary'; removeBtn.textContent = t('edit_rel_remove');
+      removeBtn.addEventListener('click', ()=> item.remove());
+      header.appendChild(removeBtn);
+      item.appendChild(header);
+
+      if (!isMatched){
+        const rel = (r && r.relative) || {};
+        item.dataset.photoPath = rel.photo_path || '';
+        const fields = document.createElement('div'); fields.className = 'relation-item-fields';
+        const mkInput = (name, type, placeholderKey, value) => {
+          const inp = document.createElement('input'); inp.name = name; inp.type = type || 'text';
+          if (placeholderKey) inp.placeholder = t(placeholderKey);
+          inp.value = value || '';
+          return inp;
+        };
+        fields.appendChild(mkInput('rel-name', 'text', 'edit_rel_name_placeholder', rel.full_name));
+        fields.appendChild(mkInput('rel-birthdate', 'date', null, rel.birth_date));
+        fields.appendChild(mkInput('rel-occupation', 'text', 'edit_rel_occupation_placeholder', rel.occupation));
+        fields.appendChild(mkInput('rel-residence', 'text', 'edit_rel_residence_placeholder', rel.residence));
+        fields.appendChild(mkInput('rel-phone', 'text', 'edit_rel_phone_placeholder', rel.phone));
+        item.appendChild(fields);
+      }
+      return item;
+    }
+
+    function openEditModal(req, peopleById){
       const modal = document.getElementById('edit-modal');
       const form = document.getElementById('edit-form');
       if (!form){ console.warn('Edit form not found'); return; }
@@ -411,25 +472,11 @@
       set('phone', req.payload.phone || '');
       set('new_password', '');
       const photoPathEl = form.querySelector('[name="photo_path"]'); if (photoPathEl) photoPathEl.value = req.payload.photo_path || '';
-      // populate existing relations
+      // populate existing relations (each may be a link to an existing profile, or a new
+      // father/mother the requester typed in — see buildRelationItem)
       const list = document.getElementById('relations-list'); list.innerHTML='';
       if (Array.isArray(req.payload.relations)){
-        req.payload.relations.forEach(r=>{
-          const item = document.createElement('div'); item.className='relation-item'; item.style.display='flex'; item.style.gap='8px'; item.style.marginTop='6px';
-          item.innerHTML = `
-            <select name="rel-which"><option value="father">${t('edit_rel_father')}</option><option value="mother">${t('edit_rel_mother')}</option></select>
-            <input name="rel-name" placeholder="${t('edit_rel_name_placeholder')}" />
-            <input name="rel-year" placeholder="${t('edit_rel_year_placeholder')}" type="number" style="width:100px" />
-            <label style="font-size:12px"><input type="checkbox" name="rel-from" /> ${t('edit_rel_from_family')}</label>
-            <button type="button" class="remove-rel">${t('edit_rel_remove')}</button>
-          `;
-          const whichEl = item.querySelector('[name="rel-which"]'); if (whichEl) whichEl.value = r.which || r.type || 'father';
-          const nameEl = item.querySelector('[name="rel-name"]'); if (nameEl) nameEl.value = (r.relative && r.relative.full_name) || '';
-          const yearEl = item.querySelector('[name="rel-year"]'); if (yearEl) yearEl.value = (r.relative && r.relative.birth_year) || '';
-          const fromEl = item.querySelector('[name="rel-from"]'); if (fromEl) fromEl.checked = !!r.from_family;
-          const rem = item.querySelector('.remove-rel'); if (rem) rem.addEventListener('click', ()=> item.remove());
-          list.appendChild(item);
-        });
+        req.payload.relations.forEach(r=> list.appendChild(buildRelationItem(r, peopleById)));
       }
       modal.style.display = 'block';
     }
@@ -477,32 +524,33 @@
     if (editCancelEl) editCancelEl.addEventListener('click', ()=>{ document.getElementById('edit-modal').style.display='none'; });
     const addRelationEl = document.getElementById('add-relation');
     if (addRelationEl) addRelationEl.addEventListener('click', ()=>{
-      const list = document.getElementById('relations-list');
-      const idx = list.children.length;
-      const item = document.createElement('div'); item.className='relation-item'; item.style.display='flex'; item.style.gap='8px'; item.style.marginTop='6px';
-      item.innerHTML = `
-        <select name="rel-which"><option value="father">${t('edit_rel_father')}</option><option value="mother">${t('edit_rel_mother')}</option></select>
-        <input name="rel-name" placeholder="${t('edit_rel_name_placeholder')}" />
-        <input name="rel-year" placeholder="${t('edit_rel_year_placeholder')}" type="number" style="width:100px" />
-        <label style="font-size:12px"><input type="checkbox" name="rel-from" /> ${t('edit_rel_from_family')}</label>
-        <button type="button" class="remove-rel">${t('edit_rel_remove')}</button>
-      `;
-      item.querySelector('.remove-rel').addEventListener('click', ()=> item.remove());
-      list.appendChild(item);
+      document.getElementById('relations-list').appendChild(buildRelationItem(null, {}));
     });
     const editFormEl = document.getElementById('edit-form');
     if (editFormEl) editFormEl.addEventListener('submit', async (e)=>{
       e.preventDefault();
       const f = e.target;
       const id = f.requestId.value;
-      // collect relations from relations-list
+      // collect relations from relations-list — either a link to an existing profile
+      // (preserved via the relative-id stashed on the item) or a new person with whatever
+      // the admin edited the fields to
       const rels = [];
       document.querySelectorAll('#relations-list .relation-item').forEach(rn=>{
         const which = rn.querySelector('[name="rel-which"]').value;
+        if (rn.dataset.relativeId){
+          rels.push({ type: 'parent', which, from_family: true, relative_id: rn.dataset.relativeId });
+          return;
+        }
         const name = rn.querySelector('[name="rel-name"]').value;
-        const by = rn.querySelector('[name="rel-year"]').value;
+        const birthDate = rn.querySelector('[name="rel-birthdate"]').value;
+        const occupation = rn.querySelector('[name="rel-occupation"]').value;
+        const residence = rn.querySelector('[name="rel-residence"]').value;
+        const phone = rn.querySelector('[name="rel-phone"]').value;
         const fromFamily = rn.querySelector('[name="rel-from"]').checked;
-        rels.push({ type: 'parent', which, from_family: fromFamily, relative: { full_name: name, birth_year: by?Number(by):null } });
+        rels.push({ type: 'parent', which, from_family: fromFamily, relative: {
+          full_name: name, birth_date: birthDate || null, occupation: occupation || null,
+          residence: residence || null, phone: phone || null, photo_path: rn.dataset.photoPath || null,
+        } });
       });
 
       // if a photo file is provided, send multipart to the new endpoint

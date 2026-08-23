@@ -8,7 +8,10 @@
 </head>
 <body>
   <header class="topbar">
-    <h1 data-i18n="brand">Famille Nah Adja Mbethe</h1>
+    <div class="topbar-left">
+      <button type="button" id="page-back-btn" class="page-back-btn" aria-label="Back">‹</button>
+      <h1 data-i18n="brand">Famille Nah Adja Mbethe</h1>
+    </div>
     <div class="toggles">
       <button id="lang-toggle">FR/EN</button>
       <button id="theme-toggle">Light/Dark</button>
@@ -29,7 +32,10 @@
       <label data-i18n="reg_photo_label">Photo<input name="photo" id="reg-photo" type="file" accept="image/*" /></label>
       <fieldset class="parent-fieldset" data-parent="father">
         <legend data-i18n="reg_father_legend">Father<span class="required-mark">*</span></legend>
-        <label data-i18n="reg_father_fullname_label">Father's full name<input id="father_name" name="father_name" required /></label>
+        <div class="parent-search-row">
+          <label data-i18n="reg_father_fullname_label">Father's full name<input id="father_name" name="father_name" required /></label>
+          <button type="button" id="father_search_btn" class="secondary parent-search-btn" data-i18n="parent_search_btn">Search</button>
+        </div>
         <div id="father_matches" class="parent-matches"></div>
         <input type="hidden" id="father_id" name="father_id" />
         <div id="father_new_fields" class="parent-new-fields hidden">
@@ -49,7 +55,10 @@
       </fieldset>
       <fieldset class="parent-fieldset" data-parent="mother">
         <legend data-i18n="reg_mother_legend">Mother<span class="required-mark">*</span></legend>
-        <label data-i18n="reg_mother_fullname_label">Mother's full name<input id="mother_name" name="mother_name" required /></label>
+        <div class="parent-search-row">
+          <label data-i18n="reg_mother_fullname_label">Mother's full name<input id="mother_name" name="mother_name" required /></label>
+          <button type="button" id="mother_search_btn" class="secondary parent-search-btn" data-i18n="parent_search_btn">Search</button>
+        </div>
         <div id="mother_matches" class="parent-matches"></div>
         <input type="hidden" id="mother_id" name="mother_id" />
         <div id="mother_new_fields" class="parent-new-fields hidden">

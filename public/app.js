@@ -1,3 +1,15 @@
+// Every page has a back button (top-left of the header) so navigating back doesn't depend
+// on the browser's own back button, which is awkward to reach on mobile. Falls back to the
+// landing page if there's no in-app history to go back to (e.g. opened via a bookmark/link).
+(function initPageBackButton(){
+  const btn = document.getElementById('page-back-btn');
+  if (!btn) return;
+  btn.addEventListener('click', ()=>{
+    if (window.history.length > 1) window.history.back();
+    else window.location.href = '/';
+  });
+})();
+
 async function api(path, opts={}){
   const merged = Object.assign({}, opts, { credentials: 'same-origin' });
   const res = await fetch('/api'+path, merged);
@@ -558,7 +570,17 @@ function setupParentMatcher(prefix){
     matchesEl.appendChild(noneBtn);
   }
 
-  nameInput.addEventListener('blur', runSearch);
+  // Search is a deliberate action now (the Search button), not an implicit blur-triggered
+  // one — blur-triggered search used to fire *again* right on top of a button click (the
+  // click also blurs the field), and since both calls' async fetches could resolve out of
+  // order, the results list sometimes ended up rendered twice. Enter in this field runs the
+  // same search instead of submitting the whole registration form, which used to happen
+  // unreliably (especially on mobile keyboards) before any match was confirmed.
+  nameInput.addEventListener('keydown', e=>{
+    if (e.key === 'Enter'){ e.preventDefault(); runSearch(); }
+  });
+  const searchBtn = document.getElementById(prefix + '_search_btn');
+  if (searchBtn) searchBtn.addEventListener('click', runSearch);
 }
 setupParentMatcher('father');
 setupParentMatcher('mother');
@@ -1410,6 +1432,7 @@ const I18N = {
     reg_submitting: 'Submitting...',
     reg_submitted_ok: 'Registration submitted and pending admin approval.',
     reg_error_generic: 'Something went wrong. Please try again.',
+    parent_search_btn: 'Search',
     parent_match_this_is_them: 'This is them',
     parent_match_none: 'None of these — create a new profile',
     parent_match_linked: 'Linked to existing profile:',
@@ -1478,9 +1501,12 @@ const I18N = {
     edit_field_new_password: 'Set new password (only applies to an existing member account — leave blank to keep unchanged)',
     edit_relations_heading: 'Relations',
     edit_rel_father: 'Father', edit_rel_mother: 'Mother',
-    edit_rel_name_placeholder: 'Name', edit_rel_year_placeholder: 'Birth year',
+    edit_rel_name_placeholder: 'Full name', edit_rel_year_placeholder: 'Birth year',
+    edit_rel_occupation_placeholder: 'Occupation', edit_rel_residence_placeholder: 'Residence',
+    edit_rel_phone_placeholder: 'Phone', edit_rel_birthdate_placeholder: 'Birth date',
     edit_rel_from_family: 'From family',
     edit_rel_remove: 'Remove',
+    edit_rel_linked_to: 'Linked to existing profile: {name}',
     edit_add_relation_btn: 'Add relation',
     edit_save_approve_btn: 'Save & Approve',
     edit_cancel_btn: 'Cancel',
@@ -1649,6 +1675,7 @@ const I18N = {
     reg_submitting: 'Envoi en cours...',
     reg_submitted_ok: "Inscription soumise et en attente d'approbation par l'administrateur.",
     reg_error_generic: "Une erreur s'est produite. Veuillez réessayer.",
+    parent_search_btn: 'Rechercher',
     parent_match_this_is_them: "C'est bien lui/elle",
     parent_match_none: 'Aucun de ceux-ci — créer un nouveau profil',
     parent_match_linked: 'Lié au profil existant :',
@@ -1717,9 +1744,12 @@ const I18N = {
     edit_field_new_password: "Définir un nouveau mot de passe (uniquement pour un compte membre existant — laisser vide pour ne pas changer)",
     edit_relations_heading: 'Relations',
     edit_rel_father: 'Père', edit_rel_mother: 'Mère',
-    edit_rel_name_placeholder: 'Nom', edit_rel_year_placeholder: 'Année de naissance',
+    edit_rel_name_placeholder: 'Nom complet', edit_rel_year_placeholder: 'Année de naissance',
+    edit_rel_occupation_placeholder: 'Profession', edit_rel_residence_placeholder: 'Résidence',
+    edit_rel_phone_placeholder: 'Téléphone', edit_rel_birthdate_placeholder: 'Date de naissance',
     edit_rel_from_family: 'De la famille',
     edit_rel_remove: 'Retirer',
+    edit_rel_linked_to: 'Lié à un profil existant : {name}',
     edit_add_relation_btn: 'Ajouter une relation',
     edit_save_approve_btn: 'Enregistrer et approuver',
     edit_cancel_btn: 'Annuler',
