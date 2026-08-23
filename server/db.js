@@ -32,8 +32,20 @@ function placeholderCount(sql) {
   return m ? m.length : 0;
 }
 
+// A cold-started function reconnecting to a suspended Neon compute occasionally hits a
+// connection-establishment failure on the very first query (observed both locally and on
+// Vercel) — every request after that succeeds. These are network/TLS-handshake failures,
+// not query errors, so retrying once is safe (nothing partially executed yet).
+function isRetryableConnectionError(err) {
+  if (!err) return false;
+  if (err.code && /^[0-9A-Z]{5}$/.test(err.code)) return false; // a real Postgres SQLSTATE error — don't retry
+  const msg = String(err.message || '');
+  return /socket disconnected|Connection terminated|ECONNRESET|ETIMEDOUT|EPIPE|ENOTFOUND/i.test(msg) || ['ECONNRESET','ETIMEDOUT','EPIPE','ENOTFOUND'].includes(err.code);
+}
+function delay(ms) { return new Promise(resolve => setTimeout(resolve, ms)); }
+
 // --- prepare().get/all/run() shim, bindable to either the pool or a transaction client ---
-function bind(runner) {
+function bind(runner, allowRetry) {
   function prepare(sql) {
     const expected = placeholderCount(sql);
     const positional = toPositional(sql);
@@ -41,7 +53,16 @@ function bind(runner) {
       if (params.length !== expected) {
         throw new Error(`placeholder count mismatch: query expects ${expected}, got ${params.length}\n${sql}`);
       }
-      return runner.query(positional, params);
+      try {
+        return await runner.query(positional, params);
+      } catch (err) {
+        if (allowRetry && isRetryableConnectionError(err)) {
+          console.warn('[db] retrying after connection error:', err.message);
+          await delay(300);
+          return runner.query(positional, params);
+        }
+        throw err;
+      }
     }
     return {
       async get(...params) { const r = await exec(params); return r.rows[0]; },
@@ -52,14 +73,14 @@ function bind(runner) {
   return { prepare, query: (text, params) => runner.query(text, params) };
 }
 
-const db = bind(pool);
+const db = bind(pool, true);
 
 // runs fn with a single dedicated client wrapped in BEGIN/COMMIT/ROLLBACK
 db.transaction = async function transaction(fn) {
-  const client = await pool.connect();
+  const client = await connectWithRetry();
   try {
     await client.query('BEGIN');
-    const result = await fn(bind(client));
+    const result = await fn(bind(client, false));
     await client.query('COMMIT');
     return result;
   } catch (err) {
@@ -70,11 +91,22 @@ db.transaction = async function transaction(fn) {
   }
 };
 
+async function connectWithRetry() {
+  try {
+    return await pool.connect();
+  } catch (err) {
+    if (!isRetryableConnectionError(err)) throw err;
+    console.warn('[db] retrying initial connection after error:', err.message);
+    await delay(300);
+    return pool.connect();
+  }
+}
+
 // --- schema (idempotent, advisory-lock-guarded so concurrent cold starts can't race it) ---
 const SCHEMA_LOCK_ID = 727501;
 
 async function ensureSchema() {
-  const client = await pool.connect();
+  const client = await connectWithRetry();
   try {
     await client.query('SELECT pg_advisory_lock($1)', [SCHEMA_LOCK_ID]);
     await client.query(`
