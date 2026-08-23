@@ -789,6 +789,165 @@ function computeGenerationLevels(anchorId, edges){
   return { levels, visited };
 }
 
+// --- lineage-based tree layout ---
+// The family wants blood descendants of the root to form the horizontal "spine" of the
+// tree, generation by generation, with each married-in spouse placed one row *below* their
+// blood partner (not beside them on the same row as their partner's siblings, which reads
+// as if the spouse were another sibling/child). A couple's children then hang one row below
+// the in-marrying spouse. So each "generation" in the traditional sense actually spans two
+// display rows: the blood row, then that row's spouses. The one exception is the anchor
+// (root) profile itself: root and her own spouse stay side by side on row 0, exactly as
+// today — there's no sibling row at the very top for a same-row spouse to be confused with.
+//
+// This only needs to know who is *structurally* blood — reachable from the anchor purely
+// via parent/child (and sibling, for the rare case with no recorded shared parent) edges,
+// never via a spouse edge. A married-in spouse can never be "someone's blood child reachable
+// from the root" unless they are *also* independently blood (an in-family marriage, e.g.
+// two cousins from different branches) — which this handles by simply leaving both of them
+// at their own independently-computed blood level rather than forcing one under the other.
+
+// Blood level 0 = anchor. Each blood person's children (via 'parent' edges pointing at them)
+// are level+1; anyone joined only by a 'sibling' edge (no recorded shared parent on file)
+// shares their sibling's level via a settling pass, since BFS alone wouldn't reach them.
+function computeBloodLevels(anchorId, edges){
+  const bloodLevel = { [anchorId]: 0 };
+  const queue = [anchorId];
+  while (queue.length){
+    const id = queue.shift();
+    const lvl = bloodLevel[id];
+    edges.filter(e=> e.type==='parent' && e.to===id).forEach(e=>{
+      const childId = e.from;
+      if (!(childId in bloodLevel)){ bloodLevel[childId] = lvl + 1; queue.push(childId); }
+    });
+  }
+  // settle sibling-only links (no shared parent on file) onto the same blood level
+  let changed = true;
+  while (changed){
+    changed = false;
+    edges.filter(e=> e.type==='sibling').forEach(e=>{
+      const a = bloodLevel[e.from], b = bloodLevel[e.to];
+      if (a!==undefined && b===undefined){ bloodLevel[e.to] = a; changed = true; }
+      else if (b!==undefined && a===undefined){ bloodLevel[e.from] = b; changed = true; }
+    });
+  }
+  return bloodLevel;
+}
+
+// Builds a proper single-parent layout tree out of the blood/spouse graph: every node gets
+// at most one layout parent, so it can be positioned with a standard recursive subtree-width
+// algorithm. A married-in spouse becomes a layout-child of their blood partner; a couple's
+// children become layout-children of the *married-in spouse* (so they land one row below
+// the spouse, per the rule above) — or of the blood parent directly, for the fallback case
+// of a solo parent with no recorded co-parent. In-family marriages (both sides blood) don't
+// get a layout edge between them at all — each side is already positioned via their own
+// blood parent, so nothing needs forcing.
+function buildLayoutTree(anchorId, edges, bloodLevel){
+  const layoutNode = {};
+  const bloodIds = Object.keys(bloodLevel).sort((a,b)=> bloodLevel[a]-bloodLevel[b]);
+  bloodIds.forEach(id=> layoutNode[id] = { id, children: [] });
+
+  const spousesOf = {};
+  edges.filter(e=> e.type==='spouse').forEach(e=>{
+    (spousesOf[e.from] = spousesOf[e.from]||[]).push(e.to);
+    (spousesOf[e.to] = spousesOf[e.to]||[]).push(e.from);
+  });
+
+  // attach married-in spouses (anyone connected by marriage who isn't independently blood)
+  // as layout-children of their blood partner
+  bloodIds.forEach(bid=>{
+    (spousesOf[bid]||[]).forEach(sid=>{
+      if (bloodLevel[sid]!==undefined) return; // in-family marriage — leave both at their own blood level
+      if (layoutNode[sid]) return; // already attached (e.g. same spouse linked from two edges)
+      layoutNode[sid] = { id: sid, children: [], marriedTo: bid };
+      layoutNode[bid].children.push(layoutNode[sid]);
+    });
+  });
+
+  // attach each blood person's children to the right layout-parent: under the married-in
+  // spouse who is their *other* recorded parent, if there is one; otherwise directly under
+  // the blood parent (solo-parent fallback). Processed in ascending blood-level order so an
+  // in-family-marriage child attaches via its more senior blood parent, deterministically.
+  const attachedTo = {};
+  bloodIds.forEach(bid=>{
+    edges.filter(e=> e.type==='parent' && e.to===bid).forEach(e=>{
+      const childId = e.from;
+      if (attachedTo[childId]) return; // already attached via the other parent
+      const otherParentEdge = edges.find(oe=> oe.type==='parent' && oe.from===childId && oe.to!==bid);
+      const otherParent = otherParentEdge ? otherParentEdge.to : null;
+      const attachNode = (otherParent && layoutNode[otherParent] && layoutNode[otherParent].marriedTo===bid)
+        ? layoutNode[otherParent] : layoutNode[bid];
+      if (!layoutNode[childId]) return; // not itself blood (shouldn't happen) — skip defensively
+      attachNode.children.push(layoutNode[childId]);
+      attachedTo[childId] = attachNode;
+    });
+  });
+
+  // fallback: anyone blood-only-via-a-sibling-edge (no recorded shared parent) rides along
+  // with whichever sibling is already attached, settling until stable
+  attachedTo[anchorId] = true;
+  let changed = true;
+  while (changed){
+    changed = false;
+    edges.filter(e=> e.type==='sibling').forEach(e=>{
+      const a = attachedTo[e.from], b = attachedTo[e.to];
+      if (a && a!==true && !attachedTo[e.to]){ a.children.push(layoutNode[e.to]); attachedTo[e.to] = a; changed = true; }
+      else if (b && b!==true && !attachedTo[e.from]){ b.children.push(layoutNode[e.from]); attachedTo[e.from] = b; changed = true; }
+    });
+  }
+
+  return layoutNode;
+}
+
+// root gets level 0; root's own spouse also stays at level 0 (see comment above); every
+// other spouse is one level below their blood partner, and a couple's children one level
+// below the spouse (or below the blood parent directly, in the solo-parent fallback).
+function assignDisplayLevels(layoutNode, anchorId){
+  const displayLevel = {};
+  (function visit(node, level){
+    displayLevel[node.id] = level;
+    node.children.forEach(child=>{
+      const sameLevel = (node.id===anchorId && child.marriedTo===anchorId);
+      visit(child, sameLevel ? level : level + 1);
+    });
+  })(layoutNode[anchorId], 0);
+  return displayLevel;
+}
+
+// standard recursive subtree-width layout: a leaf reserves one card's width; a node with
+// children reserves however much its children need (with a gap between siblings), and is
+// centered over the span of its own immediate children. The anchor (root) is the one
+// exception: her own same-level spouse (see assignDisplayLevels) is a *sibling* slot beside
+// her, not a child to be centered under — without this, "center parent over its one child"
+// would place the root's card exactly on top of her spouse's, since he'd be her only child.
+function computeSubtreeWidths(node, nodeW, gap, anchorId){
+  const sameLevel = node.id===anchorId ? node.children.filter(c=> c.marriedTo===anchorId) : [];
+  if (sameLevel.length){
+    let total = nodeW; // the anchor's own reserved slot
+    node.children.forEach(c=>{ total += gap + computeSubtreeWidths(c, nodeW, gap, anchorId); });
+    node.width = total;
+    return node.width;
+  }
+  if (!node.children.length){ node.width = nodeW; return nodeW; }
+  let total = 0;
+  node.children.forEach((c,i)=>{ if (i>0) total += gap; total += computeSubtreeWidths(c, nodeW, gap, anchorId); });
+  node.width = Math.max(nodeW, total);
+  return node.width;
+}
+function assignRelativeX(node, leftEdge, gap, anchorId, nodeW){
+  const sameLevel = node.id===anchorId ? node.children.filter(c=> c.marriedTo===anchorId) : [];
+  if (sameLevel.length){
+    node.x = leftEdge;
+    let cursor = leftEdge + nodeW + gap;
+    node.children.forEach(c=>{ assignRelativeX(c, cursor, gap, anchorId, nodeW); cursor += c.width + gap; });
+    return;
+  }
+  if (!node.children.length){ node.x = leftEdge; return; }
+  let cursor = leftEdge;
+  node.children.forEach(c=>{ assignRelativeX(c, cursor, gap, anchorId, nodeW); cursor += c.width + gap; });
+  const first = node.children[0], last = node.children[node.children.length-1];
+  node.x = (first.x + last.x) / 2;
+}
+
 // SVG presentation attributes (fill/stroke) can't follow CSS custom properties, so the
 // tree needs its own light/dark color set, chosen at render time from the active theme.
 function getTreePalette(){
@@ -798,13 +957,15 @@ function getTreePalette(){
     meBg: '#3a2f1c', meBorder: '#e0a458', rootBorder: '#f2bd76',
     text: '#eef1f7', muted: '#93a0b5', spouseBar: '#e0a458', siblingDash: '#7f8aa0', connector: '#414c60',
     infoBoxFill: 'rgba(224,164,88,0.16)', infoBoxStroke: '#e0a458', infoDot: '#f2bd76',
-    orphanLabel: '#7f8aa0', cardShadow: 'rgba(0,0,0,0.45)'
+    orphanLabel: '#7f8aa0', cardShadow: 'rgba(0,0,0,0.45)',
+    deceasedBg: '#4a2229', deceasedBorder: '#8f3a3a'
   } : {
     cardBg: '#fffaf2', cardBg2: '#ffffff', cardBorder: '#e6d6ba',
     meBg: '#fbead0', meBorder: '#c3924f', rootBorder: '#7a4a20',
     text: '#3c2c1c', muted: '#8a7860', spouseBar: '#c3924f', siblingDash: '#a8927a', connector: '#c3ac86',
     infoBoxFill: 'rgba(169,104,63,0.1)', infoBoxStroke: '#c3924f', infoDot: '#8a4f28',
-    orphanLabel: '#a49070', cardShadow: 'rgba(90,62,33,0.12)'
+    orphanLabel: '#a49070', cardShadow: 'rgba(90,62,33,0.12)',
+    deceasedBg: '#fbe4e4', deceasedBorder: '#c96a6a'
   };
 }
 
@@ -823,51 +984,34 @@ function renderTreeSVG(svg, tree, centerId, rootId){
   // logged-in person if no root has been set yet.
   const anchorId = (rootId && nodeMap[rootId]) ? rootId : centerId;
 
-  const { levels, visited } = computeGenerationLevels(anchorId, edges);
-  // anyone not reachable from the anchor (disconnected branch) is still shown, grouped
-  // separately below the main tree, so approved profiles are never silently hidden.
-  const orphanIds = nodes.map(n=>n.id).filter(id => !visited.has(id));
-
-  // group by level
-  const groups = {};
-  for (const id in levels){ const lv = levels[id]; groups[lv] = groups[lv]||[]; groups[lv].push(id); }
-
   // layout
   const levelHeight = 160;
   const nodeW = 200, nodeH = 70;
   const spacingX = 230;
   const svgW = svg.clientWidth || 1200;
   const svgH = svg.clientHeight || 800;
+  const topMargin = 60;
+
+  const bloodLevel = computeBloodLevels(anchorId, edges);
+  const layoutNode = buildLayoutTree(anchorId, edges, bloodLevel);
+  const displayLevel = assignDisplayLevels(layoutNode, anchorId);
+  // anyone not reachable from the anchor (disconnected branch) is still shown, grouped
+  // separately below the main tree, so approved profiles are never silently hidden.
+  const visited = new Set(Object.keys(displayLevel));
+  const orphanIds = nodes.map(n=>n.id).filter(id => !visited.has(id));
+
+  computeSubtreeWidths(layoutNode[anchorId], nodeW, spacingX - nodeW, anchorId);
+  assignRelativeX(layoutNode[anchorId], 0, spacingX - nodeW, anchorId, nodeW);
+  const treeWidth = layoutNode[anchorId].width;
+  const xOffset = (svgW - treeWidth) / 2;
 
   const positions = {};
-  const levelKeys = Object.keys(groups).map(Number).sort((a,b)=>a-b);
+  Object.keys(displayLevel).forEach(id=>{
+    if (!nodeMap[id]) return;
+    positions[id] = { x: layoutNode[id].x + xOffset, y: topMargin + displayLevel[id]*levelHeight };
+  });
+  const levelKeys = Array.from(new Set(Object.values(displayLevel))).sort((a,b)=>a-b);
   const minLevel = levelKeys.length ? levelKeys[0] : 0;
-  const topMargin = 60;
-  for (const lv of levelKeys){
-    const ids = groups[lv];
-    // keep spouse pairs adjacent, then sort by birth_year for stable ordering
-    const knownIds = ids.filter(id=> !!nodeMap[id]);
-    knownIds.sort((a,b)=> (nodeMap[a].birth_year||0) - (nodeMap[b].birth_year||0));
-    const ordered = [];
-    const placed = new Set();
-    knownIds.forEach(id=>{
-      if (placed.has(id)) return;
-      ordered.push(id); placed.add(id);
-      const spouseEdge = edges.find(e=> e.type==='spouse' && (e.from===id || e.to===id) && levels[e.from===id?e.to:e.from]===lv);
-      if (spouseEdge){
-        const sid = spouseEdge.from===id ? spouseEdge.to : spouseEdge.from;
-        if (!placed.has(sid) && nodeMap[sid]){ ordered.push(sid); placed.add(sid); }
-      }
-    });
-    const totalWidth = (ordered.length-1)*spacingX;
-    let startX = (svgW - totalWidth)/2;
-    for (let i=0;i<ordered.length;i++){
-      const id = ordered[i];
-      const x = startX + i*spacingX;
-      const y = topMargin + (lv - minLevel)*levelHeight;
-      positions[id] = { x, y };
-    }
-  }
 
   // Lay out any disconnected branches (profiles not yet linked to the root) beneath the
   // main tree. Each disconnected branch still gets its own parent-above-child generation
@@ -925,21 +1069,35 @@ function renderTreeSVG(svg, tree, centerId, rootId){
     g.appendChild(label);
   }
 
-  // draw spouse links: a short horizontal bar between partners at the same level
+  // draw spouse links: a short horizontal bar between partners on the same row (only the
+  // root and her own spouse land there — see the layout comment above), or an elbow
+  // connector down to the row below for every other married-in spouse
   edges.filter(e=> e.type==='spouse').forEach(e=>{
     const from = positions[e.from];
     const to = positions[e.to];
     if (!from || !to) return;
-    if (from.y !== to.y) return; // only draw the direct same-generation spouse bar
-    const line = document.createElementNS('http://www.w3.org/2000/svg','line');
-    const y = from.y + nodeH/2;
-    line.setAttribute('x1', Math.min(from.x,to.x) + nodeW);
-    line.setAttribute('y1', y);
-    line.setAttribute('x2', Math.max(from.x,to.x));
-    line.setAttribute('y2', y);
-    line.setAttribute('stroke', palette.spouseBar);
-    line.setAttribute('stroke-width', 3);
-    g.appendChild(line);
+    if (from.y === to.y){
+      const line = document.createElementNS('http://www.w3.org/2000/svg','line');
+      const y = from.y + nodeH/2;
+      line.setAttribute('x1', Math.min(from.x,to.x) + nodeW);
+      line.setAttribute('y1', y);
+      line.setAttribute('x2', Math.max(from.x,to.x));
+      line.setAttribute('y2', y);
+      line.setAttribute('stroke', palette.spouseBar);
+      line.setAttribute('stroke-width', 3);
+      g.appendChild(line);
+      return;
+    }
+    const upper = from.y < to.y ? from : to;
+    const lower = from.y < to.y ? to : from;
+    const upperX = upper.x + nodeW/2, lowerX = lower.x + nodeW/2;
+    const midY = upper.y + nodeH + (lower.y - (upper.y + nodeH))/2;
+    const elbow = document.createElementNS('http://www.w3.org/2000/svg','polyline');
+    elbow.setAttribute('points', `${upperX},${upper.y+nodeH} ${upperX},${midY} ${lowerX},${midY} ${lowerX},${lower.y}`);
+    elbow.setAttribute('fill', 'none');
+    elbow.setAttribute('stroke', palette.spouseBar);
+    elbow.setAttribute('stroke-width', 3);
+    g.appendChild(elbow);
   });
 
   // draw direct sibling links (used only when no shared parent is on file to hang an
@@ -978,7 +1136,9 @@ function renderTreeSVG(svg, tree, centerId, rootId){
     const parentPts = parentIds.map(pid=> positions[pid]).filter(Boolean);
     if (!parentPts.length) return;
     const parentMidX = parentPts.reduce((s,p)=> s+p.x+nodeW/2, 0)/parentPts.length;
-    const parentY = parentPts[0].y + nodeH;
+    // hang the trunk from below the *deeper* of the two parent cards — normally the
+    // married-in spouse, one row below their blood partner (see the layout comment above)
+    const parentY = Math.max(...parentPts.map(p=>p.y)) + nodeH;
     const dropY = parentY + levelHeight/2;
     // trunk line down from the parent(s)
     const trunk = document.createElementNS('http://www.w3.org/2000/svg','line');
@@ -1039,9 +1199,6 @@ function renderTreeSVG(svg, tree, centerId, rootId){
     group.dataset.id = id;
     group.setAttribute('transform', `translate(${pos.x}, ${pos.y})`);
     group.style.cursor = 'pointer';
-    // faded but still clickable, so a deceased relative's card is visually distinct from
-    // living members without being hidden or harder to interact with
-    if (deceased) group.style.opacity = '0.55';
 
     const cardW = 200;
     const cardH = 70;
@@ -1052,8 +1209,11 @@ function renderTreeSVG(svg, tree, centerId, rootId){
     bg.setAttribute('height', String(cardH));
     bg.setAttribute('rx', '14');
     bg.setAttribute('ry', '14');
-    bg.setAttribute('fill', id === centerId ? palette.meBg : palette.cardBg);
-    bg.setAttribute('stroke', id === anchorId ? palette.rootBorder : (id === centerId ? palette.meBorder : palette.cardBorder));
+    // deceased members get a light red card instead of the living palette — still full
+    // opacity and fully readable, just visually flagged, rather than faded (which used to
+    // dim the name text too, making it hard to read)
+    bg.setAttribute('fill', deceased ? palette.deceasedBg : (id === centerId ? palette.meBg : palette.cardBg));
+    bg.setAttribute('stroke', id === anchorId ? palette.rootBorder : (id === centerId ? palette.meBorder : (deceased ? palette.deceasedBorder : palette.cardBorder)));
     bg.setAttribute('stroke-width', (id === centerId || id === anchorId) ? '2.5' : '1.2');
     bg.setAttribute('filter', `drop-shadow(0 6px 10px ${palette.cardShadow})`);
     group.appendChild(bg);
