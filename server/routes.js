@@ -140,12 +140,15 @@ router.get('/people', wrap(async (req,res)=>{
   res.json(rows);
 }));
 
-// search approved people by (partial) name — used to match parents typed during registration
+// search approved people by (partial) name or username — used to match parents typed
+// during registration, and to link an existing profile from the admin relation editor. A
+// searcher who only remembers someone's login username (not sure how their name is spelled/
+// cased) still finds them this way.
 router.get('/people/search', wrap(async (req,res)=>{
   const q = normalizeName(req.query.name || req.query.q || '');
   if (!q) return res.json([]);
   const rows = await db.prepare("SELECT * FROM people WHERE approval_status = 'approved'").all();
-  const matches = rows.filter(p => normalizeName(p.full_name).includes(q));
+  const matches = rows.filter(p => normalizeName(p.full_name).includes(q) || normalizeName(p.username).includes(q));
   res.json(matches.slice(0, 20));
 }));
 

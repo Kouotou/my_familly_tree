@@ -1454,7 +1454,7 @@ async function openSearchStatsModal(){
     const yearFrom = yearFromInput.value ? Number(yearFromInput.value) : null;
     const yearTo = yearToInput.value ? Number(yearToInput.value) : null;
     const matches = nodes.filter(n=>{
-      if (q && !normalize(n.full_name).includes(q)) return false;
+      if (q && !normalize(n.full_name).includes(q) && !normalize(n.username).includes(q)) return false;
       if (residence && (n.residence||'').trim() !== residence) return false;
       if (yearFrom !== null && (!n.birth_year || n.birth_year < yearFrom)) return false;
       if (yearTo !== null && (!n.birth_year || n.birth_year > yearTo)) return false;
@@ -1527,12 +1527,16 @@ async function renderTreeToCanvas(){
   if (!bbox || !bbox.width || !bbox.height) throw new Error('empty tree');
   const pad = 40;
   const width = Math.ceil(bbox.width + pad*2);
-  const height = Math.ceil(bbox.height + pad*2);
+  const treeHeight = Math.ceil(bbox.height + pad*2);
+  // banner reserved at the top of the exported image for the family name — the tree itself
+  // is drawn below it, unchanged
+  const titleAreaHeight = 90;
+  const height = treeHeight + titleAreaHeight;
 
   const clone = svg.cloneNode(true);
   clone.setAttribute('width', String(width));
-  clone.setAttribute('height', String(height));
-  clone.setAttribute('viewBox', `${bbox.x-pad} ${bbox.y-pad} ${width} ${height}`);
+  clone.setAttribute('height', String(treeHeight));
+  clone.setAttribute('viewBox', `${bbox.x-pad} ${bbox.y-pad} ${width} ${treeHeight}`);
   const clonedViewport = clone.querySelector('#viewport');
   if (clonedViewport) clonedViewport.removeAttribute('transform');
 
@@ -1547,9 +1551,33 @@ async function renderTreeToCanvas(){
   canvas.width = width*scale; canvas.height = height*scale;
   const ctx = canvas.getContext('2d');
   ctx.scale(scale, scale);
-  ctx.fillStyle = document.body.classList.contains('dark') ? '#1c2330' : '#fffaf2';
+  const isDark = document.body.classList.contains('dark');
+  ctx.fillStyle = isDark ? '#1c2330' : '#fffaf2';
   ctx.fillRect(0,0,width,height);
-  ctx.drawImage(img, 0, 0, width, height);
+
+  const title = currentLang() === 'fr'
+    ? 'Arbre généalogique de la famille Nah Adja Mbethe'
+    : 'Family Tree of the Nah Adja Mbethe Family';
+  ctx.fillStyle = isDark ? '#eef1f7' : '#3c2c1c';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'alphabetic';
+  let fontSize = 30;
+  const maxTextWidth = width - 80;
+  do{
+    ctx.font = `bold ${fontSize}px 'Iowan Old Style','Palatino Linotype',Georgia,serif`;
+    fontSize -= 1;
+  } while (ctx.measureText(title).width > maxTextWidth && fontSize > 12);
+  const titleY = titleAreaHeight/2 + 10;
+  ctx.fillText(title, width/2, titleY);
+  const textWidth = ctx.measureText(title).width;
+  ctx.beginPath();
+  ctx.moveTo(width/2 - textWidth/2, titleY + 8);
+  ctx.lineTo(width/2 + textWidth/2, titleY + 8);
+  ctx.lineWidth = 2;
+  ctx.strokeStyle = ctx.fillStyle;
+  ctx.stroke();
+
+  ctx.drawImage(img, 0, titleAreaHeight, width, treeHeight);
   URL.revokeObjectURL(url);
   return canvas;
 }
