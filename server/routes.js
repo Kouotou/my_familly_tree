@@ -600,20 +600,28 @@ async function processCreatePerson(dbLike, payload, reviewerId){
     if (fatherId && motherId) await linkSpouse(dbLike, fatherId, motherId);
   }
 
-  // heritage: one relationship row per ancestor claimed, person_id = the heir, relative_id =
-  // the deceased ancestor they represent. One-directional (no reverse row needed — the tree
-  // only ever needs to answer "who is X the heir of", never the other way round) and, unlike
-  // parent/spouse links, there's no single canonical slot to overwrite, so this only ever
-  // adds rows, never removes ones from an earlier approval.
-  if (Array.isArray(payload.heir_of)){
-    for (const ancestorId of payload.heir_of){
-      const ancestor = await dbLike.prepare('SELECT id FROM people WHERE id = ?').get(ancestorId);
-      if (!ancestor) continue;
-      await dbLike.prepare('INSERT INTO relationships (id, person_id, relative_id, type) VALUES (?, ?, ?, ?)').run(uuidv4(), personId, ancestor.id, 'heir');
-    }
-  }
+  await applyHeirClaims(dbLike, personId, payload.heir_of);
 
   return personId;
+}
+
+// heritage: one relationship row per ancestor claimed, person_id = the heir, relative_id =
+// the deceased ancestor they represent. One-directional (no reverse row needed — the tree
+// only ever needs to answer "who is X the heir of", never the other way round) and, unlike
+// parent/spouse links, there's no single canonical slot to overwrite, so this only ever adds
+// rows, never removes ones from an earlier approval. Used both at initial registration and
+// from a later profile edit (someone becomes an heir well after their account already
+// exists, e.g. an ancestor dies) — the dedupe check is what makes the second case safe to
+// resubmit without doubling up a claim already on file.
+async function applyHeirClaims(dbLike, personId, heirOfIds){
+  if (!Array.isArray(heirOfIds)) return;
+  for (const ancestorId of heirOfIds){
+    const ancestor = await dbLike.prepare('SELECT id FROM people WHERE id = ?').get(ancestorId);
+    if (!ancestor) continue;
+    const existing = await dbLike.prepare("SELECT id FROM relationships WHERE person_id = ? AND relative_id = ? AND type = 'heir'").get(personId, ancestor.id);
+    if (existing) continue;
+    await dbLike.prepare('INSERT INTO relationships (id, person_id, relative_id, type) VALUES (?, ?, ?, ?)').run(uuidv4(), personId, ancestor.id, 'heir');
+  }
 }
 
 // apply an approved self-edit to the person's own record, keeping their existing photo
@@ -624,6 +632,7 @@ async function processUpdatePerson(dbLike, payload, reviewerId){
   const photoPath = payload.photo_path || current.photo_path;
   await dbLike.prepare('UPDATE people SET full_name = ?, gender = ?, birth_year = ?, birth_date = ?, death_date = ?, occupation = ?, residence = ?, phone = ?, photo_path = ?, last_edited_by = ?, last_edited_at = ? WHERE id = ?')
     .run(payload.full_name || current.full_name, payload.gender || current.gender, payload.birth_year || null, payload.birth_date || null, payload.death_date || null, payload.occupation || null, payload.residence || null, payload.phone || null, photoPath, reviewerId, now(), current.id);
+  await applyHeirClaims(dbLike, current.id, payload.heir_of);
   return current.id;
 }
 
@@ -700,7 +709,11 @@ router.get('/member/context', wrap(async (req,res)=>{
   const { fatherId, motherId } = await getParentIds(db, id);
   const father = fatherId ? await db.prepare('SELECT id, full_name FROM people WHERE id = ?').get(fatherId) : null;
   const mother = motherId ? await db.prepare('SELECT id, full_name FROM people WHERE id = ?').get(motherId) : null;
-  res.json({ spouses, father, mother });
+  // ancestors already claimed as heritage — lets the edit-profile "are you an heir" picker
+  // only offer ancestors not already on file, so resubmitting doesn't look like a no-op
+  const heirRows = await db.prepare("SELECT relative_id FROM relationships WHERE person_id = ? AND type = 'heir'").all(id);
+  const heirOfIds = heirRows.map(r=> r.relative_id);
+  res.json({ spouses, father, mother, heirOfIds });
 }));
 
 // submit a pending request to change one's own profile fields (photo, name, DOB, etc.)
@@ -715,6 +728,9 @@ router.post('/member/profile/update', upload.single('photo'), wrap(async (req,re
   let birthYear = null;
   if (birthDate){ try{ const d = new Date(birthDate); if (isFinite(d)) birthYear = d.getFullYear(); else birthDate = null; }catch(e){ birthDate = null; } }
 
+  let heirOf = [];
+  if (body.heir_of){ try{ const parsed = JSON.parse(body.heir_of); if (Array.isArray(parsed)) heirOf = parsed.filter(Boolean); }catch(e){ heirOf = []; } }
+
   const payload = {
     type: 'update_person',
     person_id: personId,
@@ -727,7 +743,8 @@ router.post('/member/profile/update', upload.single('photo'), wrap(async (req,re
     occupation: body.occupation || null,
     residence: body.residence || null,
     phone: body.phone || null,
-    photo_path: req.file ? await uploadPhoto(req.file, 'photos') : null
+    photo_path: req.file ? await uploadPhoto(req.file, 'photos') : null,
+    heir_of: heirOf
   };
   const id = uuidv4();
   await db.prepare('INSERT INTO requests (id, type, payload, status, created_by, created_at) VALUES (?, ?, ?, ?, ?, ?)').run(id, 'update_person', JSON.stringify(payload), 'pending', req.session.user.id, now());

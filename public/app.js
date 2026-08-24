@@ -340,6 +340,11 @@ function openEditProfileModal(person){
           <label data-i18n="ep_occupation">Occupation<input type="text" id="ep-occupation" /></label>
           <label data-i18n="ep_residence">Residence<input type="text" id="ep-residence" /></label>
           <label data-i18n="ep_phone">Phone<input type="text" id="ep-phone" /></label>
+          <fieldset class="parent-fieldset">
+            <legend data-i18n="reg_heir_legend">Heritage</legend>
+            <label class="checkbox-label"><input type="checkbox" id="ep-is-heir" /><span data-i18n="ep_is_heir_question">Have you become an heir since registering — representing a deceased ancestor in the family?</span></label>
+            <div id="ep-heir-candidates-area" class="hidden" style="margin-top:10px"></div>
+          </fieldset>
           <button type="submit" data-i18n="ep_submit">Submit for admin approval</button>
         </form>
         <div id="edit-profile-feedback" class="hint"></div>
@@ -361,6 +366,7 @@ function openEditProfileModal(person){
     modal.querySelector('#change-password-form').addEventListener('submit', submitChangePassword);
     initPasswordToggles(modal);
     attachPhotoCropper(modal.querySelector('#ep-photo'));
+    setupEditHeirSelector(modal);
     applyI18n();
   }
   modal.querySelector('#ep-fullname').value = person.full_name || '';
@@ -371,10 +377,63 @@ function openEditProfileModal(person){
   modal.querySelector('#ep-residence').value = person.residence || '';
   modal.querySelector('#ep-phone').value = person.phone || '';
   modal.querySelector('#ep-photo').value = '';
+  modal.querySelector('#ep-is-heir').checked = false;
+  modal.querySelector('#ep-heir-candidates-area').classList.add('hidden');
+  modal.querySelector('#ep-heir-candidates-area').innerHTML = '';
   modal.querySelector('#edit-profile-feedback').textContent = '';
   modal.querySelector('#change-password-feedback').textContent = '';
   modal.querySelector('#change-password-form').reset();
   modal.style.display = 'flex';
+}
+
+// mirrors setupHeirSelector() (registration) but sources father/mother ids from the
+// logged-in member's own record via /member/context instead of the registration form's
+// parent-matcher inputs, and excludes ancestors already claimed (member/context's
+// heirOfIds) so resubmitting doesn't look like a no-op.
+function setupEditHeirSelector(modal){
+  const heirCheckbox = modal.querySelector('#ep-is-heir');
+  const area = modal.querySelector('#ep-heir-candidates-area');
+  if (!heirCheckbox || !area) return;
+
+  async function loadCandidates(){
+    area.innerHTML = t('reg_heir_loading');
+    let context;
+    try{ context = await api('/member/context'); }catch(e){ context = {}; }
+    const fatherId = context.father ? context.father.id : '';
+    const motherId = context.mother ? context.mother.id : '';
+    if (!fatherId && !motherId){
+      area.innerHTML = `<div class="hint">${t('ep_heir_no_parent')}</div>`;
+      return;
+    }
+    const alreadyClaimed = new Set(context.heirOfIds || []);
+    let candidates = [];
+    try{
+      const qs = new URLSearchParams();
+      if (fatherId) qs.set('father_id', fatherId);
+      if (motherId) qs.set('mother_id', motherId);
+      candidates = await api('/people/heir-candidates?' + qs.toString());
+    }catch(e){ candidates = []; }
+    candidates = Array.isArray(candidates) ? candidates.filter(c=> !alreadyClaimed.has(c.id)) : [];
+    if (!candidates.length){
+      area.innerHTML = `<div class="hint">${t('reg_heir_no_candidates')}</div>`;
+      return;
+    }
+    area.innerHTML = '';
+    candidates.forEach(c=>{
+      const label = document.createElement('label'); label.className = 'checkbox-label';
+      const cb = document.createElement('input'); cb.type = 'checkbox'; cb.name = 'ep_heir_of'; cb.value = c.id;
+      label.appendChild(cb);
+      const span = document.createElement('span');
+      span.textContent = c.full_name + (c.death_date ? ` (${t('reg_heir_died')} ${c.death_date})` : '');
+      label.appendChild(span);
+      area.appendChild(label);
+    });
+  }
+
+  heirCheckbox.addEventListener('change', ()=>{
+    area.classList.toggle('hidden', !heirCheckbox.checked);
+    if (heirCheckbox.checked) loadCandidates();
+  });
 }
 
 async function submitEditProfile(e){
@@ -392,9 +451,14 @@ async function submitEditProfile(e){
   data.append('phone', modal.querySelector('#ep-phone').value);
   const photoEl = modal.querySelector('#ep-photo');
   if (photoEl.files && photoEl.files[0]) data.append('photo', await downscalePhoto(photoEl.files[0]));
+  if (modal.querySelector('#ep-is-heir').checked){
+    const heirIds = Array.from(modal.querySelectorAll('#ep-heir-candidates-area input[name="ep_heir_of"]:checked')).map(cb=>cb.value);
+    if (heirIds.length) data.append('heir_of', JSON.stringify(heirIds));
+  }
   try{
     const res = await fetch('/api/member/profile/update', { method:'POST', body:data, credentials:'same-origin' });
     const j = await res.json();
+    if (j.ok) track('profile_update');
     feedback.textContent = j.ok ? t('ep_submitted_ok') : (j.error || t('ep_error_generic'));
   }catch(err){ feedback.textContent = t('network_error'); }
 }
@@ -2026,6 +2090,8 @@ const I18N = {
     ep_title: 'Edit my profile',
     ep_photo: 'Photo', ep_fullname: 'Full name', ep_gender: 'Gender', ep_birthdate: 'Birth date', ep_deathdate: 'Date of death (leave blank if living)',
     ep_occupation: 'Occupation', ep_residence: 'Residence', ep_phone: 'Phone',
+    ep_is_heir_question: 'Have you become an heir since registering — representing a deceased ancestor in the family?',
+    ep_heir_no_parent: "Your father/mother aren't linked to a profile in the tree yet — heritage can only be claimed from an ancestor already on file.",
     ep_submit: 'Submit for admin approval',
     ep_submitting: 'Submitting...',
     ep_submitted_ok: "Submitted — your changes will appear once an admin approves them.",
@@ -2326,6 +2392,8 @@ const I18N = {
     ep_title: 'Modifier mon profil',
     ep_photo: 'Photo', ep_fullname: 'Nom complet', ep_gender: 'Genre', ep_birthdate: 'Date de naissance', ep_deathdate: 'Date de décès (laisser vide si vivant(e))',
     ep_occupation: 'Profession', ep_residence: 'Résidence', ep_phone: 'Téléphone',
+    ep_is_heir_question: "Es-tu devenu(e) héritier(ère) depuis ton inscription — représentant un ancêtre décédé de la famille ?",
+    ep_heir_no_parent: "Ton père/ta mère ne sont pas encore liés à un profil dans l'arbre — l'héritage ne peut être réclamé que d'un ancêtre déjà enregistré.",
     ep_submit: "Soumettre pour approbation par l'administrateur",
     ep_submitting: 'Envoi en cours...',
     ep_submitted_ok: "Envoyé — vos modifications apparaîtront une fois approuvées par un administrateur.",
