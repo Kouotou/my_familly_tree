@@ -22,11 +22,15 @@
       <path d="M40,46 L18,30 M40,46 L14,48 M42,52 L16,60 M44,60 L22,76"/>
       <path d="M60,46 L82,30 M60,46 L86,48 M58,52 L84,60 M56,60 L78,76"/>
     </g>`,
-    two_headed_serpent: `<g fill="none" stroke="currentColor" stroke-width="4" stroke-linecap="round" stroke-linejoin="round">
-      <path d="M14,50 C28,22 36,78 50,50 C64,22 72,78 86,50"/>
-      <ellipse cx="12" cy="50" rx="6" ry="4.5" fill="currentColor" stroke="none"/>
-      <ellipse cx="88" cy="50" rx="6" ry="4.5" fill="currentColor" stroke="none"/>
-      <path d="M8,47 L4,44 M8,53 L4,56 M92,47 L96,44 M92,53 L96,56"/>
+    // Redrawn after a reference photo of a Bamoun ceremonial double-gong pendant: two
+    // serpent bodies braid around each other (not a single S-curve), splayed tusk-like
+    // heads at top linked by a short crossbar, small curled tail tips at the bottom.
+    two_headed_serpent: `<g fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M32,18 L32.9,19.6 L35.4,21.2 L39.4,22.8 L44.4,24.4 L50,26 L55.6,27.6 L60.6,29.2 L64.6,30.8 L67.1,32.4 L68,34 L67.1,35.6 L64.6,37.2 L60.6,38.8 L55.6,40.4 L50,42 L44.4,43.6 L39.4,45.2 L35.4,46.8 L32.9,48.4 L32,50 L32.9,51.6 L35.4,53.2 L39.4,54.8 L44.4,56.4 L50,58 L55.6,59.6 L60.6,61.2 L64.6,62.8 L67.1,64.4 L68,66 L67.1,67.6 L64.6,69.2 L60.6,70.8 L55.6,72.4 L50,74 L44.4,75.6 L39.4,77.2 L35.4,78.8 L32.9,80.4 L32,82"/>
+      <path d="M68,18 L67.1,19.6 L64.6,21.2 L60.6,22.8 L55.6,24.4 L50,26 L44.4,27.6 L39.4,29.2 L35.4,30.8 L32.9,32.4 L32,34 L32.9,35.6 L35.4,37.2 L39.4,38.8 L44.4,40.4 L50,42 L55.6,43.6 L60.6,45.2 L64.6,46.8 L67.1,48.4 L68,50 L67.1,51.6 L64.6,53.2 L60.6,54.8 L55.6,56.4 L50,58 L44.4,59.6 L39.4,61.2 L35.4,62.8 L32.9,64.4 L32,66 L32.9,67.6 L35.4,69.2 L39.4,70.8 L44.4,72.4 L50,74 L55.6,75.6 L60.6,77.2 L64.6,78.8 L67.1,80.4 L68,82"/>
+      <path d="M32,18 C26,14 22,10 20,8 M68,18 C74,14 78,10 80,8"/>
+      <path d="M20,8 L80,8" stroke-width="2.2"/>
+      <path d="M32,82 C30,86 34,88 37,85 M68,82 C70,86 66,88 63,85"/>
     </g>`,
     double_gong: `<g fill="none" stroke="currentColor" stroke-width="4" stroke-linecap="round" stroke-linejoin="round">
       <path d="M28,20 L60,20"/>
