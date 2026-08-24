@@ -6,6 +6,7 @@
   <title>Family Tree</title>
   <link rel="stylesheet" href="/styles.css">
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/cropperjs@1.6.2/dist/cropper.min.css">
+  <script>window.CULTURAL_BG_PAGE = 'tree';</script>
 </head>
 <body>
   <header class="topbar">
@@ -30,6 +31,10 @@
     <div class="sidebar-subpanel" id="sidebar-tree-summary-panel">
       <button type="button" id="download-tree-image" data-i18n="sidebar_download_image">Download as Image</button>
       <button type="button" id="download-tree-pdf" class="secondary" data-i18n="sidebar_download_pdf">Download as PDF</button>
+      <label class="cultural-bg-toggle-label">
+        <input type="checkbox" id="cultural-bg-export-toggle" checked>
+        <span data-i18n="sidebar_cultural_bg_toggle">Include cultural background</span>
+      </label>
     </div>
   </div>
 
@@ -46,6 +51,7 @@
     </div>
   </main>
   <script src="https://cdn.jsdelivr.net/npm/cropperjs@1.6.2/dist/cropper.min.js"></script>
+  <script src="/cultural-bg.js"></script>
   <script src="/app.js"></script>
   <script>
     // initialize tree page: load current user and tree

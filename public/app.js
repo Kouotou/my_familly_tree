@@ -1639,7 +1639,7 @@ async function inlineTreeImages(svgEl){
 
 // Render just the tree's SVG (cards + connectors, none of the surrounding page chrome)
 // onto a canvas at the full extent of its content, ignoring current pan/zoom.
-async function renderTreeToCanvas(){
+async function renderTreeToCanvas(includeCulturalBg){
   const svg = document.getElementById('tree-svg');
   if (!svg) throw new Error('no tree');
   const viewport = svg.querySelector('#viewport');
@@ -1675,6 +1675,11 @@ async function renderTreeToCanvas(){
   ctx.fillStyle = isDark ? '#1c2330' : '#fffaf2';
   ctx.fillRect(0,0,width,height);
 
+  if (includeCulturalBg && window.CulturalBackground){
+    try{ await window.CulturalBackground.drawOnCanvas(ctx, width, height, isDark, 'tree'); }
+    catch(e){ /* export still works without the decorative background */ }
+  }
+
   const title = currentLang() === 'fr'
     ? 'Arbre généalogique de la famille Nah Adja Mbethe'
     : 'Family Tree of the Nah Adja Mbethe Family';
@@ -1709,9 +1714,14 @@ function triggerDownload(blob, filename){
   document.body.appendChild(a); a.click(); a.remove();
 }
 
+function wantsCulturalBgExport(){
+  const toggle = document.getElementById('cultural-bg-export-toggle');
+  return !toggle || toggle.checked;
+}
+
 async function downloadTreeImage(){
   try{
-    const canvas = await renderTreeToCanvas();
+    const canvas = await renderTreeToCanvas(wantsCulturalBgExport());
     canvas.toBlob(blob=> triggerDownload(blob, 'family-tree.png'), 'image/png');
   }catch(e){ alert(t('tree_export_error')); }
 }
@@ -1760,7 +1770,7 @@ function buildSinglePageImagePdf(jpegBytes, pxWidth, pxHeight){
 
 async function downloadTreePdf(){
   try{
-    const canvas = await renderTreeToCanvas();
+    const canvas = await renderTreeToCanvas(wantsCulturalBgExport());
     const jpegBytes = dataURLToUint8Array(canvas.toDataURL('image/jpeg', 0.92));
     const pdfBlob = buildSinglePageImagePdf(jpegBytes, canvas.width, canvas.height);
     triggerDownload(pdfBlob, 'family-tree.pdf');
@@ -2056,6 +2066,7 @@ const I18N = {
     sidebar_tree_summary: 'Family tree summary',
     sidebar_download_image: 'Download as Image',
     sidebar_download_pdf: 'Download as PDF',
+    sidebar_cultural_bg_toggle: 'Include cultural background',
     tree_export_error: "Couldn't export the tree. Please try again.",
 
     ss_title: 'Search & stats',
@@ -2355,6 +2366,7 @@ const I18N = {
     sidebar_tree_summary: "Résumé de l'arbre généalogique",
     sidebar_download_image: 'Télécharger en image',
     sidebar_download_pdf: 'Télécharger en PDF',
+    sidebar_cultural_bg_toggle: 'Inclure le fond culturel',
     tree_export_error: "Impossible d'exporter l'arbre. Veuillez réessayer.",
 
     ss_title: 'Recherche et statistiques',
