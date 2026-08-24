@@ -898,6 +898,21 @@ function buildLayoutTree(anchorId, edges, bloodLevel){
   return layoutNode;
 }
 
+// orders each set of siblings (any node's immediate layout-children — blood kids under a
+// couple, or a person's spouse(s) under them) left to right from first-born to last-born,
+// by birth date (falling back to birth year, then last for anyone with neither on file).
+function sortChildrenByBirth(node, nodeMap){
+  const key = (id) => {
+    const p = nodeMap[id];
+    if (!p) return '9999-99-99';
+    if (p.birth_date) return p.birth_date;
+    if (p.birth_year) return String(p.birth_year).padStart(4,'0') + '-01-01';
+    return '9999-99-99';
+  };
+  node.children.sort((a,b)=> key(a.id).localeCompare(key(b.id)));
+  node.children.forEach(c=> sortChildrenByBirth(c, nodeMap));
+}
+
 // root gets level 0; root's own spouse also stays at level 0 (see comment above); every
 // other spouse is one level below their blood partner, and a couple's children one level
 // below the spouse (or below the blood parent directly, in the solo-parent fallback).
@@ -994,6 +1009,7 @@ function renderTreeSVG(svg, tree, centerId, rootId){
 
   const bloodLevel = computeBloodLevels(anchorId, edges);
   const layoutNode = buildLayoutTree(anchorId, edges, bloodLevel);
+  sortChildrenByBirth(layoutNode[anchorId], nodeMap);
   const displayLevel = assignDisplayLevels(layoutNode, anchorId);
   // anyone not reachable from the anchor (disconnected branch) is still shown, grouped
   // separately below the main tree, so approved profiles are never silently hidden.
@@ -1733,6 +1749,8 @@ const I18N = {
     pending_section_creation: 'New account requests',
     pending_section_modification: 'Account modification requests',
     pending_section_empty: 'None',
+    admin_export_csv_btn: 'Export approved profiles (CSV)',
+    admin_export_csv_failed: 'Export failed: {msg}',
     req_new_person: 'New person',
     req_field_fullname: 'Full name', req_field_gender: 'Gender', req_field_birthdate: 'Birth date',
     req_field_birthyear: 'Birth year', req_field_occupation: 'Occupation', req_field_residence: 'Residence',
@@ -1981,6 +1999,8 @@ const I18N = {
     pending_section_creation: 'Demandes de nouveau compte',
     pending_section_modification: 'Demandes de modification de compte',
     pending_section_empty: 'Aucune',
+    admin_export_csv_btn: 'Exporter les profils approuvés (CSV)',
+    admin_export_csv_failed: "Échec de l'export : {msg}",
     req_new_person: 'Nouvelle personne',
     req_field_fullname: 'Nom complet', req_field_gender: 'Genre', req_field_birthdate: 'Date de naissance',
     req_field_birthyear: 'Année de naissance', req_field_occupation: 'Profession', req_field_residence: 'Résidence',

@@ -50,11 +50,12 @@
     </div>
     <div class="admin-toolbar">
       <div class="admin-toolbar-group">
-        <button id="tab-pending" class="active" data-i18n="pending">Pending</button>
+        <button id="tab-pending" class="active" data-i18n="pending">Pending<span id="pending-badge" class="notif-badge hidden">0</span></button>
         <button id="tab-approved" data-i18n="approved">Approved</button>
         <button id="tab-rejected" data-i18n="rejected">Rejected</button>
       </div>
       <div class="admin-toolbar-group">
+        <button id="export-csv-btn" class="secondary" data-i18n="admin_export_csv_btn">Export approved profiles (CSV)</button>
         <button id="admin-change-password-btn" class="secondary" data-i18n="ep_change_password_title">Change password</button>
         <button id="admin-logout" data-i18n="admin_logout_btn">Logout</button>
         <button id="refresh-requests" data-i18n="admin_refresh_btn">Refresh</button>
@@ -89,6 +90,26 @@
   <script>
     document.addEventListener('DOMContentLoaded', ()=>{
     async function api(path, opts={}){ const merged = Object.assign({}, opts, { credentials: 'same-origin' }); const res = await fetch('/api'+path, merged); const ct = res.headers.get('content-type')||''; if (ct.includes('application/json')) return res.json(); return res.text(); }
+
+    // badge on the Pending tab: total pending items across both account requests and
+    // archive submissions. Refreshed from loadRequests()/loadArchiveRequests(), which
+    // already run on page load and after every approve/reject/delete action — so the count
+    // rises the moment someone submits something and falls the moment it's reviewed,
+    // without needing a separate polling loop.
+    async function updateNotificationBadge(){
+      const badge = document.getElementById('pending-badge');
+      if (!badge) return;
+      try{
+        const [requests, archive] = await Promise.all([
+          api('/admin/requests?status=pending').catch(()=>[]),
+          api('/admin/archive?status=pending').catch(()=>[])
+        ]);
+        const count = (Array.isArray(requests)?requests.length:0) + (Array.isArray(archive)?archive.length:0);
+        badge.textContent = String(count);
+        badge.classList.toggle('hidden', count===0);
+      }catch(e){ /* leave the badge as-is on failure */ }
+    }
+
     // offer to crop a photo right after it's chosen, same as everywhere else photos are uploaded
     if (typeof attachPhotoCropper === 'function'){
       const rootPhotoInput = document.querySelector('#rootCreateForm [name="photo"]');
@@ -320,32 +341,36 @@
         ]);
         const peopleById = {};
         (Array.isArray(people)?people:[]).forEach(p=> peopleById[p.id]=p);
-        if (!Array.isArray(r) || r.length===0){ area.innerHTML = `<div>${t('admin_no_requests', {status: t(status)})}</div>`; return; }
-        area.innerHTML='';
-        if (status === 'pending'){
-          // split so new registrations (which need placing on the tree) don't get lost
-          // among the higher-volume, lower-stakes profile-edit/password-reset requests
-          const isCreation = req => ['create_person','create','add_relative'].includes(req.payload && req.payload.type);
-          const creation = r.filter(isCreation);
-          const modification = r.filter(req => !isCreation(req));
-          const section = (titleKey, items) => {
-            const wrap = document.createElement('div'); wrap.className = 'pending-section';
-            const h = document.createElement('h4'); h.textContent = t(titleKey) + ' (' + items.length + ')';
-            wrap.appendChild(h);
-            if (!items.length){
-              const none = document.createElement('div'); none.className = 'hint'; none.textContent = t('pending_section_empty');
-              wrap.appendChild(none);
-            } else {
-              items.forEach(req=> wrap.appendChild(renderRequestCard(req, peopleById)));
-            }
-            return wrap;
-          };
-          area.appendChild(section('pending_section_creation', creation));
-          area.appendChild(section('pending_section_modification', modification));
+        if (!Array.isArray(r) || r.length===0){
+          area.innerHTML = `<div>${t('admin_no_requests', {status: t(status)})}</div>`;
         } else {
-          r.forEach(req=>{ area.appendChild(renderRequestCard(req, peopleById)); });
+          area.innerHTML='';
+          if (status === 'pending'){
+            // split so new registrations (which need placing on the tree) don't get lost
+            // among the higher-volume, lower-stakes profile-edit/password-reset requests
+            const isCreation = req => ['create_person','create','add_relative'].includes(req.payload && req.payload.type);
+            const creation = r.filter(isCreation);
+            const modification = r.filter(req => !isCreation(req));
+            const section = (titleKey, items) => {
+              const wrap = document.createElement('div'); wrap.className = 'pending-section';
+              const h = document.createElement('h4'); h.textContent = t(titleKey) + ' (' + items.length + ')';
+              wrap.appendChild(h);
+              if (!items.length){
+                const none = document.createElement('div'); none.className = 'hint'; none.textContent = t('pending_section_empty');
+                wrap.appendChild(none);
+              } else {
+                items.forEach(req=> wrap.appendChild(renderRequestCard(req, peopleById)));
+              }
+              return wrap;
+            };
+            area.appendChild(section('pending_section_creation', creation));
+            area.appendChild(section('pending_section_modification', modification));
+          } else {
+            r.forEach(req=>{ area.appendChild(renderRequestCard(req, peopleById)); });
+          }
         }
       }catch(e){ area.innerHTML=t('error_loading'); console.error(e); }
+      updateNotificationBadge();
     }
     // expose so app.js's language toggle can re-render request cards in the new language
     window.loadRequests = loadRequests;
@@ -414,10 +439,14 @@
       const area = document.getElementById('archiveRequestsArea'); area.innerHTML = 'Loading...';
       try{
         const items = await api('/admin/archive?status=' + encodeURIComponent(status));
-        if (!Array.isArray(items) || items.length===0){ area.innerHTML = `<div>${t('admin_no_requests', {status: t(status)})}</div>`; return; }
-        area.innerHTML = '';
-        items.forEach(item => area.appendChild(renderArchiveCard(item)));
+        if (!Array.isArray(items) || items.length===0){
+          area.innerHTML = `<div>${t('admin_no_requests', {status: t(status)})}</div>`;
+        } else {
+          area.innerHTML = '';
+          items.forEach(item => area.appendChild(renderArchiveCard(item)));
+        }
       }catch(e){ area.innerHTML = t('error_loading'); console.error(e); }
+      updateNotificationBadge();
     }
     window.loadArchiveRequests = loadArchiveRequests;
     const atabPending = document.getElementById('atab-pending'); if (atabPending) atabPending.addEventListener('click', ()=> loadArchiveRequests('pending'));
@@ -732,6 +761,28 @@
     });
 
     const refreshBtn = document.getElementById('refresh-requests'); if (refreshBtn) refreshBtn.addEventListener('click', ()=> loadRequests());
+    const exportCsvBtn = document.getElementById('export-csv-btn');
+    if (exportCsvBtn) exportCsvBtn.addEventListener('click', async ()=>{
+      try{
+        const people = await api('/people');
+        const columns = ['full_name','username','gender','birth_date','birth_year','death_date','occupation','residence','phone'];
+        const headerLabels = ['Full name','Username','Gender','Birth date','Birth year','Death date','Occupation','Residence','Phone'];
+        const escapeCell = (v)=>{
+          const s = v===null || v===undefined ? '' : String(v);
+          return /[",\n]/.test(s) ? '"' + s.replace(/"/g,'""') + '"' : s;
+        };
+        const rows = [headerLabels.join(',')];
+        people.forEach(p=> rows.push(columns.map(c=> escapeCell(p[c])).join(',')));
+        const csv = '﻿' + rows.join('\r\n'); // BOM so accented names open correctly in Excel
+        const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = 'family-tree-profiles-' + new Date().toISOString().slice(0,10) + '.csv';
+        document.body.appendChild(a); a.click(); a.remove();
+        URL.revokeObjectURL(url);
+      }catch(e){ alert(t('admin_export_csv_failed', { msg: e.message })); }
+    });
     const tabPending = document.getElementById('tab-pending'); if (tabPending) tabPending.addEventListener('click', ()=> loadRequests('pending'));
     const tabApproved = document.getElementById('tab-approved'); if (tabApproved) tabApproved.addEventListener('click', ()=> loadRequests('approved'));
     const tabRejected = document.getElementById('tab-rejected'); if (tabRejected) tabRejected.addEventListener('click', ()=> loadRequests('rejected'));
