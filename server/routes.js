@@ -406,7 +406,23 @@ router.get('/admin/requests', wrap(async (req,res)=>{
   if (!['pending','approved','rejected'].includes(status)) return res.status(400).json({error:'invalid status'});
   // admin_password_reset requests are owner-only (see /owner/password-reset-requests) — an
   // admin locked out of their own account isn't something other admins need to see or act on
-  const rows = await db.prepare("SELECT * FROM requests WHERE status = ? AND type != 'admin_password_reset' ORDER BY created_at DESC").all(status);
+  let rows = await db.prepare("SELECT * FROM requests WHERE status = ? AND type != 'admin_password_reset' ORDER BY created_at DESC").all(status);
+  if (status === 'approved'){
+    // an approved request's card offers "Modify account"/"Delete account" for the person it
+    // resolved to — once that person is later deleted, the request row itself is untouched
+    // (it's kept as a historical record), so without this filter its card would keep showing
+    // in the Approved tab forever, with a Delete button that "does nothing" (the person is
+    // already gone) — exactly the confusing stale-card bug this fixes.
+    const resolvedIds = Array.from(new Set(rows.map(r=>r.resolved_person_id).filter(Boolean)));
+    if (resolvedIds.length){
+      const statuses = {};
+      for (const pid of resolvedIds){
+        const p = await db.prepare('SELECT approval_status FROM people WHERE id = ?').get(pid);
+        statuses[pid] = p ? p.approval_status : null;
+      }
+      rows = rows.filter(r => !r.resolved_person_id || statuses[r.resolved_person_id] === 'approved');
+    }
+  }
   res.json(rows.map(r=> ({...r, payload: JSON.parse(r.payload)})));
 }));
 
