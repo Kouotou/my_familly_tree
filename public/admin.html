@@ -236,11 +236,15 @@
           await openEditModalForPerson(person);
         });
         const deleteBtn = document.createElement('button'); deleteBtn.textContent=t('btn_delete_account'); deleteBtn.style.marginLeft='8px'; deleteBtn.addEventListener('click', async ()=>{
-          if (!await showConfirm(t('confirm_delete_account'))) return;
           try{
             const pid = await resolvePersonIdFromPayload(req);
             if (!pid){ alert(t('alert_person_not_found')); return; }
-            const res = await fetch('/api/admin/people/'+pid+'/delete', { method:'POST', credentials:'same-origin' });
+            let relatives = { father:null, mother:null, spouses:[], children:[] };
+            try{ relatives = await api('/admin/people/' + pid + '/relatives'); }catch(e){}
+            const personName = req.payload.full_name || t('req_unknown_person');
+            const alsoDelete = await confirmDeleteWithRelatives(relatives, personName);
+            if (alsoDelete === null) return; // cancelled
+            const res = await fetch('/api/admin/people/'+pid+'/delete', { method:'POST', headers:{'Content-Type':'application/json'}, credentials:'same-origin', body: JSON.stringify({ also_delete: alsoDelete }) });
             const ct = res.headers.get('content-type')||''; const body = ct.includes('application/json')? await res.json() : await res.text();
             if (res.ok){ await loadRequests('rejected'); } else { alert(t('alert_delete_failed',{msg: body && (body.error||body.message) ? (body.error||body.message) : JSON.stringify(body)})); }
           }catch(e){ alert(t('network_error')+' '+e.message); }
@@ -904,6 +908,41 @@
     checkMustChangePassword();
     loadRequests();
     highlightFromQuery();
+
+    // delete confirmation that also offers to take down any of the person's direct relatives
+    // (father/mother/spouse(s)/children) in the same action — none checked by default, so a
+    // plain "delete just this person" is still one click away. Resolves to `null` if
+    // cancelled, or an array of relative ids to also delete (possibly empty) if confirmed.
+    // Deliberately doesn't warn about anyone this leaves without relationships — an admin can
+    // always reconnect them later via the relation editor on "Modify account".
+    function confirmDeleteWithRelatives(relatives, personName){
+      return new Promise(resolve=>{
+        const rows = [];
+        if (relatives.father) rows.push({ id: relatives.father.id, label: t('profile_father') + ': ' + relatives.father.full_name });
+        if (relatives.mother) rows.push({ id: relatives.mother.id, label: t('profile_mother') + ': ' + relatives.mother.full_name });
+        (relatives.spouses||[]).forEach(s=> rows.push({ id: s.id, label: t('profile_spouses') + ': ' + s.full_name }));
+        (relatives.children||[]).forEach(c=> rows.push({ id: c.id, label: t('profile_children') + ': ' + c.full_name }));
+
+        const existing = document.getElementById('delete-relatives-modal');
+        if (existing) existing.remove(); // rebuild fresh each time — different person, different relatives
+        const el = document.createElement('div'); el.id = 'delete-relatives-modal';
+        el.style.position='fixed'; el.style.inset='0'; el.style.background='rgba(0,0,0,0.4)'; el.style.display='flex'; el.style.alignItems='center'; el.style.justifyContent='center'; el.style.zIndex='75';
+        const rowsHtml = rows.map(r=> `<label class="checkbox-label"><input type="checkbox" value="${r.id}" /> ${r.label}</label>`).join('');
+        el.innerHTML = `<div style="background:var(--card);padding:18px;border-radius:10px;max-width:460px;box-shadow:var(--shadow)">
+          <div style="margin-bottom:10px">${t('confirm_delete_account_named', {name: personName})}</div>
+          ${rows.length ? `<div style="margin-bottom:10px"><strong>${t('delete_relatives_heading')}</strong>${rowsHtml}</div>` : ''}
+          <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:12px">
+            <button id="delrel-no" type="button" class="secondary">${t('confirm_no')}</button>
+            <button id="delrel-yes" type="button">${t('confirm_yes')}</button>
+          </div>
+        </div>`;
+        document.body.appendChild(el);
+        const onYes = ()=>{ const checked = Array.from(el.querySelectorAll('input[type=checkbox]:checked')).map(cb=>cb.value); el.remove(); resolve(checked); };
+        const onNo = ()=>{ el.remove(); resolve(null); };
+        el.querySelector('#delrel-yes').addEventListener('click', onYes);
+        el.querySelector('#delrel-no').addEventListener('click', onNo);
+      });
+    }
 
     // custom confirm modal
     function showConfirm(message){

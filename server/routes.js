@@ -401,6 +401,31 @@ router.post('/auth/register', upload.fields([
 // person both pass.
 const APPROVED_STALE_FILTER_SQL = "(resolved_person_id IS NULL OR EXISTS (SELECT 1 FROM people p WHERE p.id = requests.resolved_person_id AND p.approval_status = 'approved'))";
 
+// self-heals approved create_person requests that never got a resolved_person_id — either
+// because they predate that column, or (a real case found in production) because an earlier
+// one-off backfill script explicitly skipped rows whose person was *already* deleted at the
+// time, treating that as "not actually broken". That reasoning missed a side effect:
+// APPROVED_STALE_FILTER_SQL can only recognize a stale card by checking resolved_person_id —
+// with nothing to check, the row (and its "Delete account" button that can now never resolve
+// to anyone) keeps showing forever. Runs lazily here, so it heals itself for any future case
+// too, not just the ones already found — same reasoning as the 24h rejected-request purge
+// below: no scheduled job in a single serverless function, so do it on read.
+async function healMissingResolvedPersonIds(){
+  const orphans = await db.prepare("SELECT id, payload FROM requests WHERE status = 'approved' AND type IN ('create_person','create') AND resolved_person_id IS NULL").all();
+  for (const row of orphans){
+    let payload;
+    try{ payload = JSON.parse(row.payload); }catch(e){ continue; }
+    let person = null;
+    if (payload.username) person = await db.prepare('SELECT id FROM people WHERE username = ?').get(payload.username);
+    if (!person && payload.full_name && payload.birth_date) person = await db.prepare('SELECT id FROM people WHERE full_name = ? AND birth_date = ?').get(payload.full_name, payload.birth_date);
+    if (!person && payload.full_name){
+      const candidates = await db.prepare('SELECT id FROM people WHERE full_name = ?').all(payload.full_name);
+      if (candidates.length === 1) person = candidates[0];
+    }
+    if (person) await db.prepare('UPDATE requests SET resolved_person_id = ? WHERE id = ?').run(person.id, row.id);
+  }
+}
+
 // admin: list requests (status can be pending|approved|rejected)
 router.get('/admin/requests', wrap(async (req,res)=>{
   if (!req.session.user) return res.status(401).json({error:'not logged in'});
@@ -411,6 +436,7 @@ router.get('/admin/requests', wrap(async (req,res)=>{
   // Lazily, on read, rather than via a scheduled job: this app is a single serverless
   // function with no persistent process to run a cron in.
   await db.prepare("DELETE FROM requests WHERE status = 'rejected' AND reviewed_at IS NOT NULL AND reviewed_at::timestamptz < NOW() - INTERVAL '24 hours'").run();
+  await healMissingResolvedPersonIds();
   const status = (req.query.status || 'pending').toLowerCase();
   if (!['pending','approved','rejected'].includes(status)) return res.status(400).json({error:'invalid status'});
   // admin_password_reset requests are owner-only (see /owner/password-reset-requests) — an
@@ -916,6 +942,23 @@ router.get('/admin/people/:id/parents', wrap(async (req,res)=>{
   res.json({ father: await withNote(fatherId), mother: await withNote(motherId) });
 }));
 
+// direct relatives of a person — father, mother, spouse(s), children — for the "delete this
+// account" confirmation, which lets the admin optionally take any of them down at the same
+// time (e.g. a spouse and their shared children) instead of only ever deleting one person
+// per click.
+router.get('/admin/people/:id/relatives', wrap(async (req,res)=>{
+  if (!requireAdmin(req,res)) return;
+  const id = req.params.id;
+  const { fatherId, motherId } = await getParentIds(db, id);
+  const father = fatherId ? await db.prepare('SELECT id, full_name, gender FROM people WHERE id = ?').get(fatherId) : null;
+  const mother = motherId ? await db.prepare('SELECT id, full_name, gender FROM people WHERE id = ?').get(motherId) : null;
+  const spouseIds = await getSpouseIds(db, id);
+  const spouses = (await Promise.all(spouseIds.map(sid=> db.prepare('SELECT id, full_name, gender FROM people WHERE id = ?').get(sid)))).filter(Boolean);
+  const childIds = (await db.prepare("SELECT relative_id FROM relationships WHERE person_id = ? AND type = 'child'").all(id)).map(r=>r.relative_id);
+  const children = (await Promise.all(childIds.map(cid=> db.prepare('SELECT id, full_name, gender FROM people WHERE id = ?').get(cid)))).filter(Boolean);
+  res.json({ father, mother, spouses, children });
+}));
+
 // --- owner-only: manage family-level administrators ---
 
 // a visually distinct, monospace block for a username/password so it's unambiguous to select
@@ -1069,21 +1112,37 @@ router.post('/admin/people/:id/update-multipart', upload.single('photo'), wrap(a
   }catch(err){ console.error('Update person multipart error', err && err.stack || err); res.status(500).json({ error: String(err && err.message ? err.message : err) }); }
 }));
 
-// Admin: delete person (soft-delete and cleanup relationships/users)
-router.post('/admin/people/:id/delete', wrap(async (req,res)=>{
+// shared by the single-person and cascading delete paths: soft-delete one person, detach
+// their login, drop every relationship row that mentions them (in either direction — a
+// deleted person should vanish from everyone else's relatives too, not just lose their own
+// links), and file the usual rejected-request audit entry. Deliberately leaves anyone who
+// was only related *to* this person otherwise untouched, even if that leaves them with no
+// relationships left in the tree — that's expected, not an error state, and the admin can
+// always give them new ones later via the relation editor on "Modify account".
+async function deletePersonRecord(dbLike, id, reviewerId){
+  await dbLike.prepare('UPDATE people SET approval_status = ?, last_edited_by = ?, last_edited_at = ? WHERE id = ?').run('deleted', reviewerId, now(), id);
+  await dbLike.prepare('UPDATE users SET person_id = NULL WHERE person_id = ?').run(id);
+  await dbLike.prepare('DELETE FROM relationships WHERE person_id = ? OR relative_id = ?').run(id, id);
+  const rid = uuidv4();
+  const payload = { type: 'delete_person', person_id: id, deleted_by: reviewerId, deleted_at: now() };
+  await dbLike.prepare('INSERT INTO requests (id, type, payload, status, created_by, created_at, reviewed_by, reviewed_at, review_note) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)')
+    .run(rid, 'delete_person', JSON.stringify(payload), 'rejected', reviewerId, now(), reviewerId, now(), 'deleted by admin');
+}
+
+// Admin: delete person (soft-delete and cleanup relationships/users), optionally cascading to
+// any subset of their direct relatives (father/mother/spouse/children) the admin also chose
+// to take down in the same action — see GET /admin/people/:id/relatives, which is what the
+// confirmation UI lists them from.
+router.post('/admin/people/:id/delete', express.json(), wrap(async (req,res)=>{
   if (!req.session.user) return res.status(401).json({error:'not logged in'});
   if (!req.session.user.role || req.session.user.role==='member') return res.status(403).json({error:'forbidden'});
   const id = req.params.id;
+  const alsoDelete = (req.body && Array.isArray(req.body.also_delete)) ? req.body.also_delete.filter(x=> x && x !== id) : [];
   try{
     await db.transaction(async (tx) => {
-      await tx.prepare('UPDATE people SET approval_status = ?, last_edited_by = ?, last_edited_at = ? WHERE id = ?').run('deleted', req.session.user.id, now(), id);
-      await tx.prepare('UPDATE users SET person_id = NULL WHERE person_id = ?').run(id);
-      await tx.prepare('DELETE FROM relationships WHERE person_id = ? OR relative_id = ?').run(id, id);
-      // create a rejected request entry so the deleted account appears in Rejected tab for audit
-      const rid = uuidv4();
-      const payload = { type: 'delete_person', person_id: id, deleted_by: req.session.user.id, deleted_at: now() };
-      await tx.prepare('INSERT INTO requests (id, type, payload, status, created_by, created_at, reviewed_by, reviewed_at, review_note) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)')
-        .run(rid, 'delete_person', JSON.stringify(payload), 'rejected', req.session.user.id, now(), req.session.user.id, now(), 'deleted by admin');
+      for (const targetId of [id, ...new Set(alsoDelete)]){
+        await deletePersonRecord(tx, targetId, req.session.user.id);
+      }
     });
     res.json({ ok:true });
   }catch(err){ console.error('Delete person error', err && err.stack || err); res.status(500).json({ error: String(err && err.message ? err.message : err) }); }
