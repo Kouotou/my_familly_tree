@@ -32,6 +32,16 @@
     </div>
 
     <div style="padding:16px;background:var(--card);border-radius:10px;box-shadow:var(--shadow);margin-bottom:20px">
+      <h3 style="margin-top:0" data-i18n="owner_my_email_heading">Your notification email</h3>
+      <p style="color:var(--muted);margin-top:-6px;font-size:13px" data-i18n="owner_my_email_desc">Where you receive pending-request notifications and administrator lockout requests.</p>
+      <form id="owner-email-form" style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end">
+        <label style="flex:1;min-width:200px" data-i18n="owner_admin_email_label">Email<input id="owner-email-input" type="email" required /></label>
+        <button type="submit" data-i18n="owner_save_email_btn">Save</button>
+      </form>
+      <div id="owner-email-feedback" class="hint"></div>
+    </div>
+
+    <div style="padding:16px;background:var(--card);border-radius:10px;box-shadow:var(--shadow);margin-bottom:20px">
       <h3 style="margin-top:0" data-i18n="owner_admins_heading">Administrators</h3>
       <div id="adminsList">Loading...</div>
       <h4 style="margin-bottom:8px" data-i18n="owner_add_admin_heading">Add a new administrator</h4>
@@ -104,8 +114,18 @@
           document.getElementById('mustChangeNotice').classList.remove('hidden');
           document.getElementById('owner-change-password-modal').style.display = 'flex';
         }
+        if (me.user && me.user.email) document.getElementById('owner-email-input').value = me.user.email;
       }catch(e){}
     }
+
+    const ownerEmailForm = document.getElementById('owner-email-form');
+    ownerEmailForm.addEventListener('submit', async (e)=>{
+      e.preventDefault();
+      const feedback = document.getElementById('owner-email-feedback');
+      feedback.textContent = '';
+      const res = await api('/owner/email', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ email: document.getElementById('owner-email-input').value }) });
+      feedback.textContent = res.ok ? t('owner_save_email_done') : (res.error || t('ep_error_generic'));
+    });
 
     async function loadAdmins(){
       const list = document.getElementById('adminsList');

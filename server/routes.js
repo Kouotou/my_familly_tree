@@ -841,6 +841,17 @@ router.get('/owner/admins', wrap(async (req,res)=>{
   res.json(rows);
 }));
 
+// the owner's own notification email — separate from admins' emails (set by the owner when
+// adding them), since the owner has no one else to set theirs for them
+router.post('/owner/email', express.json(), wrap(async (req,res)=>{
+  if (!requireOwner(req,res)) return;
+  const email = ((req.body && req.body.email) || '').trim();
+  if (!email) return res.status(400).json({ error: 'Email is required.' });
+  await db.prepare('UPDATE users SET email = ? WHERE id = ?').run(email, req.session.user.id);
+  req.session.user.email = email;
+  res.json({ ok:true });
+}));
+
 router.post('/owner/admins/create', express.json(), wrap(async (req,res)=>{
   if (!requireOwner(req,res)) return;
   const { username, email } = req.body || {};
