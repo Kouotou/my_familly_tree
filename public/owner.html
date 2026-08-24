@@ -157,7 +157,15 @@
         list.innerHTML = '';
         admins.forEach(a=>{
           const row = document.createElement('div'); row.className = 'request-item';
-          row.innerHTML = `<strong>${a.username}</strong> <span style="color:var(--muted)">${a.email||''}</span>${a.must_change_password ? ' <span class="hint">('+t('owner_admin_pending_first_login')+')</span>' : ''}`;
+          const statusPill = a.must_change_password
+            ? `<span class="status-pill status-pill-pending">${t('owner_admin_status_pending')}</span>`
+            : `<span class="status-pill status-pill-active">${t('owner_admin_status_active')}</span>`;
+          row.innerHTML = `<strong>${a.username}</strong> <span style="color:var(--muted)">${a.email||''}</span>${statusPill}`;
+          if (a.must_change_password){
+            const hint = document.createElement('div'); hint.className = 'hint'; hint.style.marginTop='4px';
+            hint.textContent = t('owner_admin_pending_first_login');
+            row.appendChild(hint);
+          }
           const actions = document.createElement('div'); actions.style.marginTop='8px';
           const resetBtn = document.createElement('button'); resetBtn.className='secondary'; resetBtn.textContent = t('owner_reset_password_btn');
           resetBtn.addEventListener('click', async ()=>{

@@ -61,10 +61,14 @@ function generateTempPassword(){
 }
 
 // every current admin/owner with an email on file — used to fan out "something needs review"
-// notifications. Admins without an email set (the original bootstrapped account, until the
-// owner sets one) simply don't get emailed, same as before this feature existed.
+// notifications. An admin who hasn't yet logged in and set their own password (still on the
+// owner-issued temp one) is excluded — they're not a confirmed working account yet, so there's
+// no point notifying an inbox nobody's checking through the app. The owner is always included
+// regardless of their own must_change_password state, since they're the one who set everything
+// up. Admins without an email set (the original bootstrapped account, until the owner sets
+// one) simply don't get emailed, same as before this feature existed.
 async function getAdminRecipients(){
-  const rows = await db.prepare("SELECT email FROM users WHERE role IN ('admin','superadmin') AND email IS NOT NULL AND email != ''").all();
+  const rows = await db.prepare("SELECT email FROM users WHERE ((role = 'admin' AND must_change_password = false) OR role = 'superadmin') AND email IS NOT NULL AND email != ''").all();
   return rows.map(r=>r.email);
 }
 

@@ -383,6 +383,13 @@ button.secondary:hover{ background:var(--accent-soft); }
 }
 .notif-badge.hidden{ display:none }
 
+.status-pill{
+	display:inline-flex; align-items:center; padding:2px 9px; border-radius:999px; font-size:11px; font-weight:700;
+	text-transform:uppercase; letter-spacing:0.03em; margin-left:8px; vertical-align:middle;
+}
+.status-pill-active{ background:rgba(88,150,88,0.16); color:#3f7a3f }
+.status-pill-pending{ background:rgba(200,150,60,0.18); color:#96701f }
+
 .relation-item{
 	margin-top:10px; padding:10px 12px; border:1px solid var(--border); border-radius:10px; background:var(--card-alt);
 }

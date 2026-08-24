@@ -1,33 +1,47 @@
-// Minimal Resend wrapper via plain fetch — no SDK dependency, matching this project's existing
-// habit of hand-rolling small integrations (see uploadPhoto, buildSinglePageImagePdf) rather
-// than pulling in a package for a single HTTP call.
-//
-// Until RESEND_API_KEY is set in the environment, every send is a no-op that just logs to the
-// server console — this lets every other piece (owner tier, admin management, deep links,
-// notification trigger points) be built and tested before the API key exists.
-const RESEND_API_KEY = process.env.RESEND_API_KEY;
-const FROM = process.env.RESEND_FROM || 'Nah Adja Mbethe Family Tree <onboarding@resend.dev>';
+// Sends via Gmail SMTP (an app password, not the account password — see GMAIL_APP_PASSWORD
+// below) rather than a transactional provider like Resend. That was the original choice, but
+// Resend's shared sending domain can only deliver to the account owner's own signup email
+// until a custom domain is verified — and every free path to a verifiable domain hit a real
+// wall (FreeDNS was down; eu.org refuses to send its own validation email to a Gmail contact
+// address, which is what this project's owner has). Gmail SMTP has no such restriction and
+// costs nothing, at the cost of a small ongoing risk: Vercel's serverless functions have
+// rotating outbound IPs, and Gmail's abuse detection can occasionally flag a sign-in from an
+// unfamiliar IP, which would silently pause sending until the account owner confirms "was
+// this you?" in their Google account security settings. Worth knowing if notifications ever
+// seem to stop without an obvious cause.
+const nodemailer = require('nodemailer');
+
+const GMAIL_USER = process.env.GMAIL_USER;
+const GMAIL_APP_PASSWORD = process.env.GMAIL_APP_PASSWORD;
+
+let transporter = null;
+function getTransporter(){
+  if (!GMAIL_USER || !GMAIL_APP_PASSWORD) return null;
+  if (!transporter) {
+    transporter = nodemailer.createTransport({
+      service: 'gmail',
+      auth: { user: GMAIL_USER, pass: GMAIL_APP_PASSWORD },
+    });
+  }
+  return transporter;
+}
 
 async function sendEmail({ to, subject, html }) {
   const recipients = (Array.isArray(to) ? to : [to]).filter(Boolean);
   if (!recipients.length) return { skipped: true, reason: 'no recipients' };
-  if (!RESEND_API_KEY) {
-    console.warn('[email] RESEND_API_KEY not set — skipping send:', subject, '->', recipients.join(', '));
-    return { skipped: true, reason: 'no api key' };
+  const t = getTransporter();
+  if (!t) {
+    console.warn('[email] GMAIL_USER/GMAIL_APP_PASSWORD not set — skipping send:', subject, '->', recipients.join(', '));
+    return { skipped: true, reason: 'no credentials' };
   }
   try {
-    const res = await fetch('https://api.resend.com/emails', {
-      method: 'POST',
-      headers: { 'Authorization': `Bearer ${RESEND_API_KEY}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ from: FROM, to: recipients, subject, html }),
+    const info = await t.sendMail({
+      from: `Nah Adja Mbethe Family Tree <${GMAIL_USER}>`,
+      to: recipients.join(', '),
+      subject,
+      html,
     });
-    if (!res.ok) {
-      const body = await res.text().catch(() => '');
-      console.error('[email] send failed', res.status, body);
-      return { ok: false };
-    }
-    const body = await res.json().catch(() => ({}));
-    console.log('[email] sent', body.id || '', '->', recipients.join(', '), '-', subject);
+    console.log('[email] sent', info.messageId || '', '->', recipients.join(', '), '-', subject);
     return { ok: true };
   } catch (err) {
     console.error('[email] send error', err && err.message || err);
