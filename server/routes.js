@@ -1320,10 +1320,15 @@ function parsePhotoPaths(filePath){
   }
 }
 
-async function withPosterInfo(row){
+async function withPosterInfo(row, viewerPersonId){
   const person = row.person_id ? await db.prepare('SELECT full_name FROM people WHERE id = ?').get(row.person_id) : null;
   const out = { ...row, posted_by_name: person ? person.full_name : null, youtube_id: row.type === 'video' ? extractYouTubeId(row.url) : null };
   if (row.type === 'photo') out.file_paths = parsePhotoPaths(row.file_path);
+  const likeCount = await db.prepare('SELECT COUNT(*) AS c FROM archive_likes WHERE archive_id = ?').get(row.id);
+  out.like_count = Number(likeCount && likeCount.c || 0);
+  out.liked_by_me = viewerPersonId ? !!(await db.prepare('SELECT id FROM archive_likes WHERE archive_id = ? AND person_id = ?').get(row.id, viewerPersonId)) : false;
+  const commentCount = await db.prepare('SELECT COUNT(*) AS c FROM archive_comments WHERE archive_id = ?').get(row.id);
+  out.comment_count = Number(commentCount && commentCount.c || 0);
   return out;
 }
 
@@ -1432,7 +1437,58 @@ router.get('/archive', wrap(async (req,res)=>{
   const rows = eventType
     ? await db.prepare("SELECT * FROM archive WHERE type = ? AND approval_status = 'approved' AND event_type = ? ORDER BY created_at DESC").all(type, eventType)
     : await db.prepare("SELECT * FROM archive WHERE type = ? AND approval_status = 'approved' ORDER BY created_at DESC").all(type);
-  res.json(await Promise.all(rows.map(withPosterInfo)));
+  const viewerPersonId = req.session.user.person_id;
+  res.json(await Promise.all(rows.map(r=> withPosterInfo(r, viewerPersonId))));
+}));
+
+// toggle a like on an approved post — no admin approval needed, this is instant. Insert to
+// like, delete to unlike; the UNIQUE(archive_id, person_id) constraint on archive_likes is
+// what makes "like" idempotent per person without needing a boolean column.
+router.post('/archive/:id/like', wrap(async (req,res)=>{
+  if (!requireLoggedInPerson(req,res)) return;
+  const archiveId = req.params.id;
+  const personId = req.session.user.person_id;
+  const post = await db.prepare('SELECT id FROM archive WHERE id = ?').get(archiveId);
+  if (!post) return res.status(404).json({ error: 'not found' });
+  const existing = await db.prepare('SELECT id FROM archive_likes WHERE archive_id = ? AND person_id = ?').get(archiveId, personId);
+  if (existing){
+    await db.prepare('DELETE FROM archive_likes WHERE id = ?').run(existing.id);
+  } else {
+    await db.prepare('INSERT INTO archive_likes (id, archive_id, person_id, created_at) VALUES (?, ?, ?, ?)').run(uuidv4(), archiveId, personId, now());
+  }
+  const count = await db.prepare('SELECT COUNT(*) AS c FROM archive_likes WHERE archive_id = ?').get(archiveId);
+  res.json({ ok:true, liked: !existing, count: Number(count && count.c || 0) });
+}));
+
+router.get('/archive/:id/comments', wrap(async (req,res)=>{
+  if (!requireLoggedInPerson(req,res)) return;
+  const rows = await db.prepare(`SELECT c.id, c.body, c.created_at, c.person_id, p.full_name AS author_name
+    FROM archive_comments c LEFT JOIN people p ON p.id = c.person_id
+    WHERE c.archive_id = ? ORDER BY c.created_at ASC`).all(req.params.id);
+  res.json(rows);
+}));
+
+// no admin approval needed — comments are visible the instant they're posted
+router.post('/archive/:id/comments', express.json(), wrap(async (req,res)=>{
+  if (!requireLoggedInPerson(req,res)) return;
+  const archiveId = req.params.id;
+  const body = ((req.body && req.body.body) || '').trim();
+  if (!body) return res.status(400).json({ error: 'Comment text is required.' });
+  const post = await db.prepare('SELECT id FROM archive WHERE id = ?').get(archiveId);
+  if (!post) return res.status(404).json({ error: 'not found' });
+  const id = uuidv4();
+  await db.prepare('INSERT INTO archive_comments (id, archive_id, person_id, body, created_at) VALUES (?, ?, ?, ?, ?)')
+    .run(id, archiveId, req.session.user.person_id, body, now());
+  const person = await db.prepare('SELECT full_name FROM people WHERE id = ?').get(req.session.user.person_id);
+  res.json({ ok:true, id, created_at: now(), author_name: person ? person.full_name : null });
+}));
+
+// admin: delete a single comment (e.g. inappropriate content) — no notification to the
+// commenter, matches how a post rejection/deletion already works silently
+router.post('/admin/archive/comments/:commentId/delete', wrap(async (req,res)=>{
+  if (!requireAdmin(req,res)) return;
+  await db.prepare('DELETE FROM archive_comments WHERE id = ?').run(req.params.commentId);
+  res.json({ ok:true });
 }));
 
 // admin: list archive submissions by status

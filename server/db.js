@@ -189,6 +189,22 @@ async function ensureSchema() {
         value TEXT
       );
 
+      CREATE TABLE IF NOT EXISTS archive_likes (
+        id TEXT PRIMARY KEY,
+        archive_id TEXT NOT NULL,
+        person_id TEXT NOT NULL,
+        created_at TEXT,
+        UNIQUE(archive_id, person_id)
+      );
+
+      CREATE TABLE IF NOT EXISTS archive_comments (
+        id TEXT PRIMARY KEY,
+        archive_id TEXT NOT NULL,
+        person_id TEXT NOT NULL,
+        body TEXT NOT NULL,
+        created_at TEXT
+      );
+
       ALTER TABLE archive ADD COLUMN IF NOT EXISTS type TEXT DEFAULT 'photo';
       ALTER TABLE archive ADD COLUMN IF NOT EXISTS file_path TEXT;
       ALTER TABLE archive ADD COLUMN IF NOT EXISTS person_id TEXT;

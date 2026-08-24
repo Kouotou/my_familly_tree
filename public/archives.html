@@ -100,6 +100,7 @@
     (function(){
       let currentTab = 'photo';
       let myPersonId = null;
+      let myRole = null;
       let editingItem = null;
       const tabs = { photo: 'tab-photos', audio: 'tab-audios', video: 'tab-videos' };
 
@@ -181,8 +182,131 @@
           editBtn.addEventListener('click', ()=> openEditPostModal(item));
           body.appendChild(editBtn);
         }
+        appendEngagement(body, item);
         card.appendChild(body);
         return card;
+      }
+
+      function heartIconSVG(filled){
+        return `<svg viewBox="0 0 24 24" width="17" height="17" fill="${filled ? 'currentColor' : 'none'}" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 21s-6.7-4.35-9.3-8.1C1 10.1 1.6 6.6 4.6 5.1 7 3.9 9.8 4.7 12 7.3 14.2 4.7 17 3.9 19.4 5.1c3 1.5 3.6 5 1.9 7.8C18.7 16.65 12 21 12 21z"/></svg>`;
+      }
+
+      // custom confirm modal (same pattern as admin.html's showConfirm) — archives.html has
+      // no equivalent yet since only admin-facing actions (deleting a comment) need it here
+      function showConfirm(message){
+        return new Promise(resolve=>{
+          let el = document.getElementById('confirm-modal');
+          if (!el){
+            el = document.createElement('div'); el.id = 'confirm-modal';
+            el.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.4);display:flex;align-items:center;justify-content:center;z-index:200;padding:20px';
+            el.innerHTML = `<div style="background:var(--card);padding:18px;border-radius:10px;max-width:420px;box-shadow:var(--shadow)"><div id="confirm-msg" style="margin-bottom:12px;color:var(--text)"></div><div style="display:flex;gap:8px;justify-content:flex-end"><button id="confirm-no" class="secondary">${t('confirm_no')}</button><button id="confirm-yes">${t('confirm_yes')}</button></div></div>`;
+            document.body.appendChild(el);
+          }
+          el.querySelector('#confirm-msg').textContent = message;
+          el.style.display = 'flex';
+          const onYes = ()=>{ el.style.display='none'; cleanup(); resolve(true); };
+          const onNo = ()=>{ el.style.display='none'; cleanup(); resolve(false); };
+          function cleanup(){ el.querySelector('#confirm-yes').removeEventListener('click', onYes); el.querySelector('#confirm-no').removeEventListener('click', onNo); }
+          el.querySelector('#confirm-yes').addEventListener('click', onYes);
+          el.querySelector('#confirm-no').addEventListener('click', onNo);
+        });
+      }
+
+      // heart-like button + expandable comment thread — neither needs admin approval, only
+      // deleting a comment (admin-only) does. item.like_count/liked_by_me/comment_count come
+      // straight off the GET /archive row (server/routes.js withPosterInfo()).
+      function appendEngagement(body, item){
+        const row = document.createElement('div'); row.className = 'archive-engage-row';
+        const likeBtn = document.createElement('button'); likeBtn.type = 'button';
+        likeBtn.className = 'archive-like-btn' + (item.liked_by_me ? ' liked' : '');
+        likeBtn.setAttribute('aria-label', t('archives_like'));
+        likeBtn.innerHTML = heartIconSVG(item.liked_by_me) + `<span>${item.like_count || 0}</span>`;
+        likeBtn.addEventListener('click', async ()=>{
+          likeBtn.disabled = true;
+          try{
+            const res = await fetch('/api/archive/' + item.id + '/like', { method:'POST', credentials:'same-origin' });
+            const j = await res.json();
+            if (j.ok){
+              if (j.liked) track('archive_like');
+              item.liked_by_me = j.liked; item.like_count = j.count;
+              likeBtn.classList.toggle('liked', j.liked);
+              likeBtn.innerHTML = heartIconSVG(j.liked) + `<span>${j.count}</span>`;
+            }
+          }catch(e){}
+          likeBtn.disabled = false;
+        });
+        row.appendChild(likeBtn);
+
+        const commentsToggle = document.createElement('button'); commentsToggle.type = 'button'; commentsToggle.className = 'archive-comments-toggle';
+        const setToggleLabel = ()=>{ commentsToggle.textContent = t('archives_comments_count', { count: item.comment_count || 0 }); };
+        setToggleLabel();
+        row.appendChild(commentsToggle);
+        body.appendChild(row);
+
+        const section = document.createElement('div'); section.className = 'archive-comments-section hidden';
+        const list = document.createElement('div'); list.className = 'archive-comments-list';
+        section.appendChild(list);
+        const form = document.createElement('form'); form.className = 'archive-comment-form';
+        const input = document.createElement('input'); input.type = 'text'; input.placeholder = t('archives_comment_placeholder'); input.required = true;
+        const submitBtn = document.createElement('button'); submitBtn.type = 'submit'; submitBtn.textContent = t('archives_comment_submit');
+        form.appendChild(input); form.appendChild(submitBtn);
+        section.appendChild(form);
+        body.appendChild(section);
+
+        async function renderComments(){
+          let comments = [];
+          try{ comments = await api('/archive/' + item.id + '/comments'); }catch(e){ comments = []; }
+          list.innerHTML = '';
+          comments.forEach(c=>{
+            const crow = document.createElement('div'); crow.className = 'archive-comment-row';
+            const author = document.createElement('span'); author.className = 'archive-comment-author'; author.textContent = (c.author_name || '?') + ':';
+            const text = document.createElement('span'); text.className = 'archive-comment-body'; text.textContent = c.body;
+            crow.appendChild(author); crow.appendChild(text);
+            if (myRole && myRole !== 'member'){
+              const delBtn = document.createElement('button'); delBtn.type = 'button'; delBtn.className = 'archive-comment-delete';
+              delBtn.textContent = '×'; delBtn.setAttribute('aria-label', t('archives_comment_delete'));
+              delBtn.addEventListener('click', async ()=>{
+                if (!await showConfirm(t('confirm_delete_comment'))) return;
+                await fetch('/api/admin/archive/comments/' + c.id + '/delete', { method:'POST', credentials:'same-origin' });
+                item.comment_count = Math.max(0, (item.comment_count || 1) - 1);
+                setToggleLabel();
+                renderComments();
+              });
+              crow.appendChild(delBtn);
+            }
+            list.appendChild(crow);
+          });
+        }
+
+        let loaded = false;
+        commentsToggle.addEventListener('click', async ()=>{
+          const willShow = section.classList.contains('hidden');
+          section.classList.toggle('hidden', !willShow);
+          if (willShow && !loaded){ loaded = true; await renderComments(); }
+        });
+
+        form.addEventListener('submit', async (e)=>{
+          e.preventDefault();
+          const text = input.value.trim();
+          if (!text) return;
+          submitBtn.disabled = true;
+          try{
+            const res = await fetch('/api/archive/' + item.id + '/comments', {
+              method:'POST', headers:{'Content-Type':'application/json'}, credentials:'same-origin',
+              body: JSON.stringify({ body: text }),
+            });
+            const j = await res.json();
+            if (j.ok){
+              track('archive_comment');
+              input.value = '';
+              item.comment_count = (item.comment_count || 0) + 1;
+              setToggleLabel();
+              loaded = true;
+              await renderComments();
+            }
+          }catch(e){}
+          submitBtn.disabled = false;
+        });
       }
 
       async function loadTab(type){
@@ -320,6 +444,7 @@
           if (!res.ok){ window.location.href = '/'; return; }
           const me = await res.json();
           myPersonId = me.person ? me.person.id : null;
+          myRole = me.user ? me.user.role : null;
         }catch(e){}
         loadTab('photo');
       })();
