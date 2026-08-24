@@ -130,9 +130,14 @@ async function getSpouseIds(dbLike, personId){
 // person's unique login id (assigned at registration, or by an admin for accounts they
 // create directly).
 async function handleLogin(req, res){
-  const { username, password } = req.body || {};
+  const username = ((req.body && req.body.username) || '').trim();
+  const password = ((req.body && req.body.password) || '').trim();
   if (!username || !password) return res.status(400).json({ error: 'username and password are required' });
-  const user = await db.prepare('SELECT * FROM users WHERE username = ?').get(username);
+  // TRIM() on both sides of the match: a stray leading/trailing space typed or pasted into a
+  // username at creation time (there was no trimming there either, now fixed, but this covers
+  // any row that predates that fix) would otherwise silently make login impossible — the
+  // stored username looks identical to the eye but never matches what anyone actually types.
+  const user = await db.prepare('SELECT * FROM users WHERE TRIM(username) = TRIM(?)').get(username);
   if (!user) return res.status(401).json({ error: 'invalid' });
   const ok = bcrypt.compareSync(password, user.password_hash);
   if (!ok) return res.status(401).json({ error: 'invalid' });
@@ -147,9 +152,10 @@ router.post('/auth/admin-login', wrap(handleLogin));
 // whose account isn't role 'superadmin', even with a fully valid password, so this page can't
 // be used as a second way into a plain admin account
 router.post('/auth/owner-login', express.json(), wrap(async (req,res)=>{
-  const { username, password } = req.body || {};
+  const username = ((req.body && req.body.username) || '').trim();
+  const password = ((req.body && req.body.password) || '').trim();
   if (!username || !password) return res.status(400).json({ error: 'username and password are required' });
-  const user = await db.prepare('SELECT * FROM users WHERE username = ?').get(username);
+  const user = await db.prepare('SELECT * FROM users WHERE TRIM(username) = TRIM(?)').get(username);
   if (!user || user.role !== 'superadmin' || !bcrypt.compareSync(password, user.password_hash)) {
     return res.status(401).json({ error: 'invalid' });
   }
@@ -826,15 +832,25 @@ router.get('/admin/people/:id/parents', wrap(async (req,res)=>{
 
 // --- owner-only: manage family-level administrators ---
 
+// a visually distinct, monospace block for a username/password so it's unambiguous to select
+// and copy in an email client — plain "label: **value**" text sitting inline with a sentence
+// is exactly what led to a real failed login (a stray space picked up when manually
+// retyping instead of copy-pasting was the likely cause; this doesn't eliminate that risk but
+// makes the boundary of what to copy much clearer, and says so explicitly)
+function credentialBlockHtml(username, tempPassword){
+  const row = (label, value) => `<div style="margin-bottom:6px"><span style="color:#666">${label}:</span> <code style="background:#f3f1ea;padding:2px 8px;border-radius:4px;font-family:monospace;font-size:15px">${value}</code></div>`;
+  return `<div style="border:1px solid #ddd;border-radius:8px;padding:14px;margin:12px 0">${row('Username', username)}${row('Temporary password', tempPassword)}</div><p style="color:#666;font-size:13px">Copy and paste these rather than typing them by hand — easy to mistype otherwise.</p>`;
+}
+
 async function resetAdminPasswordAndNotify(dbLike, userId){
   const tempPassword = generateTempPassword();
   await dbLike.prepare('UPDATE users SET password_hash = ?, must_change_password = ? WHERE id = ?').run(bcrypt.hashSync(tempPassword, 10), true, userId);
-  const user = await dbLike.prepare('SELECT email FROM users WHERE id = ?').get(userId);
+  const user = await dbLike.prepare('SELECT username, email FROM users WHERE id = ?').get(userId);
   if (user && user.email){
     await sendEmail({
       to: user.email,
       subject: '[Nah Adja Mbethe] Your administrator password has been reset',
-      html: `<p>Your password has been reset by the platform owner.</p><p>Temporary password: <strong>${tempPassword}</strong></p><p>You'll be asked to set a new password when you next log in.</p>`,
+      html: `<p>Your password has been reset by the platform owner.</p>${credentialBlockHtml(user.username, tempPassword)}<p>You'll be asked to set a new password when you next log in.</p>`,
     }).catch(()=>{});
   }
 }
@@ -870,7 +886,8 @@ router.post('/owner/username', express.json(), wrap(async (req,res)=>{
 
 router.post('/owner/admins/create', express.json(), wrap(async (req,res)=>{
   if (!requireOwner(req,res)) return;
-  const { username, email } = req.body || {};
+  const username = ((req.body && req.body.username) || '').trim();
+  const email = ((req.body && req.body.email) || '').trim();
   if (!username || !email) return res.status(400).json({ error: 'Username and email are required.' });
   if (await isUsernameTaken(username)) return res.status(409).json({ error: 'That username is already taken.' });
   const tempPassword = generateTempPassword();
@@ -881,7 +898,7 @@ router.post('/owner/admins/create', express.json(), wrap(async (req,res)=>{
   await sendEmail({
     to: email,
     subject: '[Nah Adja Mbethe] You have been added as an administrator',
-    html: `<p>You've been added as an administrator for the Nah Adja Mbethe family tree.</p><p>Username: <strong>${username}</strong><br>Temporary password: <strong>${tempPassword}</strong></p><p>You'll be asked to set a new password the first time you log in.</p><p><a href="${link}">Log in</a></p>`,
+    html: `<p>You've been added as an administrator for the Nah Adja Mbethe family tree.</p>${credentialBlockHtml(username, tempPassword)}<p>You'll be asked to set a new password the first time you log in.</p><p><a href="${link}">Log in</a></p>`,
   }).catch(()=>{});
   res.json({ ok:true, id });
 }));
