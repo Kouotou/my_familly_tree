@@ -62,6 +62,10 @@
       </div>
     </div>
 
+    <div id="mustChangeNotice" class="hidden" style="padding:14px;background:var(--card);border:1px solid var(--accent-2);border-radius:10px;margin-bottom:16px">
+      <strong data-i18n="must_change_password_notice">You must set a new password before continuing.</strong>
+    </div>
+
     <!-- Change my own password (also used by admin accounts, which have no linked profile) -->
     <div id="admin-change-password-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.4);align-items:center;justify-content:center;z-index:60">
       <div style="background:var(--card);padding:18px;border-radius:10px;max-width:420px;margin:48px auto;box-shadow:var(--shadow);">
@@ -385,7 +389,7 @@
       if (tr) tr.classList.toggle('active', s==='rejected');
     }
     function renderArchiveCard(item){
-      const container = document.createElement('div'); container.className = 'request-item';
+      const container = document.createElement('div'); container.className = 'request-item'; container.dataset.archiveId = item.id;
       const header = document.createElement('div'); header.style.display='flex'; header.style.justifyContent='space-between'; header.style.alignItems='center';
       const title = item.posted_by_name ? t('admin_archive_field_posted_by') + ': ' + item.posted_by_name : t('req_unknown_person');
       header.innerHTML = `<strong>${title}</strong><div style="font-size:12px;color:var(--muted)">${t('admin_archive_field_type')}: ${item.type} — ${new Date(item.created_at).toLocaleString()}</div>`;
@@ -795,8 +799,10 @@
     const acpForm = document.getElementById('admin-change-password-form');
     const acpFeedback = document.getElementById('admin-change-password-feedback');
     if (acpBtn) acpBtn.addEventListener('click', ()=>{ acpForm.reset(); acpFeedback.textContent=''; acpModal.style.display='flex'; });
-    if (acpClose) acpClose.addEventListener('click', ()=> acpModal.style.display='none');
-    if (acpModal) acpModal.addEventListener('click', (e)=>{ if (e.target===acpModal) acpModal.style.display='none'; });
+    // while a password change is mandatory (mustChangeNotice visible), the modal can't be
+    // dismissed without completing it — see checkMustChangePassword() below
+    if (acpClose) acpClose.addEventListener('click', ()=>{ if (!document.getElementById('mustChangeNotice').classList.contains('hidden')) return; acpModal.style.display='none'; });
+    if (acpModal) acpModal.addEventListener('click', (e)=>{ if (e.target===acpModal && document.getElementById('mustChangeNotice').classList.contains('hidden')) acpModal.style.display='none'; });
     if (acpForm) acpForm.addEventListener('submit', async (e)=>{
       e.preventDefault();
       const current = document.getElementById('acp-current').value;
@@ -807,14 +813,54 @@
       try{
         const res = await fetch('/api/member/password', { method:'POST', headers:{'Content-Type':'application/json'}, credentials:'same-origin', body: JSON.stringify({ current_password: current, new_password: nextPwd }) });
         const j = await res.json();
-        if (j.ok){ acpFeedback.textContent = t('ep_password_changed'); acpForm.reset(); }
+        if (j.ok){
+          acpFeedback.textContent = t('ep_password_changed'); acpForm.reset();
+          document.getElementById('mustChangeNotice').classList.add('hidden');
+          setTimeout(()=>{ acpModal.style.display='none'; }, 800);
+        }
         else acpFeedback.textContent = j.error || t('ep_error_generic');
       }catch(err){ acpFeedback.textContent = t('network_error'); }
     });
 
+    // force a password change before anything else is usable, for an admin whose account
+    // still carries a temp/must-change password (new admin's first login, or right after the
+    // owner reset it)
+    async function checkMustChangePassword(){
+      try{
+        const me = await api('/auth/me');
+        if (me.user && me.user.mustChangePassword){
+          document.getElementById('mustChangeNotice').classList.remove('hidden');
+          acpForm.reset(); acpFeedback.textContent=''; acpModal.style.display='flex';
+        }
+      }catch(e){}
+    }
+
+    // arriving from an email notification's deep link — switch to Pending and highlight the
+    // specific request/archive post once it's rendered. If it's already been resolved by
+    // someone else by the time this link is clicked, this just quietly finds nothing.
+    function highlightFromQuery(){
+      const params = new URLSearchParams(location.search);
+      const highlight = params.get('highlight');
+      const archiveHighlight = params.get('archiveHighlight');
+      if (!highlight && !archiveHighlight) return;
+      setTimeout(()=>{
+        let target = null;
+        if (archiveHighlight){
+          target = document.querySelector('#archiveRequestsArea [data-archive-id="'+archiveHighlight+'"]');
+        } else if (highlight){
+          // regular request cards don't carry the id in a data attribute, so match by the id
+          // text that's already rendered inline (each card shows "ID: <id>")
+          target = Array.from(document.querySelectorAll('#requestsArea .request-item')).find(el=> el.textContent.includes(highlight));
+        }
+        if (target){ target.style.outline = '3px solid var(--accent-2)'; target.scrollIntoView({ behavior:'smooth', block:'center' }); }
+      }, 900);
+    }
+
     // initial load
+    checkMustChangePassword();
     loadRequests();
-    
+    highlightFromQuery();
+
     // custom confirm modal
     function showConfirm(message){
       return new Promise(resolve=>{

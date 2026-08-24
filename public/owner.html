@@ -1,0 +1,230 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Owner Platform</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="topbar-left">
+      <button type="button" id="page-back-btn" class="page-back-btn" aria-label="Back">‹</button>
+      <h1 data-i18n="owner_brand">Famille Nah Adja Mbethe — Owner</h1>
+    </div>
+    <div class="toggles">
+      <button id="lang-toggle">FR/EN</button>
+      <button id="theme-toggle">Light/Dark</button>
+    </div>
+  </header>
+  <script src="/app.js"></script>
+  <main style="max-width:900px;margin:24px auto;padding:12px">
+    <div id="mustChangeNotice" class="hidden" style="padding:14px;background:var(--card);border:1px solid var(--accent-2);border-radius:10px;margin-bottom:16px">
+      <strong data-i18n="must_change_password_notice">You must set a new password before continuing.</strong>
+    </div>
+
+    <div style="padding:16px;background:var(--card);border-radius:10px;box-shadow:var(--shadow);margin-bottom:20px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px">
+      <div>
+        <h3 style="margin:0" data-i18n="owner_admin_dashboard_heading">Family requests &amp; the tree</h3>
+        <p style="color:var(--muted);margin:4px 0 0;font-size:13px" data-i18n="owner_admin_dashboard_desc">Approve/reject requests, manage the root profile, and everything else an administrator can do.</p>
+      </div>
+      <a href="/admin.html" class="secondary-link" style="white-space:nowrap" data-i18n="owner_go_to_admin_btn">Go to Admin Dashboard →</a>
+    </div>
+
+    <div style="padding:16px;background:var(--card);border-radius:10px;box-shadow:var(--shadow);margin-bottom:20px">
+      <h3 style="margin-top:0" data-i18n="owner_admins_heading">Administrators</h3>
+      <div id="adminsList">Loading...</div>
+      <h4 style="margin-bottom:8px" data-i18n="owner_add_admin_heading">Add a new administrator</h4>
+      <form id="add-admin-form" style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end">
+        <label style="flex:1;min-width:160px" data-i18n="owner_admin_username_label">Username<input name="username" required /></label>
+        <label style="flex:1;min-width:200px" data-i18n="owner_admin_email_label">Email<input name="email" type="email" required /></label>
+        <button type="submit" data-i18n="owner_add_admin_btn">Add administrator</button>
+      </form>
+      <div id="add-admin-feedback" class="hint"></div>
+    </div>
+
+    <div style="padding:16px;background:var(--card);border-radius:10px;box-shadow:var(--shadow);margin-bottom:20px">
+      <h3 style="margin-top:0" data-i18n="owner_password_resets_heading">Administrator password reset requests<span id="reset-badge" class="notif-badge hidden">0</span></h3>
+      <div id="resetRequestsList">Loading...</div>
+    </div>
+
+    <div style="padding:16px;background:var(--card);border-radius:10px;box-shadow:var(--shadow)">
+      <button id="owner-change-password-btn" class="secondary" data-i18n="ep_change_password_title">Change password</button>
+      <button id="owner-logout" data-i18n="admin_logout_btn">Logout</button>
+    </div>
+
+    <!-- change my own password -->
+    <div id="owner-change-password-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.4);align-items:center;justify-content:center;z-index:60">
+      <div style="background:var(--card);padding:18px;border-radius:10px;max-width:420px;margin:48px auto;box-shadow:var(--shadow);">
+        <button id="owner-change-password-close" aria-label="Close" style="float:right">&times;</button>
+        <h3 data-i18n="ep_change_password_title">Change password</h3>
+        <form id="owner-change-password-form">
+          <label data-i18n="ep_current_password">Current password<input type="password" id="ocp-current" required /></label>
+          <label data-i18n="ep_new_password">New password<input type="password" id="ocp-new" required /></label>
+          <label data-i18n="ep_confirm_password">Confirm new password<input type="password" id="ocp-confirm" required /></label>
+          <button type="submit" data-i18n="ep_change_password_btn">Change password</button>
+        </form>
+        <div id="owner-change-password-feedback" class="hint"></div>
+      </div>
+    </div>
+
+    <!-- shared confirm modal -->
+    <div id="confirm-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.4);align-items:center;justify-content:center;z-index:70">
+      <div style="background:var(--card);padding:18px;border-radius:10px;max-width:420px;box-shadow:var(--shadow)">
+        <div id="confirm-msg" style="margin-bottom:12px"></div>
+        <div style="display:flex;gap:8px;justify-content:flex-end">
+          <button id="confirm-no" class="secondary" data-i18n="confirm_no">No</button>
+          <button id="confirm-yes" data-i18n="confirm_yes">Yes</button>
+        </div>
+      </div>
+    </div>
+  </main>
+  <script>
+    document.addEventListener('DOMContentLoaded', ()=>{
+    async function api(path, opts={}){ const merged = Object.assign({}, opts, { credentials: 'same-origin' }); const res = await fetch('/api'+path, merged); const ct = res.headers.get('content-type')||''; if (ct.includes('application/json')) return res.json(); return res.text(); }
+
+    function showConfirm(message){
+      return new Promise(resolve=>{
+        const el = document.getElementById('confirm-modal');
+        el.querySelector('#confirm-msg').textContent = message;
+        el.style.display = 'flex';
+        const onYes = ()=>{ el.style.display='none'; el.querySelector('#confirm-yes').removeEventListener('click', onYes); el.querySelector('#confirm-no').removeEventListener('click', onNo); resolve(true); };
+        const onNo = ()=>{ el.style.display='none'; el.querySelector('#confirm-yes').removeEventListener('click', onYes); el.querySelector('#confirm-no').removeEventListener('click', onNo); resolve(false); };
+        el.querySelector('#confirm-yes').addEventListener('click', onYes);
+        el.querySelector('#confirm-no').addEventListener('click', onNo);
+      });
+    }
+
+    // force a password change before anything else is usable, if the owner's own account
+    // still has a temp/must-change password set (e.g. right after the platform was first set up)
+    async function checkMustChangePassword(){
+      try{
+        const me = await api('/auth/me');
+        if (me.user && me.user.mustChangePassword){
+          document.getElementById('mustChangeNotice').classList.remove('hidden');
+          document.getElementById('owner-change-password-modal').style.display = 'flex';
+        }
+      }catch(e){}
+    }
+
+    async function loadAdmins(){
+      const list = document.getElementById('adminsList');
+      list.textContent = t('loading') || 'Loading...';
+      try{
+        const admins = await api('/owner/admins');
+        if (!Array.isArray(admins) || !admins.length){ list.innerHTML = `<div class="hint">${t('owner_no_admins')}</div>`; return; }
+        list.innerHTML = '';
+        admins.forEach(a=>{
+          const row = document.createElement('div'); row.className = 'request-item';
+          row.innerHTML = `<strong>${a.username}</strong> <span style="color:var(--muted)">${a.email||''}</span>${a.must_change_password ? ' <span class="hint">('+t('owner_admin_pending_first_login')+')</span>' : ''}`;
+          const actions = document.createElement('div'); actions.style.marginTop='8px';
+          const resetBtn = document.createElement('button'); resetBtn.className='secondary'; resetBtn.textContent = t('owner_reset_password_btn');
+          resetBtn.addEventListener('click', async ()=>{
+            if (!await showConfirm(t('owner_reset_password_confirm', {name: a.username}))) return;
+            const res = await api('/owner/admins/' + a.id + '/reset-password', { method:'POST' });
+            if (res.ok) { alert(t('owner_reset_password_done')); await loadAdmins(); }
+            else alert(t('alert_error_prefix', {msg: JSON.stringify(res)}));
+          });
+          const removeBtn = document.createElement('button'); removeBtn.className='secondary'; removeBtn.style.marginLeft='8px'; removeBtn.textContent = t('owner_remove_admin_btn');
+          removeBtn.addEventListener('click', async ()=>{
+            if (!await showConfirm(t('owner_remove_admin_confirm', {name: a.username}))) return;
+            const res = await api('/owner/admins/' + a.id + '/delete', { method:'POST' });
+            if (res.ok) await loadAdmins();
+            else alert(t('alert_error_prefix', {msg: JSON.stringify(res)}));
+          });
+          actions.appendChild(resetBtn); actions.appendChild(removeBtn);
+          row.appendChild(actions);
+          list.appendChild(row);
+        });
+      }catch(e){ list.innerHTML = t('error_loading'); }
+    }
+
+    async function loadResetRequests(){
+      const list = document.getElementById('resetRequestsList');
+      const badge = document.getElementById('reset-badge');
+      list.textContent = t('loading') || 'Loading...';
+      try{
+        const rows = await api('/owner/password-reset-requests');
+        if (!Array.isArray(rows) || !rows.length){
+          list.innerHTML = `<div class="hint">${t('owner_no_reset_requests')}</div>`;
+          badge.classList.add('hidden');
+          return;
+        }
+        badge.textContent = String(rows.length);
+        badge.classList.remove('hidden');
+        list.innerHTML = '';
+        rows.forEach(r=>{
+          const row = document.createElement('div'); row.className = 'request-item'; row.dataset.requestId = r.id;
+          row.innerHTML = `<strong>${r.payload.username}</strong> <span style="color:var(--muted)">${new Date(r.created_at).toLocaleString()}</span>`;
+          const btn = document.createElement('button'); btn.style.marginTop='8px'; btn.textContent = t('owner_resolve_reset_btn');
+          btn.addEventListener('click', async ()=>{
+            if (!await showConfirm(t('owner_resolve_reset_confirm', {name: r.payload.username}))) return;
+            const res = await api('/owner/password-reset-requests/' + r.id + '/resolve', { method:'POST' });
+            if (res.ok) { alert(t('owner_reset_password_done')); await loadResetRequests(); }
+            else alert(t('alert_error_prefix', {msg: JSON.stringify(res)}));
+          });
+          row.appendChild(btn);
+          list.appendChild(row);
+        });
+      }catch(e){ list.innerHTML = t('error_loading'); }
+    }
+
+    const addAdminForm = document.getElementById('add-admin-form');
+    addAdminForm.addEventListener('submit', async (e)=>{
+      e.preventDefault();
+      const f = e.target;
+      const feedback = document.getElementById('add-admin-feedback');
+      feedback.textContent = '';
+      const res = await api('/owner/admins/create', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ username: f.username.value, email: f.email.value }) });
+      if (res.ok){ feedback.textContent = t('owner_add_admin_done'); f.reset(); await loadAdmins(); }
+      else feedback.textContent = res.error || t('ep_error_generic');
+    });
+
+    // highlight a specific pending reset request when arriving from an email deep link
+    (function highlightFromQuery(){
+      const params = new URLSearchParams(location.search);
+      const highlight = params.get('highlight');
+      if (!highlight) return;
+      setTimeout(()=>{
+        const el = document.querySelector('[data-request-id="'+highlight+'"]');
+        if (el){ el.style.outline = '3px solid var(--accent-2)'; el.scrollIntoView({ behavior:'smooth', block:'center' }); }
+      }, 800);
+    })();
+
+    const ocpModal = document.getElementById('owner-change-password-modal');
+    const ocpBtn = document.getElementById('owner-change-password-btn');
+    const ocpClose = document.getElementById('owner-change-password-close');
+    const ocpForm = document.getElementById('owner-change-password-form');
+    const ocpFeedback = document.getElementById('owner-change-password-feedback');
+    if (ocpBtn) ocpBtn.addEventListener('click', ()=>{ ocpForm.reset(); ocpFeedback.textContent=''; ocpModal.style.display='flex'; });
+    if (ocpClose) ocpClose.addEventListener('click', ()=>{ if (!document.getElementById('mustChangeNotice').classList.contains('hidden')) return; ocpModal.style.display='none'; });
+    if (ocpForm) ocpForm.addEventListener('submit', async (e)=>{
+      e.preventDefault();
+      const current = document.getElementById('ocp-current').value;
+      const nextPwd = document.getElementById('ocp-new').value;
+      const confirmPwd = document.getElementById('ocp-confirm').value;
+      if (nextPwd !== confirmPwd){ ocpFeedback.textContent = t('ep_password_mismatch'); return; }
+      ocpFeedback.textContent = t('ep_password_updating');
+      try{
+        const res = await fetch('/api/member/password', { method:'POST', headers:{'Content-Type':'application/json'}, credentials:'same-origin', body: JSON.stringify({ current_password: current, new_password: nextPwd }) });
+        const j = await res.json();
+        if (j.ok){
+          ocpFeedback.textContent = t('ep_password_changed');
+          ocpForm.reset();
+          document.getElementById('mustChangeNotice').classList.add('hidden');
+          setTimeout(()=>{ ocpModal.style.display='none'; }, 800);
+        }
+        else ocpFeedback.textContent = j.error || t('ep_error_generic');
+      }catch(err){ ocpFeedback.textContent = t('network_error'); }
+    });
+
+    const logoutBtn = document.getElementById('owner-logout');
+    if (logoutBtn) logoutBtn.addEventListener('click', async ()=>{ await api('/auth/logout',{method:'POST'}); window.location.href='/'; });
+
+    checkMustChangePassword();
+    loadAdmins();
+    loadResetRequests();
+    });
+  </script>
+</body>
+</html>

@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Owner Login</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="topbar-left">
+      <button type="button" id="page-back-btn" class="page-back-btn" aria-label="Back">‹</button>
+      <h1 data-i18n="brand">Famille Nah Adja Mbethe</h1>
+    </div>
+  </header>
+  <main class="center-card" style="max-width:420px">
+    <h2 id="owner-login-title" data-i18n="owner_login_title">Platform Owner Login</h2>
+    <label id="label-username" data-i18n="login_username_label">Username<input id="ownerUser" /></label>
+    <label id="label-password" data-i18n="login_password_label">Password<input id="ownerPwd" type="password" /></label>
+    <div style="display:flex;gap:10px;margin-top:16px;align-items:center">
+      <button id="ownerLoginBtn" data-i18n="admin_login_btn">Login</button>
+      <a href="/admin-login.html" class="secondary-link" data-i18n="back">Back</a>
+    </div>
+    <div id="ownerFeedback" class="hint"></div>
+  </main>
+  <script src="/app.js"></script>
+  <script>
+    async function api(path, opts={}){ const merged = Object.assign({}, opts, { credentials: 'same-origin' }); const res = await fetch('/api'+path, merged); const ct = res.headers.get('content-type')||''; if (ct.includes('application/json')) return res.json(); return res.text(); }
+    document.getElementById('ownerLoginBtn').addEventListener('click', async ()=>{
+      const u = document.getElementById('ownerUser').value;
+      const p = document.getElementById('ownerPwd').value;
+      const f = document.getElementById('ownerFeedback');
+      try{
+        const r = await api('/auth/owner-login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username:u,password:p})});
+        if (r.ok) { window.location.href = '/owner.html'; }
+        else f.textContent = typeof t === 'function' ? t('owner_login_failed') : 'Invalid owner credentials';
+      }catch(e){ f.textContent = typeof t === 'function' ? t('network_error') : 'Network error'; }
+    });
+  </script>
+</body>
+</html>

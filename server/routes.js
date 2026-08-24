@@ -7,6 +7,7 @@ const multer = require('multer');
 const path = require('path');
 const { put } = require('@vercel/blob');
 const { handleUpload } = require('@vercel/blob/client');
+const { sendEmail } = require('./email');
 
 // 4MB backstop for server-routed uploads (photos) — comfortably under Vercel's 4.5MB
 // serverless request-body ceiling. Archive audio bypasses this entirely via client-direct
@@ -42,6 +43,40 @@ function requireAdmin(req,res){
   if (!req.session.user){ res.status(401).json({error:'not logged in'}); return false; }
   if (!req.session.user.role || req.session.user.role==='member'){ res.status(403).json({error:'forbidden'}); return false; }
   return true;
+}
+
+// the platform owner — the original bootstrapped account (role 'superadmin', created by
+// server/seed.js) plus, conceptually, whoever else that account promotes to the role in the
+// future. Stricter than requireAdmin: family-level admins (role 'admin') pass requireAdmin
+// but not this — owner-only actions are adding/managing admins and resolving their locked-out
+// password-reset requests.
+function requireOwner(req,res){
+  if (!req.session.user){ res.status(401).json({error:'not logged in'}); return false; }
+  if (req.session.user.role !== 'superadmin'){ res.status(403).json({error:'forbidden'}); return false; }
+  return true;
+}
+
+function generateTempPassword(){
+  return Math.random().toString(36).slice(-10) + Math.random().toString(36).slice(-2).toUpperCase();
+}
+
+// every current admin/owner with an email on file — used to fan out "something needs review"
+// notifications. Admins without an email set (the original bootstrapped account, until the
+// owner sets one) simply don't get emailed, same as before this feature existed.
+async function getAdminRecipients(){
+  const rows = await db.prepare("SELECT email FROM users WHERE role IN ('admin','superadmin') AND email IS NOT NULL AND email != ''").all();
+  return rows.map(r=>r.email);
+}
+
+// fire-and-forget notification for a newly-pending request/archive post — never allowed to
+// break the request that triggered it, so every failure is swallowed after logging
+async function notifyAdmins(req, { subject, bodyHtml, highlightParam, highlightId }){
+  try{
+    const recipients = await getAdminRecipients();
+    if (!recipients.length) return;
+    const link = `${req.protocol}://${req.get('host')}/admin.html?${highlightParam}=${encodeURIComponent(highlightId)}`;
+    await sendEmail({ to: recipients, subject: `[Nah Adja Mbethe] ${subject}`, html: `${bodyHtml}<p><a href="${link}">Review and respond</a></p>` });
+  }catch(e){ console.error('[notify] failed', e && e.message || e); }
 }
 
 // any logged-in account with a linked profile (i.e. a real person, not a bare admin login)
@@ -97,12 +132,52 @@ async function handleLogin(req, res){
   if (!user) return res.status(401).json({ error: 'invalid' });
   const ok = bcrypt.compareSync(password, user.password_hash);
   if (!ok) return res.status(401).json({ error: 'invalid' });
-  req.session.user = { id: user.id, role: user.role, person_id: user.person_id };
-  return res.json({ ok:true, role: user.role, person_id: user.person_id });
+  req.session.user = { id: user.id, role: user.role, person_id: user.person_id, email: user.email || null, mustChangePassword: !!user.must_change_password };
+  return res.json({ ok:true, role: user.role, person_id: user.person_id, mustChangePassword: !!user.must_change_password });
 }
 router.post('/auth/login', wrap(handleLogin));
 // kept as an alias so the existing admin-login page keeps working unchanged
 router.post('/auth/admin-login', wrap(handleLogin));
+
+// the owner-only login surface — same credential check as handleLogin, but rejects anyone
+// whose account isn't role 'superadmin', even with a fully valid password, so this page can't
+// be used as a second way into a plain admin account
+router.post('/auth/owner-login', express.json(), wrap(async (req,res)=>{
+  const { username, password } = req.body || {};
+  if (!username || !password) return res.status(400).json({ error: 'username and password are required' });
+  const user = await db.prepare('SELECT * FROM users WHERE username = ?').get(username);
+  if (!user || user.role !== 'superadmin' || !bcrypt.compareSync(password, user.password_hash)) {
+    return res.status(401).json({ error: 'invalid' });
+  }
+  req.session.user = { id: user.id, role: user.role, person_id: user.person_id, email: user.email || null, mustChangePassword: !!user.must_change_password };
+  res.json({ ok:true, mustChangePassword: !!user.must_change_password });
+}));
+
+// admins request a password reset when locked out (don't know their current password, so the
+// existing self-service change-password flow doesn't help) — creates a pending request the
+// owner resolves from owner.html. Always responds the same way regardless of whether the
+// username exists/is an admin, so this can't be used to enumerate accounts.
+router.post('/auth/admin-password-reset-request', express.json(), wrap(async (req,res)=>{
+  const username = ((req.body && req.body.username) || '').trim();
+  if (!username) return res.status(400).json({ error: 'Username is required.' });
+  const user = await db.prepare("SELECT id FROM users WHERE username = ? AND role IN ('admin','superadmin')").get(username);
+  if (user){
+    const id = uuidv4();
+    const payload = { type: 'admin_password_reset', username, user_id: user.id };
+    await db.prepare('INSERT INTO requests (id, type, payload, status, created_by, created_at) VALUES (?, ?, ?, ?, ?, ?)')
+      .run(id, 'admin_password_reset', JSON.stringify(payload), 'pending', 'self-service', now());
+    const owners = await db.prepare("SELECT email FROM users WHERE role = 'superadmin' AND email IS NOT NULL AND email != ''").all();
+    if (owners.length){
+      const link = `${req.protocol}://${req.get('host')}/owner.html?highlight=${encodeURIComponent(id)}`;
+      await sendEmail({
+        to: owners.map(o=>o.email),
+        subject: '[Nah Adja Mbethe] Administrator password reset requested',
+        html: `<p><strong>${username}</strong> is locked out and has requested a password reset.</p><p><a href="${link}">Review and resolve</a></p>`,
+      }).catch(()=>{});
+    }
+  }
+  res.json({ ok: true });
+}));
 
 router.post('/auth/logout',(req,res)=>{ req.session.destroy(()=>res.json({ok:true})); });
 
@@ -250,6 +325,14 @@ router.post('/auth/register', upload.fields([
   const id = uuidv4();
   await db.prepare('INSERT INTO requests (id, type, payload, status, created_by, created_at) VALUES (?, ?, ?, ?, ?, ?)').run(id, 'create_person', JSON.stringify(payload), 'pending', 'self-register', now());
   res.json({ ok:true, id });
+  // respond first, notify after — but still inside this same async handler (not truly
+  // detached) since a Vercel serverless invocation can be torn down the moment the response
+  // is sent, which would silently kill a fire-and-forget promise before it ever sends
+  await notifyAdmins(req, {
+    subject: 'New account request',
+    bodyHtml: `<p><strong>${payload.full_name}</strong> wants to create an account in the family tree.</p>`,
+    highlightParam: 'highlight', highlightId: id,
+  });
 }));
 
 // admin: list requests (status can be pending|approved|rejected)
@@ -264,7 +347,9 @@ router.get('/admin/requests', wrap(async (req,res)=>{
   await db.prepare("DELETE FROM requests WHERE status = 'rejected' AND reviewed_at IS NOT NULL AND reviewed_at::timestamptz < NOW() - INTERVAL '24 hours'").run();
   const status = (req.query.status || 'pending').toLowerCase();
   if (!['pending','approved','rejected'].includes(status)) return res.status(400).json({error:'invalid status'});
-  const rows = await db.prepare('SELECT * FROM requests WHERE status = ? ORDER BY created_at DESC').all(status);
+  // admin_password_reset requests are owner-only (see /owner/password-reset-requests) — an
+  // admin locked out of their own account isn't something other admins need to see or act on
+  const rows = await db.prepare("SELECT * FROM requests WHERE status = ? AND type != 'admin_password_reset' ORDER BY created_at DESC").all(status);
   res.json(rows.map(r=> ({...r, payload: JSON.parse(r.payload)})));
 }));
 
@@ -529,6 +614,11 @@ router.post('/member/profile/update', upload.single('photo'), wrap(async (req,re
   const id = uuidv4();
   await db.prepare('INSERT INTO requests (id, type, payload, status, created_by, created_at) VALUES (?, ?, ?, ?, ?, ?)').run(id, 'update_person', JSON.stringify(payload), 'pending', req.session.user.id, now());
   res.json({ ok:true, id });
+  await notifyAdmins(req, {
+    subject: 'Profile update request',
+    bodyHtml: `<p><strong>${current.full_name}</strong> wants to update their profile.</p>`,
+    highlightParam: 'highlight', highlightId: id,
+  });
 }));
 
 // change one's own password immediately — a security setting, not tree data, so it
@@ -541,7 +631,8 @@ router.post('/member/password', express.json(), wrap(async (req,res)=>{
   const user = await db.prepare('SELECT * FROM users WHERE id = ?').get(req.session.user.id);
   if (!user) return res.status(404).json({ error: 'account not found' });
   if (!bcrypt.compareSync(current_password, user.password_hash)) return res.status(401).json({ error: 'Current password is incorrect.' });
-  await db.prepare('UPDATE users SET password_hash = ? WHERE id = ?').run(bcrypt.hashSync(new_password, 10), user.id);
+  await db.prepare('UPDATE users SET password_hash = ?, must_change_password = ? WHERE id = ?').run(bcrypt.hashSync(new_password, 10), false, user.id);
+  req.session.user.mustChangePassword = false;
   res.json({ ok:true });
 }));
 
@@ -598,6 +689,11 @@ router.post('/member/relatives/add', upload.single('photo'), wrap(async (req,res
   const id = uuidv4();
   await db.prepare('INSERT INTO requests (id, type, payload, status, created_by, created_at) VALUES (?, ?, ?, ?, ?, ?)').run(id, 'add_relative', JSON.stringify(payload), 'pending', req.session.user.id, now());
   res.json({ ok:true, id });
+  await notifyAdmins(req, {
+    subject: 'New relative request',
+    bodyHtml: `<p><strong>${requester.full_name}</strong> wants to add a ${payload.relation}.</p>`,
+    highlightParam: 'highlight', highlightId: id,
+  });
 }));
 
 // admin: reject request
@@ -722,6 +818,83 @@ router.get('/admin/people/:id/parents', wrap(async (req,res)=>{
     return Object.assign({}, person, { from_family: !rel || rel.notes !== 'married-in' });
   }
   res.json({ father: await withNote(fatherId), mother: await withNote(motherId) });
+}));
+
+// --- owner-only: manage family-level administrators ---
+
+async function resetAdminPasswordAndNotify(dbLike, userId){
+  const tempPassword = generateTempPassword();
+  await dbLike.prepare('UPDATE users SET password_hash = ?, must_change_password = ? WHERE id = ?').run(bcrypt.hashSync(tempPassword, 10), true, userId);
+  const user = await dbLike.prepare('SELECT email FROM users WHERE id = ?').get(userId);
+  if (user && user.email){
+    await sendEmail({
+      to: user.email,
+      subject: '[Nah Adja Mbethe] Your administrator password has been reset',
+      html: `<p>Your password has been reset by the platform owner.</p><p>Temporary password: <strong>${tempPassword}</strong></p><p>You'll be asked to set a new password when you next log in.</p>`,
+    }).catch(()=>{});
+  }
+}
+
+router.get('/owner/admins', wrap(async (req,res)=>{
+  if (!requireOwner(req,res)) return;
+  const rows = await db.prepare("SELECT id, username, email, created_at, must_change_password FROM users WHERE role = 'admin' ORDER BY created_at DESC").all();
+  res.json(rows);
+}));
+
+router.post('/owner/admins/create', express.json(), wrap(async (req,res)=>{
+  if (!requireOwner(req,res)) return;
+  const { username, email } = req.body || {};
+  if (!username || !email) return res.status(400).json({ error: 'Username and email are required.' });
+  if (await isUsernameTaken(username)) return res.status(409).json({ error: 'That username is already taken.' });
+  const tempPassword = generateTempPassword();
+  const id = uuidv4();
+  await db.prepare('INSERT INTO users (id, username, password_hash, role, email, must_change_password, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)')
+    .run(id, username, bcrypt.hashSync(tempPassword, 10), 'admin', email, true, now());
+  const link = `${req.protocol}://${req.get('host')}/admin-login.html`;
+  await sendEmail({
+    to: email,
+    subject: '[Nah Adja Mbethe] You have been added as an administrator',
+    html: `<p>You've been added as an administrator for the Nah Adja Mbethe family tree.</p><p>Username: <strong>${username}</strong><br>Temporary password: <strong>${tempPassword}</strong></p><p>You'll be asked to set a new password the first time you log in.</p><p><a href="${link}">Log in</a></p>`,
+  }).catch(()=>{});
+  res.json({ ok:true, id });
+}));
+
+router.post('/owner/admins/:id/reset-password', wrap(async (req,res)=>{
+  if (!requireOwner(req,res)) return;
+  const user = await db.prepare("SELECT id FROM users WHERE id = ? AND role = 'admin'").get(req.params.id);
+  if (!user) return res.status(404).json({ error: 'not found' });
+  await resetAdminPasswordAndNotify(db, user.id);
+  res.json({ ok:true });
+}));
+
+router.post('/owner/admins/:id/delete', wrap(async (req,res)=>{
+  if (!requireOwner(req,res)) return;
+  const user = await db.prepare("SELECT id FROM users WHERE id = ? AND role = 'admin'").get(req.params.id);
+  if (!user) return res.status(404).json({ error: 'not found' });
+  await db.prepare('DELETE FROM users WHERE id = ?').run(req.params.id);
+  res.json({ ok:true });
+}));
+
+// pending admin_password_reset requests — owner-only, deliberately excluded from the regular
+// /admin/requests listing (see below) since these aren't relevant to other admins
+router.get('/owner/password-reset-requests', wrap(async (req,res)=>{
+  if (!requireOwner(req,res)) return;
+  const rows = await db.prepare("SELECT * FROM requests WHERE type = 'admin_password_reset' AND status = 'pending' ORDER BY created_at DESC").all();
+  res.json(rows.map(r=> ({...r, payload: JSON.parse(r.payload)})));
+}));
+
+router.post('/owner/password-reset-requests/:id/resolve', wrap(async (req,res)=>{
+  if (!requireOwner(req,res)) return;
+  const reqRow = await db.prepare('SELECT * FROM requests WHERE id = ?').get(req.params.id);
+  if (!reqRow) return res.status(404).json({ error: 'not found' });
+  const payload = JSON.parse(reqRow.payload);
+  const user = await db.prepare("SELECT id FROM users WHERE id = ? AND role IN ('admin','superadmin')").get(payload.user_id);
+  if (!user) return res.status(404).json({ error: 'admin account not found' });
+  await db.transaction(async (tx) => {
+    await resetAdminPasswordAndNotify(tx, user.id);
+    await tx.prepare('UPDATE requests SET status = ?, reviewed_by = ?, reviewed_at = ? WHERE id = ?').run('approved', req.session.user.id, now(), req.params.id);
+  });
+  res.json({ ok:true });
 }));
 
 // Admin: update person with multipart (photo). Also handles new_password, same as above.
@@ -995,6 +1168,18 @@ router.post('/archive', upload.array('files', 10), wrap(async (req,res)=>{
   await db.prepare('INSERT INTO archive (id, title, url, description, file_path, type, person_id, created_by, created_at, approval_status, event_type) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
     .run(id, null, url, body.description || null, filePath, type, req.session.user.person_id, req.session.user.id, now(), 'pending', body.event_type || null);
   res.json({ ok:true, id });
+  const poster = await db.prepare('SELECT full_name FROM people WHERE id = ?').get(req.session.user.person_id);
+  try{
+    const recipients = await getAdminRecipients();
+    if (recipients.length){
+      const link = `${req.protocol}://${req.get('host')}/admin.html?archiveHighlight=${encodeURIComponent(id)}`;
+      await sendEmail({
+        to: recipients,
+        subject: `[Nah Adja Mbethe] New archive post (${type})`,
+        html: `<p><strong>${poster ? poster.full_name : 'Someone'}</strong> posted a ${type} to the archive.</p><p><a href="${link}">Review and respond</a></p>`,
+      });
+    }
+  }catch(e){ console.error('[notify] failed', e && e.message || e); }
 }));
 
 // owner-only: edit an existing post's caption/event type (and, for photo/audio, optionally

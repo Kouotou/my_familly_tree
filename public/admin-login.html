@@ -22,6 +22,20 @@
       <a href="/" class="secondary-link" data-i18n="back">Back</a>
     </div>
     <div id="adminFeedback" class="hint"></div>
+    <div style="display:flex;gap:12px;margin-top:12px;flex-wrap:wrap">
+      <a id="admin-forgot-password-link" href="#" class="secondary-link" data-i18n="forgot_password_link">Forgot password?</a>
+    </div>
+    <form id="admin-forgot-password-form" class="hidden" style="margin-top:12px">
+      <label data-i18n="forgot_password_username_label">Username
+        <input id="afp-username" type="text" autocomplete="username" required />
+      </label>
+      <button type="submit" data-i18n="forgot_password_submit_btn">Request password reset</button>
+      <p id="admin-forgot-password-feedback" class="hint"></p>
+    </form>
+    <p style="margin-top:24px;padding-top:16px;border-top:1px solid var(--border)">
+      <span class="hint" data-i18n="owner_login_hint">Are you the platform owner?</span>
+      <a href="/owner-login.html" class="secondary-link" data-i18n="owner_login_link">Owner's Login</a>
+    </p>
   </main>
   <script src="/app.js"></script>
   <script>
@@ -36,6 +50,23 @@
         else f.textContent = typeof t === 'function' ? t('admin_login_failed') : 'Login failed';
       }catch(e){ f.textContent = typeof t === 'function' ? t('network_error') : 'Network error'; }
     });
+
+    const afpLink = document.getElementById('admin-forgot-password-link');
+    const afpForm = document.getElementById('admin-forgot-password-form');
+    if (afpLink && afpForm){
+      afpLink.addEventListener('click', (e)=>{ e.preventDefault(); afpForm.classList.toggle('hidden'); });
+      afpForm.addEventListener('submit', async (e)=>{
+        e.preventDefault();
+        const username = document.getElementById('afp-username').value;
+        const feedback = document.getElementById('admin-forgot-password-feedback');
+        feedback.textContent = typeof t === 'function' ? t('forgot_password_submitting') : '...';
+        try{
+          await api('/auth/admin-password-reset-request', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ username }) });
+          feedback.textContent = typeof t === 'function' ? t('forgot_password_submitted_ok') : 'Request sent.';
+          afpForm.reset();
+        }catch(err){ feedback.textContent = typeof t === 'function' ? t('network_error') : 'Network error'; }
+      });
+    }
   </script>
 </body>
 </html>

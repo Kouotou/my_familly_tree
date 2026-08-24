@@ -196,6 +196,9 @@ async function ensureSchema() {
       ALTER TABLE archive ADD COLUMN IF NOT EXISTS reviewed_at TEXT;
       ALTER TABLE archive ADD COLUMN IF NOT EXISTS event_type TEXT;
       ALTER TABLE requests ADD COLUMN IF NOT EXISTS resolved_person_id TEXT;
+      ALTER TABLE users ADD COLUMN IF NOT EXISTS email TEXT;
+      ALTER TABLE users ADD COLUMN IF NOT EXISTS must_change_password BOOLEAN DEFAULT false;
+      ALTER TABLE users ADD COLUMN IF NOT EXISTS created_at TEXT;
     `);
     console.log('[db] schema ready (postgres)');
   } finally {
