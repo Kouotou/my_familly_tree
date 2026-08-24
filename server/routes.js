@@ -132,7 +132,7 @@ async function handleLogin(req, res){
   if (!user) return res.status(401).json({ error: 'invalid' });
   const ok = bcrypt.compareSync(password, user.password_hash);
   if (!ok) return res.status(401).json({ error: 'invalid' });
-  req.session.user = { id: user.id, role: user.role, person_id: user.person_id, email: user.email || null, mustChangePassword: !!user.must_change_password };
+  req.session.user = { id: user.id, role: user.role, person_id: user.person_id, username: user.username, email: user.email || null, mustChangePassword: !!user.must_change_password };
   return res.json({ ok:true, role: user.role, person_id: user.person_id, mustChangePassword: !!user.must_change_password });
 }
 router.post('/auth/login', wrap(handleLogin));
@@ -149,7 +149,7 @@ router.post('/auth/owner-login', express.json(), wrap(async (req,res)=>{
   if (!user || user.role !== 'superadmin' || !bcrypt.compareSync(password, user.password_hash)) {
     return res.status(401).json({ error: 'invalid' });
   }
-  req.session.user = { id: user.id, role: user.role, person_id: user.person_id, email: user.email || null, mustChangePassword: !!user.must_change_password };
+  req.session.user = { id: user.id, role: user.role, person_id: user.person_id, username: user.username, email: user.email || null, mustChangePassword: !!user.must_change_password };
   res.json({ ok:true, mustChangePassword: !!user.must_change_password });
 }));
 
@@ -849,6 +849,18 @@ router.post('/owner/email', express.json(), wrap(async (req,res)=>{
   if (!email) return res.status(400).json({ error: 'Email is required.' });
   await db.prepare('UPDATE users SET email = ? WHERE id = ?').run(email, req.session.user.id);
   req.session.user.email = email;
+  res.json({ ok:true });
+}));
+
+// the owner's own login username — self-service, same reasoning as /owner/email
+router.post('/owner/username', express.json(), wrap(async (req,res)=>{
+  if (!requireOwner(req,res)) return;
+  const username = ((req.body && req.body.username) || '').trim();
+  if (!username) return res.status(400).json({ error: 'Username is required.' });
+  const current = await db.prepare('SELECT username FROM users WHERE id = ?').get(req.session.user.id);
+  if (current && current.username === username) return res.json({ ok:true }); // no-op
+  if (await isUsernameTaken(username)) return res.status(409).json({ error: 'That username is already taken.' });
+  await db.prepare('UPDATE users SET username = ? WHERE id = ?').run(username, req.session.user.id);
   res.json({ ok:true });
 }));
 

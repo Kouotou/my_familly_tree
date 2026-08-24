@@ -42,6 +42,15 @@
     </div>
 
     <div style="padding:16px;background:var(--card);border-radius:10px;box-shadow:var(--shadow);margin-bottom:20px">
+      <h3 style="margin-top:0" data-i18n="owner_my_username_heading">Your login username</h3>
+      <form id="owner-username-form" style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end">
+        <label style="flex:1;min-width:200px" data-i18n="owner_admin_username_label">Username<input id="owner-username-input" required /></label>
+        <button type="submit" data-i18n="owner_save_email_btn">Save</button>
+      </form>
+      <div id="owner-username-feedback" class="hint"></div>
+    </div>
+
+    <div style="padding:16px;background:var(--card);border-radius:10px;box-shadow:var(--shadow);margin-bottom:20px">
       <h3 style="margin-top:0" data-i18n="owner_admins_heading">Administrators</h3>
       <div id="adminsList">Loading...</div>
       <h4 style="margin-bottom:8px" data-i18n="owner_add_admin_heading">Add a new administrator</h4>
@@ -115,8 +124,20 @@
           document.getElementById('owner-change-password-modal').style.display = 'flex';
         }
         if (me.user && me.user.email) document.getElementById('owner-email-input').value = me.user.email;
+        // older sessions (from before this field existed) won't carry a username until the
+        // next login — leave the field blank rather than showing something wrong
+        if (me.user && me.user.username) document.getElementById('owner-username-input').value = me.user.username;
       }catch(e){}
     }
+
+    const ownerUsernameForm = document.getElementById('owner-username-form');
+    ownerUsernameForm.addEventListener('submit', async (e)=>{
+      e.preventDefault();
+      const feedback = document.getElementById('owner-username-feedback');
+      feedback.textContent = '';
+      const res = await api('/owner/username', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ username: document.getElementById('owner-username-input').value }) });
+      feedback.textContent = res.ok ? t('owner_save_username_done') : (res.error || t('ep_error_generic'));
+    });
 
     const ownerEmailForm = document.getElementById('owner-email-form');
     ownerEmailForm.addEventListener('submit', async (e)=>{
