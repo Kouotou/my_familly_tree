@@ -136,7 +136,7 @@ function showProfileModal(person, nodeMap, edges){
 
   // compute relations from edges. For 'parent' rows, {from,to} mirror the relationships
   // table's {person_id,relative_id}: from = child, to = parent.
-  const rels = { father: [], mother: [], siblings: [], spouses: [], children: [] };
+  const rels = { father: [], mother: [], siblings: [], spouses: [], children: [], heirOf: [] };
   edges.forEach(e=>{
     if (e.type==='parent' && e.from === person.id){ // e.to is this person's parent
       const p = nodeMap[e.to]; if (p){ if ((p.gender||'').toLowerCase()==='male') rels.father.push(p); else if ((p.gender||'').toLowerCase()==='female') rels.mother.push(p); else rels.father.push(p); }
@@ -146,6 +146,9 @@ function showProfileModal(person, nodeMap, edges){
     }
     if (e.type==='spouse' && (e.from===person.id || e.to===person.id)){
       const otherId = e.from===person.id ? e.to : e.from; const o = nodeMap[otherId]; if (o) rels.spouses.push(o);
+    }
+    if (e.type==='heir' && e.from===person.id){ // e.to is the deceased ancestor being represented
+      const a = nodeMap[e.to]; if (a) rels.heirOf.push(a);
     }
   });
   // siblings: persons who share a parent (dedupe full siblings who share both parents),
@@ -163,7 +166,7 @@ function showProfileModal(person, nodeMap, edges){
   });
   // defensively dedupe every group by id — the underlying data can contain duplicate
   // relationship rows (e.g. from repeated admin edits), but each relative should show once.
-  ['father','mother','spouses','children','siblings'].forEach(key=>{
+  ['father','mother','spouses','children','siblings','heirOf'].forEach(key=>{
     const seen = new Set();
     rels[key] = rels[key].filter(p=> p && !seen.has(p.id) && seen.add(p.id));
   });
@@ -228,6 +231,7 @@ function showProfileModal(person, nodeMap, edges){
   mkGroup(t('profile_spouses'), rels.spouses);
   mkGroup(t('profile_children'), rels.children);
   mkGroup(t('profile_siblings'), rels.siblings);
+  mkGroup(t('profile_heir_of'), rels.heirOf);
   if (!relSection.children.length){ const none = document.createElement('div'); none.className='profile-detail-row profile-detail-empty'; none.textContent = t('profile_no_relatives'); relSection.appendChild(none); }
   content.appendChild(relSection);
 
@@ -687,6 +691,68 @@ setupParentMatcher('mother');
 // the father/mother photos in the "new person" sub-forms)
 ['reg-photo', 'father_photo', 'mother_photo'].forEach(id => attachPhotoCropper(document.getElementById(id)));
 
+// submit is blocked until both consent checkboxes are ticked — an explicit "I confirm this
+// is accurate" + "I understand the 24h wait" acknowledgement before the account request goes
+// to the admin, not just a fire-and-forget form
+(function setupConsentGate(){
+  const accurate = document.getElementById('reg-consent-accurate');
+  const wait = document.getElementById('reg-consent-wait');
+  const submitBtn = document.getElementById('reg-submit-btn');
+  if (!accurate || !wait || !submitBtn) return;
+  const refresh = ()=>{ submitBtn.disabled = !(accurate.checked && wait.checked); };
+  accurate.addEventListener('change', refresh);
+  wait.addEventListener('change', refresh);
+  refresh();
+})();
+
+// "Are you an heir?" — only meaningful once a father/mother has been matched to an existing
+// profile (a freshly-typed, not-yet-existing parent has no known ancestry on file yet). Shows
+// every already-deceased person directly above the registrant (parents, grandparents,
+// great-grandparents, ...) reachable through whichever parent(s) were matched, on either
+// side — someone can hold heritage from more than one ancestor at once, so this is a
+// multi-select, not a single choice.
+(function setupHeirSelector(){
+  const heirCheckbox = document.getElementById('reg-is-heir');
+  const area = document.getElementById('heir-candidates-area');
+  if (!heirCheckbox || !area) return;
+
+  async function loadCandidates(){
+    const fatherId = document.getElementById('father_id') ? document.getElementById('father_id').value : '';
+    const motherId = document.getElementById('mother_id') ? document.getElementById('mother_id').value : '';
+    area.innerHTML = t('reg_heir_loading');
+    if (!fatherId && !motherId){
+      area.innerHTML = `<div class="hint">${t('reg_heir_no_matched_parent')}</div>`;
+      return;
+    }
+    let candidates = [];
+    try{
+      const qs = new URLSearchParams();
+      if (fatherId) qs.set('father_id', fatherId);
+      if (motherId) qs.set('mother_id', motherId);
+      candidates = await api('/people/heir-candidates?' + qs.toString());
+    }catch(e){ candidates = []; }
+    if (!Array.isArray(candidates) || !candidates.length){
+      area.innerHTML = `<div class="hint">${t('reg_heir_no_candidates')}</div>`;
+      return;
+    }
+    area.innerHTML = '';
+    candidates.forEach(c=>{
+      const label = document.createElement('label'); label.className = 'checkbox-label';
+      const cb = document.createElement('input'); cb.type = 'checkbox'; cb.name = 'heir_of'; cb.value = c.id;
+      label.appendChild(cb);
+      const span = document.createElement('span');
+      span.textContent = c.full_name + (c.death_date ? ` (${t('reg_heir_died')} ${c.death_date})` : '');
+      label.appendChild(span);
+      area.appendChild(label);
+    });
+  }
+
+  heirCheckbox.addEventListener('change', ()=>{
+    area.classList.toggle('hidden', !heirCheckbox.checked);
+    if (heirCheckbox.checked) loadCandidates();
+  });
+})();
+
 // registration form submit
 const registerForm = document.getElementById('register-form');
 if (registerForm){
@@ -723,6 +789,12 @@ if (registerForm){
     };
     await appendParent('father');
     await appendParent('mother');
+
+    const heirCheckbox = document.getElementById('reg-is-heir');
+    if (heirCheckbox && heirCheckbox.checked){
+      const heirIds = Array.from(document.querySelectorAll('#heir-candidates-area input[name="heir_of"]:checked')).map(cb=>cb.value);
+      if (heirIds.length) data.append('heir_of', JSON.stringify(heirIds));
+    }
 
     const feedback = document.getElementById('register-feedback');
     if (feedback) feedback.textContent = t('reg_submitting');
@@ -1188,6 +1260,20 @@ function renderTreeSVG(svg, tree, centerId, rootId){
   // draw nodes with standard SVG elements for better cross-browser rendering
   const svgNS = 'http://www.w3.org/2000/svg';
   const defaultAvatar = '/profile_icons/Female_profile_icon.jfif';
+
+  // heritage badges: one crown per deceased *male* ancestor a person is heir of, one star per
+  // deceased *female* ancestor — the icon reflects the ancestor being represented, not the
+  // heir's own gender, since someone can hold heritage from either side (or both, hence
+  // "one per ancestor" rather than a single icon). Computed from the full unfiltered edge
+  // list ('heir' edges are stripped out of the `edges` used for layout above).
+  const heirCounts = {};
+  tree.edges.filter(e=> e.type==='heir').forEach(e=>{
+    const ancestor = nodeMap[e.to];
+    if (!ancestor) return;
+    const bucket = heirCounts[e.from] || (heirCounts[e.from] = { crowns:0, stars:0 });
+    const g = (ancestor.gender||'').toLowerCase();
+    if (g==='male') bucket.crowns++; else if (g==='female') bucket.stars++;
+  });
   const wrapName = (name)=>{
     const raw = (name || 'Unknown').trim();
     if (!raw) return ['Unknown'];
@@ -1269,6 +1355,17 @@ function renderTreeSVG(svg, tree, centerId, rootId){
       group.appendChild(text);
     });
 
+    // heritage badge: one crown per male ancestor represented, one star per female ancestor
+    const hc = heirCounts[id];
+    if (hc && (hc.crowns || hc.stars)){
+      const badge = document.createElementNS(svgNS, 'text');
+      badge.setAttribute('x', '6');
+      badge.setAttribute('y', '14');
+      badge.setAttribute('font-size', '12');
+      badge.textContent = '👑'.repeat(hc.crowns) + '⭐'.repeat(hc.stars);
+      group.appendChild(badge);
+    }
+
     const genderLabel = document.createElementNS(svgNS, 'text');
     genderLabel.setAttribute('x', '62');
     genderLabel.setAttribute('y', '58');
@@ -1280,7 +1377,7 @@ function renderTreeSVG(svg, tree, centerId, rootId){
     const infoBtn = document.createElementNS(svgNS, 'g');
     infoBtn.setAttribute('transform', 'translate(170 13)');
     infoBtn.style.cursor = 'pointer';
-    infoBtn.addEventListener('click', (evt)=>{ evt.preventDefault(); evt.stopPropagation(); showProfileModal(n, nodeMap, edges); });
+    infoBtn.addEventListener('click', (evt)=>{ evt.preventDefault(); evt.stopPropagation(); showProfileModal(n, nodeMap, tree.edges); });
     const infoBox = document.createElementNS(svgNS, 'rect');
     infoBox.setAttribute('x', '0');
     infoBox.setAttribute('y', '0');
@@ -1309,7 +1406,7 @@ function renderTreeSVG(svg, tree, centerId, rootId){
     cardArea.style.pointerEvents = 'all';
     group.appendChild(cardArea);
 
-    group.addEventListener('click', (evt)=>{ evt.stopPropagation(); showProfileModal(n, nodeMap, edges); });
+    group.addEventListener('click', (evt)=>{ evt.stopPropagation(); showProfileModal(n, nodeMap, tree.edges); });
     g.appendChild(group);
   }
 
@@ -1734,6 +1831,14 @@ const I18N = {
     reg_origin_question_mother: 'Is she originally from this family, or did she marry into it?',
     reg_origin_family: 'Born into this family (blood relative)',
     reg_origin_married: 'Married into this family',
+    reg_heir_legend: 'Heritage',
+    reg_is_heir_question: 'Are you an heir — representing a deceased ancestor in the family?',
+    reg_heir_loading: 'Loading...',
+    reg_heir_no_matched_parent: 'Link your father and/or mother to an existing profile above first — heritage can only be claimed from an ancestor already on file.',
+    reg_heir_no_candidates: 'No deceased ancestors found yet on your linked parent(s) side.',
+    reg_heir_died: 'died',
+    reg_consent_accurate: 'I confirm the information I entered above is accurate and true.',
+    reg_consent_wait: "I understand my account will be reviewed within 24 hours — I'll come back after that and log in with my username and password.",
     reg_submit_btn: 'Submit registration (pending admin approval)',
     reg_back_link: 'Back to login',
     reg_submitting: 'Submitting...',
@@ -1876,6 +1981,7 @@ const I18N = {
     profile_no_details: 'No additional details on file',
     profile_father: 'Father', profile_mother: 'Mother', profile_spouses: 'Spouse(s)',
     profile_children: 'Children', profile_siblings: 'Siblings',
+    profile_heir_of: 'Heir of',
     profile_no_relatives: 'No linked relatives yet',
     profile_edit_btn: 'Edit my profile',
     profile_add_spouse: '+ Add spouse', profile_add_child: '+ Add child', profile_add_sibling: '+ Add sibling',
@@ -2020,6 +2126,14 @@ const I18N = {
     reg_origin_question_mother: 'Est-elle originaire de cette famille, ou s\'y est-elle mariée ?',
     reg_origin_family: 'Né(e) dans cette famille (lien de sang)',
     reg_origin_married: 'Marié(e) dans cette famille',
+    reg_heir_legend: 'Héritage',
+    reg_is_heir_question: "Es-tu un héritier — représentant un ancêtre décédé de la famille ?",
+    reg_heir_loading: 'Chargement...',
+    reg_heir_no_matched_parent: "Lie d'abord ton père et/ou ta mère à un profil existant ci-dessus — l'héritage ne peut être réclamé que d'un ancêtre déjà enregistré.",
+    reg_heir_no_candidates: "Aucun ancêtre décédé trouvé pour l'instant du côté de ton (tes) parent(s) lié(s).",
+    reg_heir_died: 'décédé(e) le',
+    reg_consent_accurate: "Je confirme que les informations que j'ai saisies ci-dessus sont exactes et véridiques.",
+    reg_consent_wait: "Je comprends que mon compte sera examiné sous 24 heures — je reviendrai après ce délai me connecter avec mon nom d'utilisateur et mon mot de passe.",
     reg_submit_btn: "Soumettre l'inscription (en attente d'approbation)",
     reg_back_link: 'Retour à la connexion',
     reg_submitting: 'Envoi en cours...',
@@ -2162,6 +2276,7 @@ const I18N = {
     profile_no_details: 'Aucun détail supplémentaire enregistré',
     profile_father: 'Père', profile_mother: 'Mère', profile_spouses: 'Conjoint(e)(s)',
     profile_children: 'Enfants', profile_siblings: 'Frères et sœurs',
+    profile_heir_of: 'Héritier de',
     profile_no_relatives: 'Aucun proche lié pour le moment',
     profile_edit_btn: 'Modifier mon profil',
     profile_add_spouse: '+ Ajouter un(e) conjoint(e)', profile_add_child: '+ Ajouter un enfant', profile_add_sibling: '+ Ajouter un frère/une sœur',

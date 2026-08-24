@@ -586,6 +586,9 @@
       // relations here always came in with the request itself (even an empty array is a
       // real, known answer — "no parents listed"), so it's always safe to submit them
       set('relationsLoaded', '1');
+      // stashed here (not a form field) since it's not user-editable in this modal — just
+      // needs to survive an Edit & Approve round-trip instead of being silently dropped
+      form.dataset.heirOf = JSON.stringify(Array.isArray(req.payload.heir_of) ? req.payload.heir_of : []);
       const titleEl = document.getElementById('edit-modal-title'); if (titleEl) titleEl.textContent = t('edit_modal_title');
       const photoPathEl = form.querySelector('[name="photo_path"]'); if (photoPathEl) photoPathEl.value = req.payload.photo_path || '';
       // populate existing relations (each may be a link to an existing profile, or a new
@@ -723,6 +726,7 @@
         if (f.new_password && f.new_password.value) form.append('new_password', f.new_password.value);
         if (relationsLoaded) form.append('relations', JSON.stringify(rels));
         const personId = f.personId && f.personId.value ? f.personId.value : null;
+        if (!personId && f.dataset.heirOf) form.append('heir_of', f.dataset.heirOf);
         const endpoint = personId ? ('/api/admin/people/' + personId + '/update-multipart') : ('/api/admin/requests/' + id + '/edit-approve-multipart');
         const res = await fetch(endpoint, { method:'POST', credentials:'same-origin', body: form });
         const j = await res.json();
@@ -749,6 +753,7 @@
       // if editing an existing person (admin modify), personId will be set
       const personId = f.personId && f.personId.value ? f.personId.value : null;
       if (!personId || relationsLoaded) payload.relations = rels;
+      if (!personId && f.dataset.heirOf){ try{ payload.heir_of = JSON.parse(f.dataset.heirOf); }catch(e){} }
       if (personId){
         // no photo: send json update
         const res = await fetch('/api/admin/people/' + personId + '/update', { method:'POST', headers:{'Content-Type':'application/json'}, credentials:'same-origin', body: JSON.stringify({ payload }) });

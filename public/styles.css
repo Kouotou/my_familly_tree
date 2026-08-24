@@ -170,6 +170,8 @@ button.secondary{
 	box-shadow:none;
 }
 button.secondary:hover{ background:var(--accent-soft); }
+button:disabled{ filter:blur(0.4px) grayscale(0.5); opacity:0.5; cursor:not-allowed; box-shadow:none; transform:none !important; }
+button:disabled:hover{ transform:none; filter:blur(0.4px) grayscale(0.5); }
 
 .secondary-link{ color:var(--accent-strong); text-decoration:none; font-weight:600 }
 .secondary-link:hover{ text-decoration:underline }

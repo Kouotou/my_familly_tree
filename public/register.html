@@ -77,8 +77,17 @@
           </label>
         </div>
       </fieldset>
+      <fieldset class="parent-fieldset">
+        <legend data-i18n="reg_heir_legend">Heritage</legend>
+        <label class="checkbox-label"><input type="checkbox" id="reg-is-heir" /><span data-i18n="reg_is_heir_question">Are you an heir — representing a deceased ancestor in the family?</span></label>
+        <div id="heir-candidates-area" class="hidden" style="margin-top:10px"></div>
+      </fieldset>
+
+      <div class="checkbox-label"><input type="checkbox" id="reg-consent-accurate" required /><label for="reg-consent-accurate" data-i18n="reg_consent_accurate">I confirm the information I entered above is accurate and true.</label></div>
+      <div class="checkbox-label"><input type="checkbox" id="reg-consent-wait" required /><label for="reg-consent-wait" data-i18n="reg_consent_wait">I understand my account will be reviewed within 24 hours — I'll come back after that and log in with my username and password.</label></div>
+
       <div style="display:flex;gap:12px;margin-top:12px">
-        <button type="submit" data-i18n="reg_submit_btn">Submit registration (pending admin approval)</button>
+        <button type="submit" id="reg-submit-btn" disabled data-i18n="reg_submit_btn">Submit registration (pending admin approval)</button>
         <a href="/" class="secondary-link" data-i18n="reg_back_link">Back to login</a>
       </div>
     </form>

@@ -244,6 +244,46 @@ router.get('/people/:id', wrap(async (req,res)=>{
   res.json(p);
 }));
 
+// walks straight up the ancestry chain from startId (its own father/mother, their father/
+// mother, and so on) — never sideways into siblings/aunts/uncles — collecting every already-
+// deceased person found along the way. Used for the "are you an heir" question: heritage in
+// this culture only ever passes down from a direct ascendant who has passed away.
+async function collectDeceasedAncestors(dbLike, startId){
+  const result = [];
+  const seen = new Set();
+  let frontier = startId ? [startId] : [];
+  let depth = 0;
+  while (frontier.length && depth < 10){
+    const next = [];
+    for (const id of frontier){
+      if (seen.has(id)) continue;
+      seen.add(id);
+      const person = await dbLike.prepare('SELECT id, full_name, gender, birth_date, death_date FROM people WHERE id = ?').get(id);
+      if (!person) continue;
+      if (person.death_date) result.push(person);
+      const { fatherId, motherId } = await getParentIds(dbLike, id);
+      if (fatherId) next.push(fatherId);
+      if (motherId) next.push(motherId);
+    }
+    frontier = next;
+    depth++;
+  }
+  return result;
+}
+
+// candidate ancestors a registrant could be claiming heritage from — combines both parents'
+// ancestor chains (a matched father_id and/or mother_id; a freshly-typed, not-yet-existing
+// parent contributes nothing here, since there's no ancestry on file to walk yet), deduped.
+router.get('/people/heir-candidates', wrap(async (req,res)=>{
+  const fatherId = req.query.father_id || null;
+  const motherId = req.query.mother_id || null;
+  const fromFather = await collectDeceasedAncestors(db, fatherId);
+  const fromMother = await collectDeceasedAncestors(db, motherId);
+  const byId = {};
+  [...fromFather, ...fromMother].forEach(p => { byId[p.id] = p; });
+  res.json(Object.values(byId));
+}));
+
 // create request (generic pending change)
 router.post('/requests', upload.single('photo'), wrap(async (req,res)=>{
   const payload = req.body;
@@ -279,6 +319,9 @@ router.post('/auth/register', upload.fields([
   }
   if (!birthDate && body.birth_year) birthYear = Number(body.birth_year);
 
+  let heirOf = [];
+  if (body.heir_of){ try{ const parsed = JSON.parse(body.heir_of); if (Array.isArray(parsed)) heirOf = parsed.filter(Boolean); }catch(e){ heirOf = []; } }
+
   const payload = {
     type: 'create_person',
     username: body.username || null,
@@ -292,6 +335,7 @@ router.post('/auth/register', upload.fields([
     residence: body.residence || null,
     phone: body.phone || null,
     photo_path: body.photo_path || null,
+    heir_of: heirOf,
     relations: []
   };
 
@@ -503,6 +547,19 @@ async function processCreatePerson(dbLike, payload, reviewerId){
       await linkParentChild(dbLike, personId, motherId, mother.from_family ? 'blood' : 'married-in');
     }
     if (fatherId && motherId) await linkSpouse(dbLike, fatherId, motherId);
+  }
+
+  // heritage: one relationship row per ancestor claimed, person_id = the heir, relative_id =
+  // the deceased ancestor they represent. One-directional (no reverse row needed — the tree
+  // only ever needs to answer "who is X the heir of", never the other way round) and, unlike
+  // parent/spouse links, there's no single canonical slot to overwrite, so this only ever
+  // adds rows, never removes ones from an earlier approval.
+  if (Array.isArray(payload.heir_of)){
+    for (const ancestorId of payload.heir_of){
+      const ancestor = await dbLike.prepare('SELECT id FROM people WHERE id = ?').get(ancestorId);
+      if (!ancestor) continue;
+      await dbLike.prepare('INSERT INTO relationships (id, person_id, relative_id, type) VALUES (?, ?, ?, ?)').run(uuidv4(), personId, ancestor.id, 'heir');
+    }
   }
 
   return personId;
@@ -772,6 +829,10 @@ router.post('/admin/requests/:id/edit-approve-multipart', upload.single('photo')
   // relations: expected as JSON string in body.relations
   if (body.relations){
     try{ payload.relations = JSON.parse(body.relations); }catch(e){ payload.relations = []; }
+  }
+  // heritage claims from the original request — see the same field on /auth/register
+  if (body.heir_of){
+    try{ const parsed = JSON.parse(body.heir_of); payload.heir_of = Array.isArray(parsed) ? parsed : []; }catch(e){ payload.heir_of = []; }
   }
 
   try{
