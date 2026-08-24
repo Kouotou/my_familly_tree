@@ -414,7 +414,7 @@
               body: JSON.stringify(editingItem ? { description, event_type: eventType, file_url: fileUrl || undefined } : { type, description, event_type: eventType, file_url: fileUrl }),
             });
             const j = await res.json();
-            if (j.ok){ feedback.textContent = t('np_submitted_ok'); setTimeout(()=>{ modal.style.display='none'; loadTab(currentTab); }, 1400); }
+            if (j.ok){ track('archive_post'); feedback.textContent = t('np_submitted_ok'); setTimeout(()=>{ modal.style.display='none'; loadTab(currentTab); }, 1400); }
             else feedback.textContent = j.error || t('np_error_generic');
           } else {
             const data = new FormData();
@@ -432,7 +432,7 @@
             }
             const res = await fetch(endpoint, { method:'POST', body:data, credentials:'same-origin' });
             const j = await res.json();
-            if (j.ok){ feedback.textContent = t('np_submitted_ok'); setTimeout(()=>{ modal.style.display='none'; loadTab(currentTab); }, 1400); }
+            if (j.ok){ track('archive_post'); feedback.textContent = t('np_submitted_ok'); setTimeout(()=>{ modal.style.display='none'; loadTab(currentTab); }, 1400); }
             else feedback.textContent = j.error || t('np_error_generic');
           }
         }catch(err){ console.error(err); feedback.textContent = t('network_error'); }

@@ -212,6 +212,17 @@ async function ensureSchema() {
         created_at TEXT
       );
 
+      CREATE TABLE IF NOT EXISTS analytics_events (
+        id TEXT PRIMARY KEY,
+        event_type TEXT NOT NULL,
+        person_id TEXT,
+        role TEXT,
+        page TEXT,
+        meta TEXT,
+        load_ms INTEGER,
+        created_at TEXT
+      );
+
       ALTER TABLE archive ADD COLUMN IF NOT EXISTS type TEXT DEFAULT 'photo';
       ALTER TABLE archive ADD COLUMN IF NOT EXISTS file_path TEXT;
       ALTER TABLE archive ADD COLUMN IF NOT EXISTS person_id TEXT;

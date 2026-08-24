@@ -1087,6 +1087,65 @@ router.post('/owner/password-reset-requests/:id/resolve', wrap(async (req,res)=>
   res.json({ ok:true });
 }));
 
+// --- lightweight usage telemetry: page views + a handful of key actions, so the owner can
+// see what people actually do on the platform. Deliberately best-effort — a failure here
+// must never surface as a user-facing error, since it's a background signal, not a feature.
+router.post('/analytics/event', express.json(), wrap(async (req,res)=>{
+  try{
+    const body = req.body || {};
+    const eventType = String(body.event_type || '').slice(0, 60);
+    if (eventType){
+      const personId = req.session.user ? req.session.user.person_id : null;
+      const role = req.session.user ? req.session.user.role : null;
+      const page = body.page ? String(body.page).slice(0, 200) : null;
+      const meta = body.meta != null ? JSON.stringify(body.meta).slice(0, 2000) : null;
+      const loadMs = Number.isFinite(body.load_ms) ? Math.round(body.load_ms) : null;
+      await db.prepare('INSERT INTO analytics_events (id, event_type, person_id, role, page, meta, load_ms, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
+        .run(uuidv4(), eventType, personId, role, page, meta, loadMs, now());
+    }
+  }catch(e){ /* telemetry must never break the app */ }
+  res.json({ ok:true });
+}));
+
+const ANALYTICS_PERIOD_DAYS = { today: 1, '7d': 7, '30d': 30, '90d': 90, '365d': 365 };
+
+router.get('/owner/analytics/summary', wrap(async (req,res)=>{
+  if (!requireOwner(req,res)) return;
+  const period = req.query.period || '7d';
+  const days = ANALYTICS_PERIOD_DAYS[period];
+  if (!days) return res.status(400).json({ error: 'invalid period' });
+  const cutoff = new Date(Date.now() - days*24*60*60*1000).toISOString();
+
+  const totalsRows = await db.prepare('SELECT event_type, COUNT(*) AS c FROM analytics_events WHERE created_at >= ? GROUP BY event_type ORDER BY c DESC').all(cutoff);
+  const totals = {};
+  totalsRows.forEach(r=> { totals[r.event_type] = Number(r.c); });
+
+  const topPages = await db.prepare("SELECT page, COUNT(*) AS c FROM analytics_events WHERE created_at >= ? AND event_type = 'page_view' AND page IS NOT NULL GROUP BY page ORDER BY c DESC LIMIT 10").all(cutoff);
+
+  const perPersonRows = await db.prepare(`
+    SELECT p.full_name AS name, a.person_id,
+      COUNT(*) FILTER (WHERE a.event_type = 'login') AS logins,
+      COUNT(*) FILTER (WHERE a.event_type = 'page_view') AS page_views,
+      AVG(a.load_ms) FILTER (WHERE a.event_type = 'page_view' AND a.load_ms IS NOT NULL) AS avg_load_ms,
+      MAX(a.created_at) AS last_active
+    FROM analytics_events a LEFT JOIN people p ON p.id = a.person_id
+    WHERE a.created_at >= ? AND a.person_id IS NOT NULL
+    GROUP BY p.full_name, a.person_id
+    ORDER BY last_active DESC
+    LIMIT 50
+  `).all(cutoff);
+
+  res.json({
+    period, cutoff,
+    totals,
+    topPages: topPages.map(r=> ({ page: r.page, count: Number(r.c) })),
+    perPerson: perPersonRows.map(r=> ({
+      name: r.name || 'Unknown', logins: Number(r.logins), pageViews: Number(r.page_views),
+      avgLoadMs: r.avg_load_ms != null ? Math.round(r.avg_load_ms) : null, lastActive: r.last_active,
+    })),
+  });
+}));
+
 // Admin: update person with multipart (photo). Also handles new_password, same as above.
 router.post('/admin/people/:id/update-multipart', upload.single('photo'), wrap(async (req,res)=>{
   if (!req.session.user) return res.status(401).json({error:'not logged in'});

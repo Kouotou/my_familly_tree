@@ -32,6 +32,23 @@
     </div>
 
     <div style="padding:16px;background:var(--card);border-radius:10px;box-shadow:var(--shadow);margin-bottom:20px">
+      <h3 style="margin-top:0" data-i18n="owner_analytics_heading">Platform activity (KPIs)</h3>
+      <p style="color:var(--muted);margin-top:-6px;font-size:13px" data-i18n="owner_analytics_desc">What people do on the platform — logins, new/edited accounts, feature usage, and page-load time per person.</p>
+      <div id="analytics-period-tabs" class="archive-tabs" style="margin:10px 0">
+        <button type="button" data-period="today" data-i18n="owner_period_today">Today</button>
+        <button type="button" data-period="7d" class="active" data-i18n="owner_period_7d">Last 7 days</button>
+        <button type="button" data-period="30d" data-i18n="owner_period_30d">Last 30 days</button>
+        <button type="button" data-period="90d" data-i18n="owner_period_90d">Last 90 days</button>
+        <button type="button" data-period="365d" data-i18n="owner_period_365d">Last 365 days</button>
+      </div>
+      <div id="analytics-totals" style="display:flex;flex-wrap:wrap;gap:10px;margin-bottom:16px"></div>
+      <h4 style="margin-bottom:6px" data-i18n="owner_analytics_top_pages">Most-viewed pages</h4>
+      <div id="analytics-top-pages" style="overflow-x:auto;margin-bottom:16px"></div>
+      <h4 style="margin-bottom:6px" data-i18n="owner_analytics_per_person">By person</h4>
+      <div id="analytics-per-person" style="overflow-x:auto"></div>
+    </div>
+
+    <div style="padding:16px;background:var(--card);border-radius:10px;box-shadow:var(--shadow);margin-bottom:20px">
       <h3 style="margin-top:0" data-i18n="owner_my_email_heading">Your notification email</h3>
       <p style="color:var(--muted);margin-top:-6px;font-size:13px" data-i18n="owner_my_email_desc">Where you receive pending-request notifications and administrator lockout requests.</p>
       <form id="owner-email-form" style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end">
@@ -270,9 +287,62 @@
     const logoutBtn = document.getElementById('owner-logout');
     if (logoutBtn) logoutBtn.addEventListener('click', async ()=>{ await api('/auth/logout',{method:'POST'}); window.location.href='/'; });
 
+    const KPI_EVENT_LABELS = {
+      page_view: 'owner_kpi_event_page_view', login: 'owner_kpi_event_login',
+      register_submit: 'owner_kpi_event_register_submit', profile_update: 'owner_kpi_event_profile_update',
+      archive_post: 'owner_kpi_event_archive_post', archive_like: 'owner_kpi_event_archive_like',
+      archive_comment: 'owner_kpi_event_archive_comment', feedback_post: 'owner_kpi_event_feedback_post',
+    };
+    function kpiEventLabel(type){
+      const key = KPI_EVENT_LABELS[type];
+      return key ? t(key) : type.replace(/_/g, ' ');
+    }
+
+    let currentAnalyticsPeriod = '7d';
+    async function loadAnalytics(period){
+      currentAnalyticsPeriod = period;
+      document.querySelectorAll('#analytics-period-tabs button').forEach(b=> b.classList.toggle('active', b.dataset.period === period));
+      const totalsEl = document.getElementById('analytics-totals');
+      const pagesEl = document.getElementById('analytics-top-pages');
+      const personEl = document.getElementById('analytics-per-person');
+      totalsEl.innerHTML = pagesEl.innerHTML = personEl.innerHTML = t('loading') || 'Loading...';
+      try{
+        const summary = await api('/owner/analytics/summary?period=' + encodeURIComponent(period));
+        const totalEntries = Object.entries(summary.totals || {});
+        totalsEl.innerHTML = totalEntries.length ? '' : `<div class="hint">${t('owner_kpi_no_data')}</div>`;
+        totalEntries.forEach(([type, count])=>{
+          const chip = document.createElement('div'); chip.className = 'ss-stat-chip';
+          chip.innerHTML = `<strong>${count}</strong><span>${kpiEventLabel(type)}</span>`;
+          totalsEl.appendChild(chip);
+        });
+
+        if (!summary.topPages || !summary.topPages.length){
+          pagesEl.innerHTML = `<div class="hint">${t('owner_kpi_no_data')}</div>`;
+        } else {
+          pagesEl.innerHTML = `<table class="kpi-table"><thead><tr><th>${t('owner_kpi_col_page')}</th><th>${t('owner_kpi_col_views')}</th></tr></thead><tbody>${
+            summary.topPages.map(p=> `<tr><td>${p.page}</td><td>${p.count}</td></tr>`).join('')
+          }</tbody></table>`;
+        }
+
+        if (!summary.perPerson || !summary.perPerson.length){
+          personEl.innerHTML = `<div class="hint">${t('owner_kpi_no_data')}</div>`;
+        } else {
+          personEl.innerHTML = `<table class="kpi-table"><thead><tr><th>${t('owner_kpi_col_person')}</th><th>${t('owner_kpi_col_logins')}</th><th>${t('owner_kpi_col_page_views')}</th><th>${t('owner_kpi_col_avg_load')}</th><th>${t('owner_kpi_col_last_active')}</th></tr></thead><tbody>${
+            summary.perPerson.map(p=> `<tr><td>${p.name}</td><td>${p.logins}</td><td>${p.pageViews}</td><td>${p.avgLoadMs != null ? p.avgLoadMs + ' ms' : '—'}</td><td>${p.lastActive ? new Date(p.lastActive).toLocaleString() : '—'}</td></tr>`).join('')
+          }</tbody></table>`;
+        }
+      }catch(e){
+        totalsEl.innerHTML = pagesEl.innerHTML = personEl.innerHTML = t('error_loading');
+      }
+    }
+    document.querySelectorAll('#analytics-period-tabs button').forEach(btn=>{
+      btn.addEventListener('click', ()=> loadAnalytics(btn.dataset.period));
+    });
+
     checkMustChangePassword();
     loadAdmins();
     loadResetRequests();
+    loadAnalytics(currentAnalyticsPeriod);
     });
   </script>
 </body>

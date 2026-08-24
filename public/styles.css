@@ -542,6 +542,12 @@ button:disabled:hover{ transform:none; filter:blur(0.4px) grayscale(0.5); }
 }
 #feedback-form button{ margin:0; padding:12px 20px }
 
+/* --- owner KPI dashboard --- */
+.kpi-table{ width:100%; border-collapse:collapse; font-size:13px }
+.kpi-table th, .kpi-table td{ text-align:left; padding:8px 10px; border-bottom:1px solid var(--border) }
+.kpi-table th{ color:var(--muted); font-weight:600; font-size:12px; text-transform:uppercase; letter-spacing:0.03em }
+.kpi-table td{ color:var(--text) }
+
 /* --- new post modal --- */
 #new-post-modal{
 	position:fixed; inset:0; background:rgba(41,28,16,0.5); display:none; align-items:center; justify-content:center; z-index:85; padding:20px;

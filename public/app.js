@@ -18,6 +18,37 @@ async function api(path, opts={}){
   return res.text();
 }
 
+// Lightweight, fire-and-forget usage telemetry for the owner's KPI dashboard — never awaited
+// by callers, never throws, never blocks the action it's attached to. Who's logged in (if
+// anyone) is read server-side from the session, not sent from here.
+function track(eventType, opts){
+  try{
+    const body = { event_type: eventType, page: location.pathname };
+    if (opts && opts.meta !== undefined) body.meta = opts.meta;
+    if (opts && opts.load_ms !== undefined) body.load_ms = opts.load_ms;
+    fetch('/api/analytics/event', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'same-origin', keepalive: true,
+      body: JSON.stringify(body),
+    }).catch(()=>{});
+  }catch(e){ /* telemetry must never break the app */ }
+}
+
+// one page-view event per page load, with how long the page took to load — the timing API
+// isn't available yet at the very top of the script on every browser, so this runs after
+// the load event fires (or immediately if it already has).
+(function trackPageView(){
+  function send(){
+    let loadMs = null;
+    try{
+      const nav = performance.getEntriesByType && performance.getEntriesByType('navigation')[0];
+      if (nav) loadMs = Math.round(nav.loadEventEnd - nav.startTime);
+    }catch(e){}
+    track('page_view', loadMs != null ? { load_ms: loadMs } : undefined);
+  }
+  if (document.readyState === 'complete') send();
+  else window.addEventListener('load', send, { once: true });
+})();
+
 // clicking the family name in the header always goes "home" — whatever that means for
 // whoever's currently logged in (member -> their tree, admin -> admin.html, owner ->
 // owner.html), or the landing page if nobody's logged in yet. One handler, every page,
@@ -666,6 +697,7 @@ if (loginForm){
     try{
       const r = await api('/auth/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username,password})});
       if (r.ok){
+        track('login');
         location.href = (r.role === 'member') ? '/tree.html' : '/admin.html';
       } else {
         feedback.textContent = t('login_feedback_fail');
@@ -888,7 +920,7 @@ if (registerForm){
     try{
       const res = await fetch('/api/auth/register', { method:'POST', body: data });
       const j = await res.json();
-      if (j.ok){ if (feedback) feedback.textContent = t('reg_submitted_ok'); setTimeout(()=>{ location.href = '/'; }, 1400); }
+      if (j.ok){ track('register_submit'); if (feedback) feedback.textContent = t('reg_submitted_ok'); setTimeout(()=>{ location.href = '/'; }, 1400); }
       else if (feedback) feedback.textContent = j && j.error ? j.error : t('reg_error_generic');
     }catch(err){ if (feedback) feedback.textContent = t('network_error'); }
   });
@@ -1962,6 +1994,20 @@ const I18N = {
     owner_admin_dashboard_heading: 'Family requests & the tree',
     owner_admin_dashboard_desc: 'Approve/reject requests, manage the root profile, and everything else an administrator can do.',
     owner_go_to_admin_btn: 'Go to Admin Dashboard →',
+    owner_analytics_heading: 'Platform activity (KPIs)',
+    owner_analytics_desc: 'What people do on the platform — logins, new/edited accounts, feature usage, and page-load time per person.',
+    owner_period_today: 'Today', owner_period_7d: 'Last 7 days', owner_period_30d: 'Last 30 days',
+    owner_period_90d: 'Last 90 days', owner_period_365d: 'Last 365 days',
+    owner_analytics_top_pages: 'Most-viewed pages',
+    owner_analytics_per_person: 'By person',
+    owner_kpi_no_data: 'No activity recorded yet for this period.',
+    owner_kpi_col_page: 'Page', owner_kpi_col_views: 'Views',
+    owner_kpi_col_person: 'Person', owner_kpi_col_logins: 'Logins', owner_kpi_col_page_views: 'Page views',
+    owner_kpi_col_avg_load: 'Avg. load time', owner_kpi_col_last_active: 'Last active',
+    owner_kpi_event_page_view: 'Page views', owner_kpi_event_login: 'Logins',
+    owner_kpi_event_register_submit: 'Registrations submitted', owner_kpi_event_profile_update: 'Profile edits submitted',
+    owner_kpi_event_archive_post: 'Archive posts', owner_kpi_event_archive_like: 'Archive likes',
+    owner_kpi_event_archive_comment: 'Archive comments', owner_kpi_event_feedback_post: 'Feedback messages',
     owner_my_username_heading: 'Your login username',
     owner_save_username_done: 'Username saved — use it next time you log in.',
     owner_my_email_heading: 'Your notification email',
@@ -2278,6 +2324,20 @@ const I18N = {
     owner_admin_dashboard_heading: "Demandes familiales et l'arbre",
     owner_admin_dashboard_desc: "Approuver/rejeter les demandes, gérer le profil racine, et tout ce qu'un administrateur peut faire.",
     owner_go_to_admin_btn: "Aller au tableau de bord administrateur →",
+    owner_analytics_heading: 'Activité de la plateforme (KPIs)',
+    owner_analytics_desc: "Ce que les gens font sur la plateforme — connexions, comptes créés/modifiés, utilisation des fonctionnalités, et temps de chargement des pages par personne.",
+    owner_period_today: "Aujourd'hui", owner_period_7d: '7 derniers jours', owner_period_30d: '30 derniers jours',
+    owner_period_90d: '90 derniers jours', owner_period_365d: '365 derniers jours',
+    owner_analytics_top_pages: 'Pages les plus consultées',
+    owner_analytics_per_person: 'Par personne',
+    owner_kpi_no_data: "Aucune activité enregistrée pour cette période.",
+    owner_kpi_col_page: 'Page', owner_kpi_col_views: 'Vues',
+    owner_kpi_col_person: 'Personne', owner_kpi_col_logins: 'Connexions', owner_kpi_col_page_views: 'Pages vues',
+    owner_kpi_col_avg_load: 'Temps de chargement moy.', owner_kpi_col_last_active: 'Dernière activité',
+    owner_kpi_event_page_view: 'Pages vues', owner_kpi_event_login: 'Connexions',
+    owner_kpi_event_register_submit: 'Inscriptions soumises', owner_kpi_event_profile_update: 'Modifications de profil soumises',
+    owner_kpi_event_archive_post: 'Publications archives', owner_kpi_event_archive_like: "J'aime sur les archives",
+    owner_kpi_event_archive_comment: 'Commentaires sur les archives', owner_kpi_event_feedback_post: 'Messages de retour',
     owner_my_username_heading: "Votre nom d'utilisateur de connexion",
     owner_save_username_done: "Nom d'utilisateur enregistré — utilisez-le lors de votre prochaine connexion.",
     owner_my_email_heading: 'Votre email de notification',
