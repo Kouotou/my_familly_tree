@@ -1,0 +1,98 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Feedback</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="topbar-left">
+      <button type="button" id="page-back-btn" class="page-back-btn" aria-label="Back">‹</button>
+      <h1 id="brand" data-i18n="brand">Famille Nah Adja Mbethe</h1>
+    </div>
+    <div class="toggles">
+      <button id="lang-toggle">FR/EN</button>
+      <button id="theme-toggle">Light/Dark</button>
+    </div>
+  </header>
+  <main>
+    <div style="padding:12px;max-width:760px;margin:12px auto">
+      <a href="/tree.html" class="secondary-link" data-i18n="archives_back_link">Back to tree</a>
+      <h2 style="margin-top:10px" data-i18n="feedback_title">Feedback</h2>
+      <p class="hint" data-i18n="feedback_intro">Suggest an improvement, report an issue, or reply to someone else's — everyone on the platform can see and answer here.</p>
+
+      <div id="feedback-list" class="feedback-list"></div>
+
+      <form id="feedback-form">
+        <textarea id="feedback-input" data-i18n-placeholder="feedback_placeholder" placeholder="Write a message…" required></textarea>
+        <button type="submit" data-i18n="feedback_submit">Send</button>
+      </form>
+      <div id="feedback-feedback" class="hint"></div>
+    </div>
+  </main>
+  <script src="/app.js"></script>
+  <script>
+    (function(){
+      const listEl = document.getElementById('feedback-list');
+      const form = document.getElementById('feedback-form');
+      const input = document.getElementById('feedback-input');
+      const feedback = document.getElementById('feedback-feedback');
+
+      function formatDate(iso){
+        try{ const d = new Date(iso); return d.toLocaleString(); }catch(e){ return iso || ''; }
+      }
+
+      function renderMessages(items){
+        listEl.innerHTML = '';
+        if (!Array.isArray(items) || !items.length){
+          listEl.innerHTML = `<div class="archive-empty">${t('feedback_empty')}</div>`;
+          return;
+        }
+        items.forEach(m=>{
+          const row = document.createElement('div'); row.className = 'feedback-message';
+          const meta = document.createElement('div'); meta.className = 'feedback-message-meta';
+          meta.textContent = (m.author_name || t('feedback_unknown_author')) + ' — ' + formatDate(m.created_at);
+          const body = document.createElement('div'); body.className = 'feedback-message-body';
+          body.textContent = m.body;
+          row.appendChild(meta); row.appendChild(body);
+          listEl.appendChild(row);
+        });
+        listEl.scrollTop = listEl.scrollHeight;
+      }
+
+      async function load(){
+        try{
+          const items = await api('/feedback');
+          renderMessages(items);
+        }catch(e){ listEl.innerHTML = `<div class="archive-empty">${t('error_loading')}</div>`; }
+      }
+
+      form.addEventListener('submit', async (e)=>{
+        e.preventDefault();
+        const body = input.value.trim();
+        if (!body) return;
+        feedback.textContent = '';
+        try{
+          const res = await fetch('/api/feedback', {
+            method: 'POST', headers: {'Content-Type':'application/json'}, credentials: 'same-origin',
+            body: JSON.stringify({ body }),
+          });
+          const j = await res.json();
+          if (j.ok){ track('feedback_post'); input.value = ''; await load(); }
+          else feedback.textContent = j.error || t('network_error');
+        }catch(err){ feedback.textContent = t('network_error'); }
+      });
+
+      (async ()=>{
+        try{
+          const res = await fetch('/api/auth/me', { credentials:'same-origin' });
+          if (!res.ok){ window.location.href = '/'; return; }
+        }catch(e){}
+        load();
+      })();
+    })();
+  </script>
+</body>
+</html>

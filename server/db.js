@@ -205,6 +205,13 @@ async function ensureSchema() {
         created_at TEXT
       );
 
+      CREATE TABLE IF NOT EXISTS feedback_messages (
+        id TEXT PRIMARY KEY,
+        person_id TEXT,
+        body TEXT NOT NULL,
+        created_at TEXT
+      );
+
       ALTER TABLE archive ADD COLUMN IF NOT EXISTS type TEXT DEFAULT 'photo';
       ALTER TABLE archive ADD COLUMN IF NOT EXISTS file_path TEXT;
       ALTER TABLE archive ADD COLUMN IF NOT EXISTS person_id TEXT;

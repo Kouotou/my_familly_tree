@@ -527,6 +527,21 @@ button:disabled:hover{ transform:none; filter:blur(0.4px) grayscale(0.5); }
 .archive-comment-form input{ flex:1; margin:0; padding:8px 10px; font-size:13px; border-radius:10px; border:1.5px solid var(--border); background:var(--card); color:var(--text) }
 .archive-comment-form button{ margin:0; padding:8px 14px; font-size:13px }
 
+/* --- feedback board --- */
+.feedback-list{
+	display:flex; flex-direction:column; gap:10px; margin:16px 0; max-height:60vh; overflow-y:auto;
+	padding:14px; background:var(--card); border:1px solid var(--border); border-radius:var(--rounded);
+}
+.feedback-message{ background:var(--card-alt); border-radius:10px; padding:10px 12px }
+.feedback-message-meta{ font-size:12px; color:var(--muted); margin-bottom:4px; font-weight:600 }
+.feedback-message-body{ color:var(--text); font-size:14px; white-space:pre-wrap; word-break:break-word }
+#feedback-form{ display:flex; gap:8px; align-items:flex-end }
+#feedback-form textarea{
+	flex:1; margin:0; min-height:60px; padding:10px 12px; font-family:var(--font-body); font-size:14px;
+	border-radius:10px; border:1.5px solid var(--border); background:var(--card); color:var(--text); resize:vertical;
+}
+#feedback-form button{ margin:0; padding:12px 20px }
+
 /* --- new post modal --- */
 #new-post-modal{
 	position:fixed; inset:0; background:rgba(41,28,16,0.5); display:none; align-items:center; justify-content:center; z-index:85; padding:20px;

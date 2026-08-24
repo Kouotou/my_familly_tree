@@ -1525,4 +1525,26 @@ router.post('/admin/archive/:id/delete', wrap(async (req,res)=>{
   res.json({ ok:true });
 }));
 
+// --- feedback board: a single flat, shared chat everyone (member, admin, owner) can post
+// and reply into — no approval step, no email notification, visible to any logged-in
+// account with a linked profile.
+router.get('/feedback', wrap(async (req,res)=>{
+  if (!requireLoggedInPerson(req,res)) return;
+  const rows = await db.prepare(`SELECT f.id, f.body, f.created_at, f.person_id, p.full_name AS author_name
+    FROM feedback_messages f LEFT JOIN people p ON p.id = f.person_id
+    ORDER BY f.created_at ASC`).all();
+  res.json(rows);
+}));
+
+router.post('/feedback', express.json(), wrap(async (req,res)=>{
+  if (!requireLoggedInPerson(req,res)) return;
+  const body = ((req.body && req.body.body) || '').trim();
+  if (!body) return res.status(400).json({ error: 'Message text is required.' });
+  const id = uuidv4();
+  await db.prepare('INSERT INTO feedback_messages (id, person_id, body, created_at) VALUES (?, ?, ?, ?)')
+    .run(id, req.session.user.person_id, body, now());
+  const person = await db.prepare('SELECT full_name FROM people WHERE id = ?').get(req.session.user.person_id);
+  res.json({ ok:true, id, created_at: now(), author_name: person ? person.full_name : null });
+}));
+
 module.exports = router;

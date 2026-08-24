@@ -2133,7 +2133,15 @@ const I18N = {
     sidebar_download_image: 'Download as Image',
     sidebar_download_pdf: 'Download as PDF',
     sidebar_cultural_bg_toggle: 'Include cultural background',
+    sidebar_feedback: 'Feedback',
     tree_export_error: "Couldn't export the tree. Please try again.",
+
+    feedback_title: 'Feedback',
+    feedback_intro: "Suggest an improvement, report an issue, or reply to someone else's — everyone on the platform can see and answer here.",
+    feedback_placeholder: 'Write a message…',
+    feedback_submit: 'Send',
+    feedback_empty: 'No messages yet — be the first to write one.',
+    feedback_unknown_author: 'A family member',
 
     ss_title: 'Search & stats',
     ss_loading: 'Loading…',
@@ -2441,7 +2449,15 @@ const I18N = {
     sidebar_download_image: 'Télécharger en image',
     sidebar_download_pdf: 'Télécharger en PDF',
     sidebar_cultural_bg_toggle: 'Inclure le fond culturel',
+    sidebar_feedback: 'Retours & suggestions',
     tree_export_error: "Impossible d'exporter l'arbre. Veuillez réessayer.",
+
+    feedback_title: 'Retours & suggestions',
+    feedback_intro: "Propose une amélioration, signale un problème, ou réponds à celui d'un autre — tout le monde sur la plateforme peut voir et répondre ici.",
+    feedback_placeholder: 'Écrire un message…',
+    feedback_submit: 'Envoyer',
+    feedback_empty: "Aucun message pour l'instant — sois le premier à écrire.",
+    feedback_unknown_author: 'Un membre de la famille',
 
     ss_title: 'Recherche et statistiques',
     ss_loading: 'Chargement…',
