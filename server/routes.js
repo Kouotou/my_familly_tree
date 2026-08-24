@@ -237,13 +237,6 @@ router.get('/people/search', wrap(async (req,res)=>{
   res.json(matches.slice(0, 20));
 }));
 
-// get a single person
-router.get('/people/:id', wrap(async (req,res)=>{
-  const p = await db.prepare('SELECT * FROM people WHERE id = ?').get(req.params.id);
-  if (!p) return res.status(404).json({error:'not found'});
-  res.json(p);
-}));
-
 // walks straight up the ancestry chain from startId (its own father/mother, their father/
 // mother, and so on) — never sideways into siblings/aunts/uncles — collecting every already-
 // deceased person found along the way. Used for the "are you an heir" question: heritage in
@@ -274,6 +267,9 @@ async function collectDeceasedAncestors(dbLike, startId){
 // candidate ancestors a registrant could be claiming heritage from — combines both parents'
 // ancestor chains (a matched father_id and/or mother_id; a freshly-typed, not-yet-existing
 // parent contributes nothing here, since there's no ancestry on file to walk yet), deduped.
+// Registered before /people/:id — as a static path it would otherwise be shadowed by that
+// parameterized route matching "heir-candidates" as an :id (which is exactly what happened
+// the first time this shipped: every call silently 404'd as "not found").
 router.get('/people/heir-candidates', wrap(async (req,res)=>{
   const fatherId = req.query.father_id || null;
   const motherId = req.query.mother_id || null;
@@ -282,6 +278,13 @@ router.get('/people/heir-candidates', wrap(async (req,res)=>{
   const byId = {};
   [...fromFather, ...fromMother].forEach(p => { byId[p.id] = p; });
   res.json(Object.values(byId));
+}));
+
+// get a single person
+router.get('/people/:id', wrap(async (req,res)=>{
+  const p = await db.prepare('SELECT * FROM people WHERE id = ?').get(req.params.id);
+  if (!p) return res.status(404).json({error:'not found'});
+  res.json(p);
 }));
 
 // create request (generic pending change)
