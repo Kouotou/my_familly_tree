@@ -18,6 +18,28 @@ async function api(path, opts={}){
   return res.text();
 }
 
+// clicking the family name in the header always goes "home" — whatever that means for
+// whoever's currently logged in (member -> their tree, admin -> admin.html, owner ->
+// owner.html), or the landing page if nobody's logged in yet. One handler, every page,
+// rather than hardcoding a destination per page, since the same header markup is shared
+// everywhere and who's "home" depends on the session, not the page you happen to be on.
+(function initBrandHomeLink(){
+  const brand = document.querySelector('.topbar h1');
+  if (!brand) return;
+  brand.addEventListener('click', async ()=>{
+    try{
+      const res = await fetch('/api/auth/me', { credentials: 'same-origin' });
+      if (!res.ok){ window.location.href = '/'; return; }
+      const j = await res.json();
+      const role = j.user && j.user.role;
+      if (role === 'superadmin') window.location.href = '/owner.html';
+      else if (role === 'admin') window.location.href = '/admin.html';
+      else if (role === 'member') window.location.href = '/tree.html';
+      else window.location.href = '/';
+    }catch(e){ window.location.href = '/'; }
+  });
+})();
+
 // Downscale a photo client-side before upload (max ~1600px edge, ~80% JPEG quality) so
 // phone-camera photos stay comfortably under the server's upload size limit, which itself
 // sits under Vercel's fixed 4.5MB serverless request-body ceiling. Falls back to the
@@ -691,17 +713,18 @@ setupParentMatcher('mother');
 // the father/mother photos in the "new person" sub-forms)
 ['reg-photo', 'father_photo', 'mother_photo'].forEach(id => attachPhotoCropper(document.getElementById(id)));
 
-// submit is blocked until both consent checkboxes are ticked — an explicit "I confirm this
-// is accurate" + "I understand the 24h wait" acknowledgement before the account request goes
-// to the admin, not just a fire-and-forget form
-(function setupConsentGate(){
-  const accurate = document.getElementById('reg-consent-accurate');
-  const wait = document.getElementById('reg-consent-wait');
+// submit stays grayed out until every required field (username, password, full name,
+// father's and mother's name — the native `required` attributes already on those inputs)
+// is filled *and* both consent checkboxes are ticked. Uses the form's own native validity
+// rather than re-listing which fields matter a second time in JS, so this can't drift out of
+// sync with whichever fields actually carry `required` in the markup.
+(function setupSubmitGate(){
+  const form = document.getElementById('register-form');
   const submitBtn = document.getElementById('reg-submit-btn');
-  if (!accurate || !wait || !submitBtn) return;
-  const refresh = ()=>{ submitBtn.disabled = !(accurate.checked && wait.checked); };
-  accurate.addEventListener('change', refresh);
-  wait.addEventListener('change', refresh);
+  if (!form || !submitBtn) return;
+  const refresh = ()=>{ submitBtn.disabled = !form.checkValidity(); };
+  form.addEventListener('input', refresh);
+  form.addEventListener('change', refresh);
   refresh();
 })();
 
@@ -1915,6 +1938,8 @@ const I18N = {
     admin_refresh_btn: 'Refresh',
     admin_pending_heading: 'Requests',
     admin_no_requests: 'No {status} requests',
+    admin_search_placeholder: 'Search by name or username...',
+    admin_no_search_results: 'No requests match that search.',
     pending_section_creation: 'New account requests',
     pending_section_modification: 'Account modification requests',
     pending_section_empty: 'None',
@@ -2210,6 +2235,8 @@ const I18N = {
     admin_refresh_btn: 'Actualiser',
     admin_pending_heading: 'Demandes',
     admin_no_requests: 'Aucune demande {status}',
+    admin_search_placeholder: "Rechercher par nom ou nom d'utilisateur...",
+    admin_no_search_results: 'Aucune demande ne correspond à cette recherche.',
     pending_section_creation: 'Demandes de nouveau compte',
     pending_section_modification: 'Demandes de modification de compte',
     pending_section_empty: 'Aucune',

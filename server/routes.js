@@ -392,6 +392,15 @@ router.post('/auth/register', upload.fields([
   });
 }));
 
+// shared by the listing and counts endpoints below: for the Approved tab, exclude any row
+// whose resolved person has since been deleted. An approved request's card offers "Modify
+// account"/"Delete account" for the person it resolved to — once that person is deleted, the
+// request row itself is untouched (kept as a historical record), so without this filter its
+// card would keep showing forever with a Delete button that appears to do nothing (the
+// person is already gone). A NULL resolved_person_id (nothing to check) or a still-'approved'
+// person both pass.
+const APPROVED_STALE_FILTER_SQL = "(resolved_person_id IS NULL OR EXISTS (SELECT 1 FROM people p WHERE p.id = requests.resolved_person_id AND p.approval_status = 'approved'))";
+
 // admin: list requests (status can be pending|approved|rejected)
 router.get('/admin/requests', wrap(async (req,res)=>{
   if (!req.session.user) return res.status(401).json({error:'not logged in'});
@@ -406,24 +415,21 @@ router.get('/admin/requests', wrap(async (req,res)=>{
   if (!['pending','approved','rejected'].includes(status)) return res.status(400).json({error:'invalid status'});
   // admin_password_reset requests are owner-only (see /owner/password-reset-requests) — an
   // admin locked out of their own account isn't something other admins need to see or act on
-  let rows = await db.prepare("SELECT * FROM requests WHERE status = ? AND type != 'admin_password_reset' ORDER BY created_at DESC").all(status);
-  if (status === 'approved'){
-    // an approved request's card offers "Modify account"/"Delete account" for the person it
-    // resolved to — once that person is later deleted, the request row itself is untouched
-    // (it's kept as a historical record), so without this filter its card would keep showing
-    // in the Approved tab forever, with a Delete button that "does nothing" (the person is
-    // already gone) — exactly the confusing stale-card bug this fixes.
-    const resolvedIds = Array.from(new Set(rows.map(r=>r.resolved_person_id).filter(Boolean)));
-    if (resolvedIds.length){
-      const statuses = {};
-      for (const pid of resolvedIds){
-        const p = await db.prepare('SELECT approval_status FROM people WHERE id = ?').get(pid);
-        statuses[pid] = p ? p.approval_status : null;
-      }
-      rows = rows.filter(r => !r.resolved_person_id || statuses[r.resolved_person_id] === 'approved');
-    }
-  }
+  let sql = "SELECT * FROM requests WHERE status = ? AND type != 'admin_password_reset'";
+  if (status === 'approved') sql += ` AND ${APPROVED_STALE_FILTER_SQL}`;
+  sql += ' ORDER BY created_at DESC';
+  const rows = await db.prepare(sql).all(status);
   res.json(rows.map(r=> ({...r, payload: JSON.parse(r.payload)})));
+}));
+
+// counts for the three tab badges — same filtering as the listing above, so a badge count
+// always matches what you'd actually see clicking into that tab
+router.get('/admin/requests/counts', wrap(async (req,res)=>{
+  if (!requireAdmin(req,res)) return;
+  const pending = await db.prepare("SELECT COUNT(*) c FROM requests WHERE status='pending' AND type != 'admin_password_reset'").get();
+  const approved = await db.prepare(`SELECT COUNT(*) c FROM requests WHERE status='approved' AND type != 'admin_password_reset' AND ${APPROVED_STALE_FILTER_SQL}`).get();
+  const rejected = await db.prepare("SELECT COUNT(*) c FROM requests WHERE status='rejected' AND type != 'admin_password_reset'").get();
+  res.json({ pending: Number(pending.c), approved: Number(approved.c), rejected: Number(rejected.c) });
 }));
 
 // --- shared person/relationship helpers, used by request-approval processors below ---

@@ -96,8 +96,9 @@ body{
 	padding:20px 36px;
 	background: linear-gradient(120deg, var(--topbar-grad-1) 0%, var(--topbar-grad-2) 100%);
 	box-shadow: var(--shadow-sm);
-	position:relative;
+	position:sticky; top:0; z-index:80;
 }
+.topbar h1{ cursor:pointer }
 .topbar h1{
 	margin:0;font-size:26px;letter-spacing:0.2px;color:var(--topbar-text);
 	font-family: var(--font-display); font-weight:600;
