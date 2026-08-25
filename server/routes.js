@@ -72,6 +72,41 @@ async function getAdminRecipients(){
   return rows.map(r=>r.email);
 }
 
+// field-by-field diff between a person's current record and a pending update_person
+// payload, so an admin reviewing the request can see exactly what's being changed instead
+// of just "so-and-so wants to update their profile". Only stores machine-readable {field,
+// old, new} entries (no pre-rendered text) so the email (server-side, no i18n) and the
+// admin.html UI (client-side, needs French too) can each label fields in their own language
+// from the same data.
+const PROFILE_DIFF_FIELDS = ['full_name', 'gender', 'birth_date', 'death_date', 'occupation', 'residence', 'phone'];
+function buildProfileChangeSummary(current, updated, photoChanged, heirNames){
+  const changes = [];
+  PROFILE_DIFF_FIELDS.forEach(field=>{
+    const oldVal = current[field] || null;
+    const newVal = updated[field] || null;
+    if (oldVal !== newVal) changes.push({ field, old: oldVal, new: newVal });
+  });
+  if (photoChanged) changes.push({ field: 'photo' });
+  if (heirNames && heirNames.length) changes.push({ field: 'heir_of', added: heirNames });
+  return changes;
+}
+
+const PROFILE_DIFF_LABELS_EN = {
+  full_name: 'Full name', gender: 'Gender', birth_date: 'Birth date', death_date: 'Date of death',
+  occupation: 'Occupation', residence: 'Residence', phone: 'Phone', photo: 'Photo', heir_of: 'Heritage',
+};
+// plain-English HTML summary for the admin notification email (no client-side i18n available here)
+function changeSummaryToHtml(changes){
+  if (!changes || !changes.length) return '';
+  const items = changes.map(c=>{
+    const label = PROFILE_DIFF_LABELS_EN[c.field] || c.field;
+    if (c.field === 'photo') return `<li>${label} updated</li>`;
+    if (c.added) return `<li>${label}: claiming heritage from ${c.added.join(', ')}</li>`;
+    return `<li>${label}: "${c.old || '(empty)'}" → "${c.new || '(empty)'}"</li>`;
+  }).join('');
+  return `<p><strong>What changed:</strong></p><ul>${items}</ul>`;
+}
+
 // fire-and-forget notification for a newly-pending request/archive post — never allowed to
 // break the request that triggered it, so every failure is swallowed after logging
 async function notifyAdmins(req, { subject, bodyHtml, highlightParam, highlightId }){

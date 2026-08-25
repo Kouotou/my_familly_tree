@@ -196,6 +196,25 @@
         }
       }
 
+      if (req.payload.type === 'update_person' && Array.isArray(req.payload.changes)){
+        const changesDiv = document.createElement('div'); changesDiv.style.marginTop = '10px'; changesDiv.style.padding = '10px 12px';
+        changesDiv.style.background = 'var(--card-alt)'; changesDiv.style.borderRadius = '10px'; changesDiv.style.fontSize = '13px';
+        if (!req.payload.changes.length){
+          changesDiv.innerHTML = `<strong>${t('req_changes_heading')}</strong><div style="color:var(--muted);margin-top:4px">${t('req_no_changes')}</div>`;
+        } else {
+          const rows = req.payload.changes.map(c=>{
+            const label = t('reqchg_' + c.field) || c.field;
+            if (c.field === 'photo') return `<div>${label}: ${t('req_changes_photo_updated')}</div>`;
+            if (c.added) return `<div>${label}: ${t('req_changes_heir_added', { names: c.added.join(', ') })}</div>`;
+            const oldTxt = c.old || t('req_changes_empty');
+            const newTxt = c.new || t('req_changes_empty');
+            return `<div>${label}: <span style="color:var(--muted)">"${oldTxt}"</span> → <strong>"${newTxt}"</strong></div>`;
+          }).join('');
+          changesDiv.innerHTML = `<strong>${t('req_changes_heading')}</strong><div style="margin-top:4px;display:flex;flex-direction:column;gap:2px">${rows}</div>`;
+        }
+        info.appendChild(changesDiv);
+      }
+
       if (Array.isArray(req.payload.relations) && req.payload.relations.length>0){
         const relDiv = document.createElement('div'); relDiv.style.marginTop='8px'; relDiv.innerHTML = '<strong>'+t('req_relations_label')+'</strong>';
         req.payload.relations.forEach(r=>{ const d = document.createElement('div'); d.style.fontSize='13px'; d.style.color='var(--muted)'; d.textContent = `${r.which||r.type} — ${r.relative && r.relative.full_name ? r.relative.full_name : ''} ${r.from_family? t('req_from_family'):''}`; relDiv.appendChild(d); });
