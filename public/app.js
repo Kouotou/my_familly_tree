@@ -302,6 +302,15 @@ function showProfileModal(person, nodeMap, edges){
     });
     actions.appendChild(addRow);
     content.appendChild(actions);
+  } else if (window.myRole === 'superadmin'){
+    // the platform owner can edit anyone's profile directly from the tree — still goes
+    // through the normal admin-approval queue (see openEditProfileModal/submitEditProfile),
+    // just attributed to the owner and tagged as such for the reviewing admin
+    const ownerActions = document.createElement('div'); ownerActions.className = 'profile-actions';
+    const ownerEditBtn = document.createElement('button'); ownerEditBtn.type='button'; ownerEditBtn.className='secondary'; ownerEditBtn.textContent = t('profile_owner_edit_btn');
+    ownerEditBtn.addEventListener('click', ()=>{ modal.style.display='none'; openEditProfileModal(person, { ownerTargetId: person.id }); });
+    ownerActions.appendChild(ownerEditBtn);
+    content.appendChild(ownerActions);
   }
 
   modal.style.display='flex';
@@ -354,7 +363,13 @@ initPasswordToggles(document);
 if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', ()=> initPasswordToggles(document));
 
 // --- self-service: edit my profile (pending admin approval) ---
-function openEditProfileModal(person){
+// opts.ownerTargetId: set only when the platform owner is editing someone else's profile
+// from the tree — the request still goes through the normal approval queue
+// (submitEditProfile posts to a different endpoint in that case), just targets `person`
+// instead of the logged-in user's own record. Heritage claims and the password-change
+// section only make sense for editing yourself, so both are hidden in that mode.
+function openEditProfileModal(person, opts){
+  const ownerTargetId = (opts && opts.ownerTargetId) || null;
   let modal = document.getElementById('edit-profile-modal');
   if (!modal){
     modal = document.createElement('div'); modal.id = 'edit-profile-modal';
@@ -371,7 +386,7 @@ function openEditProfileModal(person){
           <label data-i18n="ep_occupation">Occupation<input type="text" id="ep-occupation" /></label>
           <label data-i18n="ep_residence">Residence<input type="text" id="ep-residence" /></label>
           <label data-i18n="ep_phone">Phone<input type="text" id="ep-phone" /></label>
-          <fieldset class="parent-fieldset">
+          <fieldset class="parent-fieldset" id="ep-heir-fieldset">
             <legend data-i18n="reg_heir_legend">Heritage</legend>
             <label class="checkbox-label"><input type="checkbox" id="ep-is-heir" /><span data-i18n="ep_is_heir_question">Have you become an heir since registering — representing a deceased ancestor in the family?</span></label>
             <div id="ep-heir-candidates-area" class="hidden" style="margin-top:10px"></div>
@@ -379,16 +394,18 @@ function openEditProfileModal(person){
           <button type="submit" data-i18n="ep_submit">Submit for admin approval</button>
         </form>
         <div id="edit-profile-feedback" class="hint"></div>
-        <hr />
-        <h4 data-i18n="ep_change_password_title">Change password</h4>
-        <p class="hint" data-i18n="ep_change_password_hint">This applies immediately — it doesn't need admin approval.</p>
-        <form id="change-password-form">
-          <label data-i18n="ep_current_password">Current password<input type="password" id="cp-current" required /></label>
-          <label data-i18n="ep_new_password">New password<input type="password" id="cp-new" required /></label>
-          <label data-i18n="ep_confirm_password">Confirm new password<input type="password" id="cp-confirm" required /></label>
-          <button type="submit" data-i18n="ep_change_password_btn">Change password</button>
-        </form>
-        <div id="change-password-feedback" class="hint"></div>
+        <div id="ep-password-section">
+          <hr />
+          <h4 data-i18n="ep_change_password_title">Change password</h4>
+          <p class="hint" data-i18n="ep_change_password_hint">This applies immediately — it doesn't need admin approval.</p>
+          <form id="change-password-form">
+            <label data-i18n="ep_current_password">Current password<input type="password" id="cp-current" required /></label>
+            <label data-i18n="ep_new_password">New password<input type="password" id="cp-new" required /></label>
+            <label data-i18n="ep_confirm_password">Confirm new password<input type="password" id="cp-confirm" required /></label>
+            <button type="submit" data-i18n="ep_change_password_btn">Change password</button>
+          </form>
+          <div id="change-password-feedback" class="hint"></div>
+        </div>
       </div>`;
     document.body.appendChild(modal);
     modal.querySelector('#edit-profile-close').addEventListener('click', ()=> modal.style.display='none');
@@ -400,6 +417,11 @@ function openEditProfileModal(person){
     setupEditHeirSelector(modal);
     applyI18n();
   }
+  modal.dataset.ownerTargetId = ownerTargetId || '';
+  modal.querySelector('h3[data-i18n="ep_title"]').textContent = ownerTargetId
+    ? t('ep_title_owner', { name: person.full_name || '' }) : t('ep_title');
+  modal.querySelector('#ep-heir-fieldset').classList.toggle('hidden', !!ownerTargetId);
+  modal.querySelector('#ep-password-section').classList.toggle('hidden', !!ownerTargetId);
   modal.querySelector('#ep-fullname').value = person.full_name || '';
   modal.querySelector('#ep-gender').value = (person.gender || 'male').toLowerCase();
   modal.querySelector('#ep-birthdate').value = person.birth_date || '';
@@ -486,10 +508,12 @@ async function submitEditProfile(e){
     const heirIds = Array.from(modal.querySelectorAll('#ep-heir-candidates-area input[name="ep_heir_of"]:checked')).map(cb=>cb.value);
     if (heirIds.length) data.append('heir_of', JSON.stringify(heirIds));
   }
+  const ownerTargetId = modal.dataset.ownerTargetId || '';
+  const endpoint = ownerTargetId ? ('/api/owner/people/' + ownerTargetId + '/request-update') : '/api/member/profile/update';
   try{
-    const res = await fetch('/api/member/profile/update', { method:'POST', body:data, credentials:'same-origin' });
+    const res = await fetch(endpoint, { method:'POST', body:data, credentials:'same-origin' });
     const j = await res.json();
-    if (j.ok) track('profile_update');
+    if (j.ok) track(ownerTargetId ? 'owner_profile_update' : 'profile_update');
     feedback.textContent = j.ok ? t('ep_submitted_ok') : (j.error || t('ep_error_generic'));
   }catch(err){ feedback.textContent = t('network_error'); }
 }
@@ -2092,6 +2116,7 @@ const I18N = {
     req_relation_spouse: 'spouse', req_relation_child: 'child', req_relation_sibling: 'sibling',
     req_unknown_person: 'unknown person',
     req_from_family: '(from family)',
+    req_owner_initiated_badge: 'Requested by the platform owner',
     req_changes_heading: 'What changed',
     req_no_changes: 'No field changes detected.',
     req_changes_photo_updated: 'updated',
@@ -2151,9 +2176,11 @@ const I18N = {
     profile_heir_of: 'Heir of',
     profile_no_relatives: 'No linked relatives yet',
     profile_edit_btn: 'Edit my profile',
+    profile_owner_edit_btn: 'Edit this profile (as owner)',
     profile_add_spouse: '+ Add spouse', profile_add_child: '+ Add child', profile_add_sibling: '+ Add sibling',
 
     ep_title: 'Edit my profile',
+    ep_title_owner: 'Edit profile — {name}',
     ep_photo: 'Photo', ep_fullname: 'Full name', ep_gender: 'Gender', ep_birthdate: 'Birth date', ep_deathdate: 'Date of death (leave blank if living)',
     ep_occupation: 'Occupation', ep_residence: 'Residence', ep_phone: 'Phone',
     ep_is_heir_question: 'Have you become an heir since registering — representing a deceased ancestor in the family?',
@@ -2431,6 +2458,7 @@ const I18N = {
     req_relation_spouse: 'conjoint(e)', req_relation_child: 'enfant', req_relation_sibling: 'frère/sœur',
     req_unknown_person: 'personne inconnue',
     req_from_family: '(de la famille)',
+    req_owner_initiated_badge: 'Demandé par le propriétaire de la plateforme',
     req_changes_heading: 'Ce qui a changé',
     req_no_changes: 'Aucun changement de champ détecté.',
     req_changes_photo_updated: 'mise à jour',
@@ -2490,9 +2518,11 @@ const I18N = {
     profile_heir_of: 'Héritier de',
     profile_no_relatives: 'Aucun proche lié pour le moment',
     profile_edit_btn: 'Modifier mon profil',
+    profile_owner_edit_btn: 'Modifier ce profil (en tant que propriétaire)',
     profile_add_spouse: '+ Ajouter un(e) conjoint(e)', profile_add_child: '+ Ajouter un enfant', profile_add_sibling: '+ Ajouter un frère/une sœur',
 
     ep_title: 'Modifier mon profil',
+    ep_title_owner: 'Modifier le profil — {name}',
     ep_photo: 'Photo', ep_fullname: 'Nom complet', ep_gender: 'Genre', ep_birthdate: 'Date de naissance', ep_deathdate: 'Date de décès (laisser vide si vivant(e))',
     ep_occupation: 'Profession', ep_residence: 'Résidence', ep_phone: 'Téléphone',
     ep_is_heir_question: "Es-tu devenu(e) héritier(ère) depuis ton inscription — représentant un ancêtre décédé de la famille ?",

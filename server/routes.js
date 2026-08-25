@@ -763,24 +763,18 @@ router.get('/member/context', wrap(async (req,res)=>{
   res.json({ spouses, father, mother, heirOfIds });
 }));
 
-// submit a pending request to change one's own profile fields (photo, name, DOB, etc.)
-router.post('/member/profile/update', upload.single('photo'), wrap(async (req,res)=>{
-  if (!requireLoggedInPerson(req,res)) return;
-  const body = req.body || {};
-  const personId = req.session.user.person_id;
-  const current = await db.prepare('SELECT * FROM people WHERE id = ?').get(personId);
-  if (!current) return res.status(404).json({ error: 'profile not found' });
-
+// shared by /member/profile/update (editing yourself) and /owner/people/:id/request-update
+// (the owner editing someone else on their behalf) — builds the update_person payload,
+// including the field-by-field change summary, from a person's current row + the submitted
+// form fields.
+async function buildUpdatePersonPayload(current, body, file, heirOf){
   let birthDate = body.birth_date || null;
   let birthYear = null;
   if (birthDate){ try{ const d = new Date(birthDate); if (isFinite(d)) birthYear = d.getFullYear(); else birthDate = null; }catch(e){ birthDate = null; } }
 
-  let heirOf = [];
-  if (body.heir_of){ try{ const parsed = JSON.parse(body.heir_of); if (Array.isArray(parsed)) heirOf = parsed.filter(Boolean); }catch(e){ heirOf = []; } }
-
   const payload = {
     type: 'update_person',
-    person_id: personId,
+    person_id: current.id,
     target_name: current.full_name,
     full_name: body.full_name || current.full_name,
     gender: body.gender || current.gender,
@@ -790,15 +784,59 @@ router.post('/member/profile/update', upload.single('photo'), wrap(async (req,re
     occupation: body.occupation || null,
     residence: body.residence || null,
     phone: body.phone || null,
-    photo_path: req.file ? await uploadPhoto(req.file, 'photos') : null,
+    photo_path: file ? await uploadPhoto(file, 'photos') : null,
     heir_of: heirOf
   };
+
+  const heirNames = [];
+  for (const ancestorId of heirOf){
+    const ancestor = await db.prepare('SELECT full_name FROM people WHERE id = ?').get(ancestorId);
+    if (ancestor) heirNames.push(ancestor.full_name);
+  }
+  payload.changes = buildProfileChangeSummary(current, payload, !!file, heirNames);
+  return payload;
+}
+
+// submit a pending request to change one's own profile fields (photo, name, DOB, etc.)
+router.post('/member/profile/update', upload.single('photo'), wrap(async (req,res)=>{
+  if (!requireLoggedInPerson(req,res)) return;
+  const body = req.body || {};
+  const personId = req.session.user.person_id;
+  const current = await db.prepare('SELECT * FROM people WHERE id = ?').get(personId);
+  if (!current) return res.status(404).json({ error: 'profile not found' });
+
+  let heirOf = [];
+  if (body.heir_of){ try{ const parsed = JSON.parse(body.heir_of); if (Array.isArray(parsed)) heirOf = parsed.filter(Boolean); }catch(e){ heirOf = []; } }
+
+  const payload = await buildUpdatePersonPayload(current, body, req.file, heirOf);
   const id = uuidv4();
   await db.prepare('INSERT INTO requests (id, type, payload, status, created_by, created_at) VALUES (?, ?, ?, ?, ?, ?)').run(id, 'update_person', JSON.stringify(payload), 'pending', req.session.user.id, now());
   res.json({ ok:true, id });
   await notifyAdmins(req, {
     subject: 'Profile update request',
-    bodyHtml: `<p><strong>${current.full_name}</strong> wants to update their profile.</p>`,
+    bodyHtml: `<p><strong>${current.full_name}</strong> wants to update their profile.</p>${changeSummaryToHtml(payload.changes)}`,
+    highlightParam: 'highlight', highlightId: id,
+  });
+}));
+
+// the platform owner editing someone else's profile directly from the tree — still goes
+// through the normal admin-approval queue like any other edit, just tagged as owner-initiated
+// (and attributed to the owner's own user id, not the target person) so admins reviewing it
+// know it came from the owner, not the person themselves.
+router.post('/owner/people/:id/request-update', upload.single('photo'), wrap(async (req,res)=>{
+  if (!requireOwner(req,res)) return;
+  const current = await db.prepare('SELECT * FROM people WHERE id = ?').get(req.params.id);
+  if (!current) return res.status(404).json({ error: 'profile not found' });
+
+  const payload = await buildUpdatePersonPayload(current, req.body || {}, req.file, []);
+  payload.owner_initiated = true;
+
+  const id = uuidv4();
+  await db.prepare('INSERT INTO requests (id, type, payload, status, created_by, created_at) VALUES (?, ?, ?, ?, ?, ?)').run(id, 'update_person', JSON.stringify(payload), 'pending', req.session.user.id, now());
+  res.json({ ok:true, id });
+  await notifyAdmins(req, {
+    subject: 'Profile update request (from the platform owner)',
+    bodyHtml: `<p>The platform owner wants to update <strong>${current.full_name}</strong>'s profile.</p>${changeSummaryToHtml(payload.changes)}`,
     highlightParam: 'highlight', highlightId: id,
   });
 }));
