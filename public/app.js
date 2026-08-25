@@ -934,8 +934,13 @@ async function loadTree(){
   svg.innerHTML = '';
   const me = await api('/auth/me');
   const person = me.person;
-  if (!person) { svg.innerHTML = `<text x="20" y="20">${t('tree_not_logged_in')}</text>`; return; }
-  window.myPersonId = person.id;
+  window.myRole = me.user ? me.user.role : null;
+  // an admin/owner browsing the tree has no personal node to anchor on (and often no
+  // linked profile at all) — let them through anyway, anchored on the family root instead,
+  // so they see the whole tree with nothing highlighted as "them"
+  const isStaff = window.myRole && window.myRole !== 'member';
+  if (!person && !isStaff) { svg.innerHTML = `<text x="20" y="20">${t('tree_not_logged_in')}</text>`; return; }
+  window.myPersonId = person ? person.id : null;
   // fetch full approved tree so every approved member sees the whole family
   let res = await api('/tree/full');
   // if full-tree endpoint returned no nodes (possible in some runtimes), fall back to simple people list
@@ -948,7 +953,9 @@ async function loadTree(){
   let rootInfo = null;
   try{ rootInfo = await api('/tree/root'); }catch(e){ rootInfo = null; }
   const rootId = rootInfo && rootInfo.root ? rootInfo.root.id : null;
-  renderTreeSVG(svg, res, person.id, rootId);
+  // pass null (not rootId) when there's no personal node — renderTreeSVG treats a null
+  // centerId as "nobody to highlight", not "highlight whoever the fallback picks"
+  renderTreeSVG(svg, res, person ? person.id : null, rootId);
 }
 
 // Compute each node's generation relative to an anchor by walking parent/child/spouse
@@ -1183,8 +1190,10 @@ function renderTreeSVG(svg, tree, centerId, rootId){
   nodes.forEach(n=> nodeMap[n.id]=n);
 
   if (nodes.length===0){ svg.innerHTML = `<text x="20" y="20">${t('tree_no_profiles')}</text>`; return; }
-  // ensure centerId exists in nodeMap; if not, fall back to first node
-  if (!nodeMap[centerId]) centerId = nodes[0].id;
+  // ensure a truthy-but-invalid centerId falls back to the first node — but a null centerId
+  // (an admin/owner browsing with no personal node) means "nobody to highlight", not "fall
+  // back to highlighting someone arbitrary", so it's left as null on purpose
+  if (centerId && !nodeMap[centerId]) centerId = nodes[0].id;
   // anchor the whole layout on the admin-designated root profile so every member sees the
   // same tree, oriented the same way, regardless of who is logged in. Fall back to the
   // logged-in person if no root has been set yet.
@@ -1535,7 +1544,9 @@ function renderTreeSVG(svg, tree, centerId, rootId){
   // especially on a narrow phone viewport
   const panZoom = initPanZoom(svg, g);
   svg.__panZoom = panZoom;
-  const myNode = svg.querySelector(`.node[data-id="${centerId}"]`);
+  // fall back to centering on the root when there's no personal node to center on (an
+  // admin/owner browsing) — purely a viewport position, not a highlight
+  const myNode = svg.querySelector(`.node[data-id="${centerId}"]`) || svg.querySelector(`.node[data-id="${anchorId}"]`);
   if (myNode) panZoom.centerOnNode(myNode);
 }
 
@@ -1994,6 +2005,7 @@ const I18N = {
     owner_admin_dashboard_heading: 'Family requests & the tree',
     owner_admin_dashboard_desc: 'Approve/reject requests, manage the root profile, and everything else an administrator can do.',
     owner_go_to_admin_btn: 'Go to Admin Dashboard →',
+    owner_go_to_tree_btn: 'Go to Family Tree →',
     owner_analytics_heading: 'Platform activity (KPIs)',
     owner_analytics_desc: 'What people do on the platform — logins, new/edited accounts, feature usage, and page-load time per person.',
     owner_period_today: 'Today', owner_period_7d: 'Last 7 days', owner_period_30d: 'Last 30 days',
@@ -2332,6 +2344,7 @@ const I18N = {
     owner_admin_dashboard_heading: "Demandes familiales et l'arbre",
     owner_admin_dashboard_desc: "Approuver/rejeter les demandes, gérer le profil racine, et tout ce qu'un administrateur peut faire.",
     owner_go_to_admin_btn: "Aller au tableau de bord administrateur →",
+    owner_go_to_tree_btn: "Aller à l'arbre généalogique →",
     owner_analytics_heading: 'Activité de la plateforme (KPIs)',
     owner_analytics_desc: "Ce que les gens font sur la plateforme — connexions, comptes créés/modifiés, utilisation des fonctionnalités, et temps de chargement des pages par personne.",
     owner_period_today: "Aujourd'hui", owner_period_7d: '7 derniers jours', owner_period_30d: '30 derniers jours',

@@ -125,6 +125,18 @@ function requireLoggedInPerson(req,res){
   return true;
 }
 
+// like requireLoggedInPerson, but also lets an admin/owner through even without a linked
+// profile — the platform owner in particular is often not linked to anyone in the family
+// tree, and still needs to browse/moderate content (view the tree, view archive posts,
+// delete a comment). Only for read/moderate routes — actions attributed to a person (liking,
+// commenting) still need a real person_id and keep using requireLoggedInPerson.
+function requireViewerAccess(req,res){
+  if (!req.session.user){ res.status(401).json({error:'not logged in'}); return false; }
+  if (req.session.user.person_id) return true;
+  if (req.session.user.role && req.session.user.role !== 'member') return true;
+  res.status(403).json({error:'no linked profile'}); return false;
+}
+
 // any logged-in account at all, member or admin — used for actions (like changing one's
 // own password) that don't need a linked person profile
 function requireLoggedIn(req,res){
@@ -1524,7 +1536,7 @@ router.post('/archive/:id/edit', upload.array('files', 10), wrap(async (req,res)
 // approved posts for members to browse, one type at a time — optionally filtered to a
 // single event type (e.g. "marriage"); omit/pass "all" to see everything of that type
 router.get('/archive', wrap(async (req,res)=>{
-  if (!requireLoggedInPerson(req,res)) return;
+  if (!requireViewerAccess(req,res)) return;
   const type = req.query.type;
   if (!['photo','audio','video'].includes(type)) return res.status(400).json({ error: 'invalid type' });
   const eventType = req.query.event_type && req.query.event_type !== 'all' ? req.query.event_type : null;
@@ -1555,7 +1567,7 @@ router.post('/archive/:id/like', wrap(async (req,res)=>{
 }));
 
 router.get('/archive/:id/comments', wrap(async (req,res)=>{
-  if (!requireLoggedInPerson(req,res)) return;
+  if (!requireViewerAccess(req,res)) return;
   const rows = await db.prepare(`SELECT c.id, c.body, c.created_at, c.person_id, p.full_name AS author_name
     FROM archive_comments c LEFT JOIN people p ON p.id = c.person_id
     WHERE c.archive_id = ? ORDER BY c.created_at ASC`).all(req.params.id);
