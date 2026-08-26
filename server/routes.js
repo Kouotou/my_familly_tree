@@ -1875,4 +1875,47 @@ router.post('/notifications/seen', wrap(async (req,res)=>{
   res.json({ ok:true });
 }));
 
+// --- event reminder emails: 1 month / 1 week / 24 hours before, to every opted-in member
+// plus every admin/owner. Triggered by Vercel Cron (see vercel.json — daily, since Vercel's
+// free/hobby tier only allows daily cron granularity anyway, which is plenty of precision for
+// these thresholds) hitting this route with a bearer token matching CRON_SECRET. Each
+// reminder_*_sent flag is a one-way latch: once a threshold is crossed and the email goes
+// out, it's marked sent and never re-sent, even if the daily check runs again tomorrow and
+// the event is still within that same window (e.g. still <30 days out).
+const REMINDER_THRESHOLDS = [
+  { field: 'reminder_month_sent', days: 30, label: '1 month' },
+  { field: 'reminder_week_sent', days: 7, label: '1 week' },
+  { field: 'reminder_day_sent', days: 1, label: '24 hours' },
+];
+router.get('/cron/event-reminders', wrap(async (req,res)=>{
+  const expected = process.env.CRON_SECRET;
+  if (expected && req.headers.authorization !== `Bearer ${expected}`) return res.status(401).json({ error: 'unauthorized' });
+
+  const events = await db.prepare("SELECT * FROM events WHERE approval_status = 'approved' AND event_at > ?").all(now());
+  const memberEmails = await getMemberRecipients();
+  const adminEmails = await getAdminRecipients();
+  const recipients = Array.from(new Set([...memberEmails, ...adminEmails]));
+
+  let sent = 0;
+  for (const ev of events){
+    const daysUntil = (new Date(ev.event_at).getTime() - Date.now()) / (24*3600*1000);
+    for (const threshold of REMINDER_THRESHOLDS){
+      if (ev[threshold.field]) continue;
+      if (daysUntil > threshold.days) continue;
+      await db.prepare(`UPDATE events SET ${threshold.field} = true WHERE id = ?`).run(ev.id);
+      if (!recipients.length) continue;
+      try{
+        await sendEmail({
+          to: recipients,
+          subject: `[Nah Adja Mbethe] Reminder: ${ev.title} is in ${threshold.label}`,
+          html: `<p><strong>${ev.title}</strong> is coming up in ${threshold.label} — ${new Date(ev.event_at).toLocaleString()}${ev.location ? ` at ${ev.location}` : ''}.</p>`
+            + `<p><a href="${req.protocol}://${req.get('host')}/archives.html?tab=events&highlight=${ev.id}">View details</a></p>`,
+        });
+        sent++;
+      }catch(e){ console.error('[cron] reminder email failed', e && e.message || e); }
+    }
+  }
+  res.json({ ok: true, eventsChecked: events.length, remindersSent: sent });
+}));
+
 module.exports = router;
