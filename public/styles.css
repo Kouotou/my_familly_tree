@@ -111,6 +111,51 @@ body{
 }
 .toggles button:hover{ background:var(--topbar-btn-bg-hover); transform: translateY(-1px); }
 
+/* --- notification bell (tree.html only) --- */
+#notif-bell-wrap{ position:relative; display:inline-block }
+#notif-bell-btn{
+	margin-left:8px; padding:8px 12px; border-radius:999px; border:1px solid var(--topbar-btn-border);
+	background:var(--topbar-btn-bg); color:var(--topbar-text); cursor:pointer; font-size:15px; position:relative;
+	transition: background 150ms ease, transform 150ms ease;
+}
+#notif-bell-btn:hover{ background:var(--topbar-btn-bg-hover); transform: translateY(-1px); }
+#notif-bell-badge{
+	position:absolute; top:-4px; right:-4px; background:#d1476b; color:#fff; font-size:10px; font-weight:800;
+	min-width:16px; height:16px; border-radius:999px; display:flex; align-items:center; justify-content:center; padding:0 3px;
+	border:2px solid var(--topbar-grad-1);
+}
+#notif-bell-dropdown{
+	position:absolute; top:calc(100% + 10px); right:0; width:320px; max-width:88vw; max-height:400px; overflow-y:auto;
+	background:var(--card); border:1px solid var(--border); border-radius:var(--rounded); box-shadow:var(--shadow); z-index:95;
+	padding:8px;
+}
+.notif-item{
+	display:block; padding:10px 12px; border-radius:10px; text-decoration:none; color:var(--text);
+	font-size:13px; border-bottom:1px solid var(--border);
+}
+.notif-item:last-child{ border-bottom:none }
+.notif-item:hover{ background:var(--card-alt) }
+.notif-item-title{ font-weight:700; display:block; margin-bottom:2px }
+.notif-item-meta{ color:var(--muted); font-size:12px }
+.notif-empty{ padding:16px; text-align:center; color:var(--muted); font-size:13px }
+
+/* --- public/logged-in events countdown widget (index.html + tree.html) --- */
+#public-events-widget{
+	background: linear-gradient(120deg, var(--topbar-grad-1) 0%, var(--topbar-grad-2) 100%);
+	color:var(--topbar-text); border-bottom:1px solid var(--border);
+}
+#public-events-toggle{
+	width:100%; margin:0; padding:12px 24px; background:none; border:none; box-shadow:none; color:inherit;
+	display:flex; align-items:center; justify-content:center; gap:10px; cursor:pointer; font-size:14px; font-weight:700;
+	font-family: var(--font-body);
+}
+#public-events-caret{ font-size:12px; transition: transform 150ms ease }
+#public-events-widget.open #public-events-caret{ transform: rotate(180deg) }
+#public-events-list{ padding:0 24px 16px; display:flex; flex-direction:column; gap:10px; max-width:600px; margin:0 auto }
+.public-event-row{ background:rgba(255,255,255,0.14); border-radius:10px; padding:10px 14px; font-size:13px }
+.public-event-row-title{ font-weight:700; margin-bottom:2px }
+.public-event-row-countdown{ font-size:12px; opacity:0.9 }
+
 main{ padding:40px 48px 64px; max-width:1100px;margin:0 auto }
 
 /* --- Landing --- */

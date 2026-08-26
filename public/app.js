@@ -973,6 +973,109 @@ function countdownString(targetIso){
   return parts.join(' ');
 }
 
+// title + live countdown for the nearest upcoming approved event(s) — no location/
+// description, deliberately, since this shows on index.html before anyone has logged in.
+// Present on index.html (anyone) and tree.html (logged-in, as the same "insight" widget) —
+// both share this one implementation since neither needs more than title+countdown; full
+// detail lives on the Archives Events tab.
+(function setupPublicEventsWidget(){
+  const widget = document.getElementById('public-events-widget');
+  if (!widget) return;
+  const toggleBtn = document.getElementById('public-events-toggle');
+  const headline = document.getElementById('public-events-headline');
+  const list = document.getElementById('public-events-list');
+  let timers = [];
+  function clearTimers(){ timers.forEach(id=> clearInterval(id)); timers = []; }
+
+  async function load(){
+    let events = [];
+    try{ events = await api('/events/public-upcoming'); }catch(e){ events = []; }
+    clearTimers();
+    if (!Array.isArray(events) || !events.length){ widget.classList.add('hidden'); return; }
+    widget.classList.remove('hidden');
+
+    const soonest = events[0];
+    const updateHeadline = ()=>{ headline.textContent = `📅 ${t('public_events_upcoming')}: ${soonest.title} — ${countdownString(soonest.event_at)}`; };
+    updateHeadline();
+    timers.push(setInterval(updateHeadline, 1000));
+
+    list.innerHTML = '';
+    events.forEach(ev=>{
+      const row = document.createElement('div'); row.className = 'public-event-row';
+      const titleEl = document.createElement('div'); titleEl.className = 'public-event-row-title'; titleEl.textContent = ev.title;
+      const cd = document.createElement('div'); cd.className = 'public-event-row-countdown';
+      const updateRow = ()=>{ cd.textContent = countdownString(ev.event_at); };
+      updateRow();
+      timers.push(setInterval(updateRow, 1000));
+      row.appendChild(titleEl); row.appendChild(cd);
+      list.appendChild(row);
+    });
+  }
+
+  toggleBtn.addEventListener('click', ()=>{
+    const willOpen = list.classList.contains('hidden');
+    list.classList.toggle('hidden', !willOpen);
+    widget.classList.toggle('open', willOpen);
+  });
+
+  load();
+})();
+
+// bell icon (tree.html) — badge count + dropdown of the most recent approved posts/events,
+// each linking straight to it on the Archives page. Opening the dropdown marks everything
+// seen (POST /notifications/seen), clearing the badge — matches a typical notification-bell
+// UX rather than per-item read tracking.
+(function setupNotificationBell(){
+  const btn = document.getElementById('notif-bell-btn');
+  if (!btn) return;
+  const badge = document.getElementById('notif-bell-badge');
+  const dropdown = document.getElementById('notif-bell-dropdown');
+
+  function kindLabel(kind){
+    return t('notif_kind_' + kind) || kind;
+  }
+
+  async function refreshBadge(){
+    try{
+      const j = await api('/notifications/summary');
+      const count = j.count || 0;
+      badge.textContent = String(count);
+      badge.classList.toggle('hidden', count === 0);
+    }catch(e){}
+  }
+
+  async function openDropdown(){
+    const willOpen = dropdown.classList.contains('hidden');
+    dropdown.classList.toggle('hidden', !willOpen);
+    if (!willOpen) return;
+    dropdown.innerHTML = `<div class="notif-empty">${t('loading')}</div>`;
+    try{
+      const j = await api('/notifications/summary');
+      if (!j.items || !j.items.length){
+        dropdown.innerHTML = `<div class="notif-empty">${t('notif_empty')}</div>`;
+      } else {
+        dropdown.innerHTML = '';
+        j.items.forEach(item=>{
+          const a = document.createElement('a'); a.className = 'notif-item'; a.href = item.link;
+          const titleEl = document.createElement('span'); titleEl.className = 'notif-item-title';
+          titleEl.textContent = item.title ? item.title.slice(0,60) : kindLabel(item.kind);
+          const meta = document.createElement('span'); meta.className = 'notif-item-meta';
+          meta.textContent = kindLabel(item.kind) + ' — ' + new Date(item.went_live).toLocaleString();
+          a.appendChild(titleEl); a.appendChild(meta);
+          dropdown.appendChild(a);
+        });
+      }
+    }catch(e){ dropdown.innerHTML = `<div class="notif-empty">${t('error_loading')}</div>`; }
+    badge.classList.add('hidden'); badge.textContent = '0';
+    try{ await fetch('/api/notifications/seen', { method:'POST', credentials:'same-origin' }); }catch(e){}
+  }
+
+  btn.addEventListener('click', (e)=>{ e.stopPropagation(); openDropdown(); });
+  document.addEventListener('click', (e)=>{ if (!dropdown.classList.contains('hidden') && !dropdown.contains(e.target) && e.target !== btn) dropdown.classList.add('hidden'); });
+
+  refreshBadge();
+})();
+
 async function loadTree(){
   const svg = document.getElementById('tree-svg');
   svg.innerHTML = '';
@@ -2322,6 +2425,10 @@ const I18N = {
     admin_events_tab: 'Events',
     admin_events_field_title: 'Title', admin_events_field_location: 'Where', admin_events_field_when: 'When',
     admin_events_field_description: 'Details', admin_events_field_posted_by: 'Proposed by',
+
+    public_events_upcoming: 'Upcoming',
+    notif_kind_photo: 'Photo', notif_kind_audio: 'Audio', notif_kind_video: 'Video', notif_kind_event: 'Event',
+    notif_empty: 'Nothing new yet.',
   },
   fr: {
     brand: 'Famille Nah Adja Mbethe',
@@ -2680,6 +2787,10 @@ const I18N = {
     admin_events_tab: 'Événements',
     admin_events_field_title: 'Titre', admin_events_field_location: 'Où', admin_events_field_when: 'Quand',
     admin_events_field_description: 'Détails', admin_events_field_posted_by: 'Proposé par',
+
+    public_events_upcoming: 'À venir',
+    notif_kind_photo: 'Photo', notif_kind_audio: 'Audio', notif_kind_video: 'Vidéo', notif_kind_event: 'Événement',
+    notif_empty: 'Rien de nouveau pour le moment.',
   }
 };
 

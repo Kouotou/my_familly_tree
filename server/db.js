@@ -255,6 +255,10 @@ async function ensureSchema() {
       ALTER TABLE users ADD COLUMN IF NOT EXISTS email TEXT;
       ALTER TABLE users ADD COLUMN IF NOT EXISTS must_change_password BOOLEAN DEFAULT false;
       ALTER TABLE users ADD COLUMN IF NOT EXISTS created_at TEXT;
+      -- when this user last opened the notification bell — "new" items are anything that
+      -- went live (was approved) after this, computed on the fly rather than a separate
+      -- per-user-per-item read-tracking table
+      ALTER TABLE users ADD COLUMN IF NOT EXISTS notifications_seen_at TEXT;
     `);
     console.log('[db] schema ready (postgres)');
   } finally {

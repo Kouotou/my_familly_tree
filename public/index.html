@@ -16,6 +16,17 @@
       </div>
     </header>
 
+    <!-- shown to anyone, logged in or not, whenever the family has an upcoming approved
+         event — title and countdown only; full details (where/what) require logging in and
+         visiting the Archives Events tab. Hidden entirely if there's nothing upcoming. -->
+    <div id="public-events-widget" class="hidden">
+      <button type="button" id="public-events-toggle">
+        <span id="public-events-headline"></span>
+        <span id="public-events-caret">▾</span>
+      </button>
+      <div id="public-events-list" class="hidden"></div>
+    </div>
+
     <main>
       <section id="landing">
         <div class="left-card">

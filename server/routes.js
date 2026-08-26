@@ -1818,4 +1818,32 @@ router.post('/feedback', express.json(), wrap(async (req,res)=>{
   res.json({ ok:true, id, created_at: now(), author_name: person ? person.full_name : null });
 }));
 
+// --- notification bell: recent approved archive posts + events, merged and sorted by when
+// they went live (approval time, falling back to creation time for older rows with no
+// reviewed_at). "New" is whatever's newer than this user's own notifications_seen_at —
+// queried fresh here rather than trusted from the session, since it changes on every bell
+// open and the session is only refreshed at login.
+router.get('/notifications/summary', wrap(async (req,res)=>{
+  if (!requireLoggedIn(req,res)) return;
+  const posts = await db.prepare(`SELECT id, type, description, COALESCE(reviewed_at, created_at) AS went_live
+    FROM archive WHERE approval_status = 'approved' ORDER BY went_live DESC LIMIT 15`).all();
+  const events = await db.prepare(`SELECT id, title, COALESCE(reviewed_at, created_at) AS went_live
+    FROM events WHERE approval_status = 'approved' ORDER BY went_live DESC LIMIT 15`).all();
+  const items = [
+    ...posts.map(p => ({ id: p.id, kind: p.type, title: p.description || null, went_live: p.went_live, link: `/archives.html?tab=${p.type}&highlight=${p.id}` })),
+    ...events.map(e => ({ id: e.id, kind: 'event', title: e.title, went_live: e.went_live, link: `/archives.html?tab=events&highlight=${e.id}` })),
+  ].sort((a,b)=> new Date(b.went_live) - new Date(a.went_live)).slice(0, 10);
+
+  const user = await db.prepare('SELECT notifications_seen_at FROM users WHERE id = ?').get(req.session.user.id);
+  const seenAt = user && user.notifications_seen_at ? new Date(user.notifications_seen_at) : null;
+  const count = seenAt ? items.filter(i => new Date(i.went_live) > seenAt).length : items.length;
+  res.json({ count, items });
+}));
+
+router.post('/notifications/seen', wrap(async (req,res)=>{
+  if (!requireLoggedIn(req,res)) return;
+  await db.prepare('UPDATE users SET notifications_seen_at = ? WHERE id = ?').run(now(), req.session.user.id);
+  res.json({ ok:true });
+}));
+
 module.exports = router;

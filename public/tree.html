@@ -16,10 +16,24 @@
       <h1 id="brand" data-i18n="brand">Famille Nah Adja Mbethe</h1>
     </div>
     <div class="toggles">
+      <div id="notif-bell-wrap">
+        <button type="button" id="notif-bell-btn" aria-label="Notifications">
+          🔔<span id="notif-bell-badge" class="hidden">0</span>
+        </button>
+        <div id="notif-bell-dropdown" class="hidden"></div>
+      </div>
       <button id="lang-toggle">FR/EN</button>
       <button id="theme-toggle">Light/Dark</button>
     </div>
   </header>
+
+  <div id="public-events-widget" class="hidden">
+    <button type="button" id="public-events-toggle">
+      <span id="public-events-headline"></span>
+      <span id="public-events-caret">▾</span>
+    </button>
+    <div id="public-events-list" class="hidden"></div>
+  </div>
 
   <div id="sidebar-overlay"></div>
   <div id="sidebar-drawer">
