@@ -41,8 +41,12 @@
         <button id="tab-photos" class="active" data-i18n="archives_tab_photos">Photos</button>
         <button id="tab-audios" data-i18n="archives_tab_audios">Audios</button>
         <button id="tab-videos" data-i18n="archives_tab_videos">Videos</button>
+        <button id="tab-events" data-i18n="archives_tab_events">Events</button>
       </div>
-      <button type="button" id="new-post-btn" class="secondary archive-new-post" data-i18n="archives_new_post">+ New post</button>
+      <div class="archive-new-post-row">
+        <button type="button" id="new-post-btn" class="secondary archive-new-post" data-i18n="archives_new_post">+ New post</button>
+        <button type="button" id="new-event-btn" class="secondary archive-new-post" data-i18n="archives_new_event">+ Program an event</button>
+      </div>
 
       <div id="archive-grid" class="archive-grid"></div>
     </div>
@@ -84,6 +88,22 @@
     </div>
   </div>
 
+  <!-- program/edit event modal -->
+  <div id="new-event-modal">
+    <div id="new-event-card">
+      <button id="new-event-close" aria-label="Close">&times;</button>
+      <h3 id="new-event-title" data-i18n="sched_modal_title">Program an event</h3>
+      <form id="new-event-form">
+        <label data-i18n="sched_field_title">Title<input type="text" id="ne-title" required /></label>
+        <label data-i18n="sched_field_location">Where<input type="text" id="ne-location" /></label>
+        <label data-i18n="sched_field_datetime">When<input type="datetime-local" id="ne-datetime" required /></label>
+        <label data-i18n="sched_field_description">More details (optional)<textarea id="ne-description" rows="3"></textarea></label>
+        <button type="submit" id="new-event-submit-btn" data-i18n="sched_submit">Submit for admin approval</button>
+      </form>
+      <div id="new-event-feedback" class="hint"></div>
+    </div>
+  </div>
+
   <script src="/cultural-bg.js"></script>
   <script src="/app.js"></script>
   <script type="module">
@@ -102,7 +122,12 @@
       let myPersonId = null;
       let myRole = null;
       let editingItem = null;
-      const tabs = { photo: 'tab-photos', audio: 'tab-audios', video: 'tab-videos' };
+      let editingEvent = null;
+      const tabs = { photo: 'tab-photos', audio: 'tab-audios', video: 'tab-videos', events: 'tab-events' };
+      // live countdowns on the Events tab tick every second — tracked here so they can all
+      // be cleared before the grid is torn down/re-rendered (switching tabs, re-filtering)
+      let countdownTimers = [];
+      function clearCountdownTimers(){ countdownTimers.forEach(id=> clearInterval(id)); countdownTimers = []; }
 
       function setActiveTab(type){
         currentTab = type;
@@ -113,8 +138,53 @@
         try{ const d = new Date(iso); return d.toLocaleString(); }catch(e){ return iso || ''; }
       }
 
+      // countdown formatting itself (countdownString()) is shared with the login-page/tree
+      // "upcoming event" widget — defined once in app.js so both always agree on formatting
+
+      function renderEventCard(item){
+        const card = document.createElement('div'); card.className = 'archive-card event-card'; card.dataset.itemId = item.id;
+        const body = document.createElement('div'); body.className = 'archive-card-body';
+        const h3 = document.createElement('h3'); h3.className = 'event-card-title'; h3.textContent = item.title;
+        body.appendChild(h3);
+        const countdown = document.createElement('div'); countdown.className = 'event-card-countdown';
+        countdown.textContent = countdownString(item.event_at);
+        body.appendChild(countdown);
+        countdownTimers.push(setInterval(()=>{ countdown.textContent = countdownString(item.event_at); }, 1000));
+
+        const when = document.createElement('div'); when.className = 'archive-detail-row'; when.innerHTML = `<strong>${t('sched_field_datetime')}:</strong> ${formatDate(item.event_at)}`;
+        body.appendChild(when);
+        if (item.location){ const loc = document.createElement('div'); loc.className = 'archive-detail-row'; loc.innerHTML = `<strong>${t('sched_field_location')}:</strong> ${item.location}`; body.appendChild(loc); }
+        if (item.description){ const p = document.createElement('p'); p.className = 'archive-card-caption'; p.textContent = item.description; body.appendChild(p); }
+
+        const meta = document.createElement('div'); meta.className = 'archive-card-meta';
+        meta.textContent = item.posted_by_name
+          ? t('archives_posted_by', { name: item.posted_by_name, date: formatDate(item.created_at) })
+          : t('archives_posted_by_unknown', { date: formatDate(item.created_at) });
+        body.appendChild(meta);
+
+        const isOwn = item.person_id && item.person_id === myPersonId;
+        const isStaff = myRole && myRole !== 'member';
+        if (isOwn || isStaff){
+          const actions = document.createElement('div'); actions.className = 'archive-event-actions';
+          const editBtn = document.createElement('button'); editBtn.type = 'button'; editBtn.className = 'secondary archive-edit-btn'; editBtn.textContent = t('archives_edit_btn');
+          editBtn.addEventListener('click', ()=> openEditEventModal(item));
+          actions.appendChild(editBtn);
+          const delBtn = document.createElement('button'); delBtn.type = 'button'; delBtn.className = 'secondary'; delBtn.textContent = t('sched_delete_btn');
+          delBtn.addEventListener('click', async ()=>{
+            if (!await showConfirm(t('sched_confirm_delete'))) return;
+            await fetch('/api/events/' + item.id + '/delete', { method:'POST', credentials:'same-origin' });
+            loadTab('events');
+          });
+          actions.appendChild(delBtn);
+          body.appendChild(actions);
+        }
+
+        card.appendChild(body);
+        return card;
+      }
+
       function renderCard(item){
-        const card = document.createElement('div'); card.className = 'archive-card';
+        const card = document.createElement('div'); card.className = 'archive-card'; card.dataset.itemId = item.id;
         if (item.type === 'photo' && Array.isArray(item.file_paths) && item.file_paths.length){
           const media = document.createElement('div'); media.className = 'archive-photo-media';
           const mainImg = document.createElement('img'); mainImg.className = 'archive-card-media'; mainImg.src = item.file_paths[0]; mainImg.alt = '';
@@ -309,14 +379,40 @@
         });
       }
 
+      // guards against a stale fetch landing after a newer one — switching tabs (or
+      // re-filtering) quickly enough that an earlier loadTab() call's response arrives after
+      // a later call's could otherwise append the wrong tab's cards into the current grid
+      let loadToken = 0;
       async function loadTab(type){
+        const myToken = ++loadToken;
+        clearCountdownTimers();
         setActiveTab(type);
+        document.querySelector('.archive-events-bar').classList.toggle('hidden', type === 'events');
         const grid = document.getElementById('archive-grid');
         grid.innerHTML = '';
+        if (type === 'events'){
+          try{
+            const items = await api('/events');
+            if (myToken !== loadToken) return;
+            if (!Array.isArray(items) || items.length === 0){
+              const empty = document.createElement('div'); empty.className = 'archive-empty';
+              empty.textContent = t('archives_empty_events');
+              grid.appendChild(empty);
+              return;
+            }
+            // soonest upcoming first, then past events (most recently passed first)
+            const now2 = Date.now();
+            const upcoming = items.filter(i=> new Date(i.event_at).getTime() > now2).sort((a,b)=> new Date(a.event_at)-new Date(b.event_at));
+            const past = items.filter(i=> new Date(i.event_at).getTime() <= now2).sort((a,b)=> new Date(b.event_at)-new Date(a.event_at));
+            [...upcoming, ...past].forEach(item => grid.appendChild(renderEventCard(item)));
+          }catch(e){ if (myToken === loadToken) grid.innerHTML = `<div class="archive-empty">${t('error_loading')}</div>`; }
+          return;
+        }
         try{
           const eventFilter = document.getElementById('event-filter').value;
           const qs = 'type=' + encodeURIComponent(type) + (eventFilter && eventFilter !== 'all' ? '&event_type=' + encodeURIComponent(eventFilter) : '');
           const items = await api('/archive?' + qs);
+          if (myToken !== loadToken) return;
           if (!Array.isArray(items) || items.length === 0){
             const empty = document.createElement('div'); empty.className = 'archive-empty';
             empty.textContent = t('archives_empty_' + type + 's');
@@ -324,13 +420,14 @@
             return;
           }
           items.forEach(item => grid.appendChild(renderCard(item)));
-        }catch(e){ grid.innerHTML = `<div class="archive-empty">${t('error_loading')}</div>`; }
+        }catch(e){ if (myToken === loadToken) grid.innerHTML = `<div class="archive-empty">${t('error_loading')}</div>`; }
       }
 
-      document.getElementById('tab-photos').addEventListener('click', ()=> loadTab('photo'));
-      document.getElementById('tab-audios').addEventListener('click', ()=> loadTab('audio'));
-      document.getElementById('tab-videos').addEventListener('click', ()=> loadTab('video'));
-      document.getElementById('event-filter').addEventListener('change', ()=> loadTab(currentTab));
+      document.getElementById('tab-photos').addEventListener('click', ()=> identityReady.then(()=> loadTab('photo')));
+      document.getElementById('tab-audios').addEventListener('click', ()=> identityReady.then(()=> loadTab('audio')));
+      document.getElementById('tab-videos').addEventListener('click', ()=> identityReady.then(()=> loadTab('video')));
+      document.getElementById('tab-events').addEventListener('click', ()=> identityReady.then(()=> loadTab('events')));
+      document.getElementById('event-filter').addEventListener('change', ()=> identityReady.then(()=> loadTab(currentTab)));
 
       // new post / edit post modal (shared — editingItem selects which mode)
       const modal = document.getElementById('new-post-modal');
@@ -438,7 +535,62 @@
         }catch(err){ console.error(err); feedback.textContent = t('network_error'); }
       });
 
-      (async ()=>{
+      // program/edit event modal (shared — editingEvent selects which mode)
+      const eventModal = document.getElementById('new-event-modal');
+      const eventModalTitle = document.getElementById('new-event-title');
+      const eventSubmitBtn = document.getElementById('new-event-submit-btn');
+
+      document.getElementById('new-event-btn').addEventListener('click', ()=>{
+        editingEvent = null;
+        document.getElementById('new-event-form').reset();
+        eventModalTitle.setAttribute('data-i18n', 'sched_modal_title'); eventModalTitle.textContent = t('sched_modal_title');
+        eventSubmitBtn.setAttribute('data-i18n', 'sched_submit'); eventSubmitBtn.textContent = t('sched_submit');
+        document.getElementById('new-event-feedback').textContent = '';
+        eventModal.style.display = 'flex';
+      });
+
+      window.openEditEventModal = function(item){
+        editingEvent = item;
+        document.getElementById('ne-title').value = item.title || '';
+        document.getElementById('ne-location').value = item.location || '';
+        // datetime-local wants "YYYY-MM-DDTHH:MM" in local time, not the ISO string's UTC form
+        const d = new Date(item.event_at);
+        const local = new Date(d.getTime() - d.getTimezoneOffset()*60000).toISOString().slice(0,16);
+        document.getElementById('ne-datetime').value = local;
+        document.getElementById('ne-description').value = item.description || '';
+        eventModalTitle.setAttribute('data-i18n', 'archives_edit_title'); eventModalTitle.textContent = t('archives_edit_title');
+        eventSubmitBtn.setAttribute('data-i18n', 'archives_edit_submit'); eventSubmitBtn.textContent = t('archives_edit_submit');
+        document.getElementById('new-event-feedback').textContent = '';
+        eventModal.style.display = 'flex';
+      };
+
+      document.getElementById('new-event-close').addEventListener('click', ()=> eventModal.style.display = 'none');
+      eventModal.addEventListener('click', (e)=>{ if (e.target === eventModal) eventModal.style.display = 'none'; });
+
+      document.getElementById('new-event-form').addEventListener('submit', async (e)=>{
+        e.preventDefault();
+        const feedback = document.getElementById('new-event-feedback');
+        feedback.textContent = t('sched_submitting');
+        const payload = {
+          title: document.getElementById('ne-title').value.trim(),
+          location: document.getElementById('ne-location').value.trim(),
+          event_at: document.getElementById('ne-datetime').value ? new Date(document.getElementById('ne-datetime').value).toISOString() : '',
+          description: document.getElementById('ne-description').value.trim(),
+        };
+        const endpoint = editingEvent ? ('/api/events/' + editingEvent.id + '/edit') : '/api/events';
+        try{
+          const res = await fetch(endpoint, { method:'POST', headers:{'Content-Type':'application/json'}, credentials:'same-origin', body: JSON.stringify(payload) });
+          const j = await res.json();
+          if (j.ok){ track('event_submit'); feedback.textContent = t('sched_submitted_ok'); setTimeout(()=>{ eventModal.style.display='none'; loadTab('events'); }, 1400); }
+          else feedback.textContent = j.error || t('np_error_generic');
+        }catch(err){ feedback.textContent = t('network_error'); }
+      });
+
+      // every tab load (the initial one and every click) awaits this first — without it, a
+      // tab clicked quickly enough (a slow connection, or a fast click right after page
+      // load) could render cards before myPersonId/myRole are known, hiding a real "Edit"/
+      // comment-delete button that should have been shown
+      const identityReady = (async ()=>{
         try{
           const res = await fetch('/api/auth/me', { credentials:'same-origin' });
           if (!res.ok){ window.location.href = '/'; return; }
@@ -446,8 +598,24 @@
           myPersonId = me.person ? me.person.id : null;
           myRole = me.user ? me.user.role : null;
         }catch(e){}
-        loadTab('photo');
       })();
+
+      // deep link from the notification bell: ?tab=photo|audio|video|events opens that tab,
+      // &highlight=<id> scrolls to and briefly outlines the matching card once it's rendered
+      identityReady.then(async ()=>{
+        const params = new URLSearchParams(location.search);
+        const wantedTab = tabs[params.get('tab')] ? params.get('tab') : 'photo';
+        await loadTab(wantedTab);
+        const highlightId = params.get('highlight');
+        if (highlightId){
+          const card = document.querySelector(`[data-item-id="${highlightId}"]`);
+          if (card){
+            card.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            card.classList.add('archive-card-highlighted');
+            setTimeout(()=> card.classList.remove('archive-card-highlighted'), 3000);
+          }
+        }
+      });
     })();
   </script>
 </body>

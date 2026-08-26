@@ -212,6 +212,28 @@ async function ensureSchema() {
         created_at TEXT
       );
 
+      -- a scheduled family happening (wedding, reunion, funeral, ...) with a date/time and
+      -- location — distinct from archive.event_type, which just tags an existing post
+      -- (photo/audio/video) as being *about* an event. reminder_*_sent flags let the daily
+      -- cron job (GET /cron/event-reminders in server/routes.js) fire each reminder exactly
+      -- once as its threshold is crossed, without needing a separate reminders table.
+      CREATE TABLE IF NOT EXISTS events (
+        id TEXT PRIMARY KEY,
+        title TEXT NOT NULL,
+        location TEXT,
+        event_at TEXT NOT NULL,
+        description TEXT,
+        person_id TEXT,
+        created_by TEXT,
+        created_at TEXT,
+        approval_status TEXT DEFAULT 'pending',
+        reviewed_by TEXT,
+        reviewed_at TEXT,
+        reminder_month_sent BOOLEAN DEFAULT false,
+        reminder_week_sent BOOLEAN DEFAULT false,
+        reminder_day_sent BOOLEAN DEFAULT false
+      );
+
       CREATE TABLE IF NOT EXISTS analytics_events (
         id TEXT PRIMARY KEY,
         event_type TEXT NOT NULL,

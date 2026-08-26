@@ -1669,6 +1669,133 @@ router.post('/admin/archive/:id/delete', wrap(async (req,res)=>{
   res.json({ ok:true });
 }));
 
+// --- family events: a scheduled happening (wedding, reunion, funeral, ...) with a date/
+// time/location — distinct from archive.event_type, which just tags an existing post as
+// being *about* an event. Browsable from archives.html's Events tab (full detail, logged-in
+// only) and counted down to on the login page and tree.html (title + date only, no location/
+// description, visible to anyone since the login page has no session yet). Approval-gated
+// exactly like an archive post — its own approval_status, not the generic requests queue.
+router.post('/events', express.json(), wrap(async (req,res)=>{
+  if (!requireLoggedInPerson(req,res)) return;
+  const body = req.body || {};
+  const title = (body.title || '').trim();
+  const eventAt = body.event_at || null;
+  if (!title) return res.status(400).json({ error: 'A title is required.' });
+  if (!eventAt || !isFinite(new Date(eventAt))) return res.status(400).json({ error: 'A valid date and time is required.' });
+
+  const id = uuidv4();
+  await db.prepare('INSERT INTO events (id, title, location, event_at, description, person_id, created_by, created_at, approval_status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)')
+    .run(id, title, body.location || null, eventAt, body.description || null, req.session.user.person_id, req.session.user.id, now(), 'pending');
+  res.json({ ok:true, id });
+
+  const poster = await db.prepare('SELECT full_name FROM people WHERE id = ?').get(req.session.user.person_id);
+  try{
+    const recipients = await getAdminRecipients();
+    if (recipients.length){
+      const link = `${req.protocol}://${req.get('host')}/admin.html?eventHighlight=${encodeURIComponent(id)}`;
+      await sendEmail({
+        to: recipients,
+        subject: `[Nah Adja Mbethe] New event proposed: ${title}`,
+        html: `<p><strong>${poster ? poster.full_name : 'Someone'}</strong> proposed a new event: <strong>${title}</strong>.</p><p><a href="${link}">Review and respond</a></p>`,
+      });
+    }
+  }catch(e){ console.error('[notify] failed', e && e.message || e); }
+}));
+
+// the creator or any admin/owner can edit — re-submits for approval, same as editing an
+// archive post, and clears any reminders already sent since the date may have changed
+router.post('/events/:id/edit', express.json(), wrap(async (req,res)=>{
+  if (!requireLoggedInPerson(req,res)) return;
+  const row = await db.prepare('SELECT * FROM events WHERE id = ?').get(req.params.id);
+  if (!row) return res.status(404).json({ error: 'not found' });
+  const isOwnEvent = row.person_id === req.session.user.person_id;
+  const isStaff = req.session.user.role && req.session.user.role !== 'member';
+  if (!isOwnEvent && !isStaff) return res.status(403).json({ error: 'forbidden' });
+
+  const body = req.body || {};
+  const title = (body.title || row.title || '').trim();
+  const eventAt = body.event_at || row.event_at;
+  if (!title) return res.status(400).json({ error: 'A title is required.' });
+  if (!isFinite(new Date(eventAt))) return res.status(400).json({ error: 'A valid date and time is required.' });
+
+  await db.prepare(`UPDATE events SET title = ?, location = ?, event_at = ?, description = ?, approval_status = 'pending',
+    reviewed_by = NULL, reviewed_at = NULL, reminder_month_sent = false, reminder_week_sent = false, reminder_day_sent = false
+    WHERE id = ?`).run(title, body.location || null, eventAt, body.description || null, req.params.id);
+  res.json({ ok:true });
+}));
+
+// the creator or any admin/owner can delete outright, no approval queue involved
+router.post('/events/:id/delete', wrap(async (req,res)=>{
+  if (!requireLoggedInPerson(req,res)) return;
+  const row = await db.prepare('SELECT * FROM events WHERE id = ?').get(req.params.id);
+  if (!row) return res.status(404).json({ error: 'not found' });
+  const isOwnEvent = row.person_id === req.session.user.person_id;
+  const isStaff = req.session.user.role && req.session.user.role !== 'member';
+  if (!isOwnEvent && !isStaff) return res.status(403).json({ error: 'forbidden' });
+  await db.prepare('DELETE FROM events WHERE id = ?').run(req.params.id);
+  res.json({ ok:true });
+}));
+
+async function withEventPosterInfo(row){
+  const person = row.person_id ? await db.prepare('SELECT full_name FROM people WHERE id = ?').get(row.person_id) : null;
+  return { ...row, posted_by_name: person ? person.full_name : null };
+}
+
+// full detail (title, location, date, description) — approved only, for the Archives
+// "Events" tab. Logged-in members/admins/owner only (requireViewerAccess, same as archive
+// browsing) — the public/pre-login view is the separate, deliberately-thinner endpoint below.
+router.get('/events', wrap(async (req,res)=>{
+  if (!requireViewerAccess(req,res)) return;
+  const rows = await db.prepare("SELECT * FROM events WHERE approval_status = 'approved' ORDER BY event_at ASC").all();
+  res.json(await Promise.all(rows.map(withEventPosterInfo)));
+}));
+
+// no auth at all — shown on the login page to anyone, registered or not. Deliberately
+// returns only {id, title, event_at}, never location/description, per the explicit ask that
+// pre-login visitors should only see "there's an event coming up", not where/what it is.
+router.get('/events/public-upcoming', wrap(async (req,res)=>{
+  const rows = await db.prepare("SELECT id, title, event_at FROM events WHERE approval_status = 'approved' AND event_at > ? ORDER BY event_at ASC LIMIT 3").all(now());
+  res.json(rows);
+}));
+
+// admin: list by status (mirrors GET /admin/archive)
+router.get('/admin/events', wrap(async (req,res)=>{
+  if (!requireAdmin(req,res)) return;
+  const status = (req.query.status || 'pending').toLowerCase();
+  if (!['pending','approved','rejected'].includes(status)) return res.status(400).json({ error: 'invalid status' });
+  const rows = await db.prepare('SELECT * FROM events WHERE approval_status = ? ORDER BY event_at ASC').all(status);
+  res.json(await Promise.all(rows.map(withEventPosterInfo)));
+}));
+
+router.post('/admin/events/:id/approve', wrap(async (req,res)=>{
+  if (!requireAdmin(req,res)) return;
+  const row = await db.prepare('SELECT * FROM events WHERE id = ?').get(req.params.id);
+  if (!row) return res.status(404).json({ error: 'not found' });
+  await db.prepare("UPDATE events SET approval_status = 'approved', reviewed_by = ?, reviewed_at = ? WHERE id = ?").run(req.session.user.id, now(), req.params.id);
+  res.json({ ok:true });
+  await notifyMembers(req, {
+    subject: `New event: ${row.title}`,
+    bodyHtml: `<p>A new family event has been announced: <strong>${row.title}</strong>, on ${new Date(row.event_at).toLocaleString()}.</p>`,
+    link: `/archives.html?tab=events&highlight=${row.id}`,
+  });
+}));
+
+router.post('/admin/events/:id/reject', wrap(async (req,res)=>{
+  if (!requireAdmin(req,res)) return;
+  const row = await db.prepare('SELECT id FROM events WHERE id = ?').get(req.params.id);
+  if (!row) return res.status(404).json({ error: 'not found' });
+  await db.prepare("UPDATE events SET approval_status = 'rejected', reviewed_by = ?, reviewed_at = ? WHERE id = ?").run(req.session.user.id, now(), req.params.id);
+  res.json({ ok:true });
+}));
+
+router.post('/admin/events/:id/delete', wrap(async (req,res)=>{
+  if (!requireAdmin(req,res)) return;
+  const row = await db.prepare('SELECT id FROM events WHERE id = ?').get(req.params.id);
+  if (!row) return res.status(404).json({ error: 'not found' });
+  await db.prepare('DELETE FROM events WHERE id = ?').run(req.params.id);
+  res.json({ ok:true });
+}));
+
 // --- feedback board: a single flat, shared chat everyone (member, admin, owner) can post
 // and reply into — no approval step, no email notification, visible to any logged-in
 // account with a linked profile.

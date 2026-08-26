@@ -953,6 +953,26 @@ if (registerForm){
 const backToLanding = document.getElementById('back-to-landing');
 if (backToLanding){ backToLanding.addEventListener('click', async ()=>{ await api('/auth/logout',{method:'POST'}); location.href = '/'; }); }
 
+// {months, days, hours, minutes, seconds}-style countdown string toward targetIso — shared
+// by the public/tree-page events widget and the Archives Events tab, so the two always
+// agree on formatting. Months/days approximate a calendar month as 30 days (matches the
+// reminder-email thresholds, which use the same 30-day approximation server-side).
+function countdownString(targetIso){
+  const diffMs = new Date(targetIso).getTime() - Date.now();
+  if (!isFinite(diffMs) || diffMs <= 0) return t('sched_countdown_passed');
+  const totalSeconds = Math.floor(diffMs / 1000);
+  const months = Math.floor(totalSeconds / (30*24*3600));
+  const days = Math.floor((totalSeconds % (30*24*3600)) / (24*3600));
+  const hours = Math.floor((totalSeconds % (24*3600)) / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+  const parts = [];
+  if (months) parts.push(t('sched_countdown_months', { n: months }));
+  if (days || months) parts.push(t('sched_countdown_days', { n: days }));
+  parts.push(t('sched_countdown_hms', { h: String(hours).padStart(2,'0'), m: String(minutes).padStart(2,'0'), s: String(seconds).padStart(2,'0') }));
+  return parts.join(' ');
+}
+
 async function loadTree(){
   const svg = document.getElementById('tree-svg');
   svg.innerHTML = '';
@@ -2249,10 +2269,13 @@ const I18N = {
     archives_tab_photos: 'Photos',
     archives_tab_audios: 'Audios',
     archives_tab_videos: 'Videos',
+    archives_tab_events: 'Events',
     archives_new_post: '+ New post',
+    archives_new_event: '+ Program an event',
     archives_empty_photos: 'No approved photos yet.',
     archives_empty_audios: 'No approved audio posts yet.',
     archives_empty_videos: 'No approved videos yet.',
+    archives_empty_events: 'No upcoming events yet.',
     archives_posted_by: 'Posted by {name} — {date}',
     archives_posted_by_unknown: 'Posted by a family member — {date}',
     archives_play_video: 'Play video',
@@ -2285,7 +2308,20 @@ const I18N = {
     admin_archive_tab: 'Archive posts',
     admin_archive_no_photo: 'No thumbnail',
     admin_archive_field_type: 'Type', admin_archive_field_caption: 'Caption',
-    admin_archive_field_posted_by: 'Posted by', admin_archive_field_link: 'Link'
+    admin_archive_field_posted_by: 'Posted by', admin_archive_field_link: 'Link',
+
+    sched_modal_title: 'Program an event',
+    sched_field_title: 'Title', sched_field_location: 'Where', sched_field_datetime: 'When',
+    sched_field_description: 'More details (optional)',
+    sched_submit: 'Submit for admin approval', sched_submitting: 'Submitting...',
+    sched_submitted_ok: 'Submitted — pending admin approval.',
+    sched_delete_btn: 'Delete', sched_confirm_delete: 'Delete this event? This cannot be undone.',
+    sched_countdown_passed: 'Happening now / passed',
+    sched_countdown_months: '{n}mo', sched_countdown_days: '{n}d',
+    sched_countdown_hms: '{h}:{m}:{s}',
+    admin_events_tab: 'Events',
+    admin_events_field_title: 'Title', admin_events_field_location: 'Where', admin_events_field_when: 'When',
+    admin_events_field_description: 'Details', admin_events_field_posted_by: 'Proposed by',
   },
   fr: {
     brand: 'Famille Nah Adja Mbethe',
@@ -2591,10 +2627,13 @@ const I18N = {
     archives_tab_photos: 'Photos',
     archives_tab_audios: 'Audios',
     archives_tab_videos: 'Vidéos',
+    archives_tab_events: 'Événements',
     archives_new_post: '+ Nouvelle publication',
+    archives_new_event: '+ Programmer un événement',
     archives_empty_photos: 'Aucune photo approuvée pour le moment.',
     archives_empty_audios: 'Aucun audio approuvé pour le moment.',
     archives_empty_videos: 'Aucune vidéo approuvée pour le moment.',
+    archives_empty_events: 'Aucun événement à venir pour le moment.',
     archives_posted_by: 'Publié par {name} — {date}',
     archives_posted_by_unknown: 'Publié par un membre de la famille — {date}',
     archives_play_video: 'Lire la vidéo',
@@ -2627,7 +2666,20 @@ const I18N = {
     admin_archive_tab: 'Publications des archives',
     admin_archive_no_photo: 'Aucun aperçu',
     admin_archive_field_type: 'Type', admin_archive_field_caption: 'Légende',
-    admin_archive_field_posted_by: 'Publié par', admin_archive_field_link: 'Lien'
+    admin_archive_field_posted_by: 'Publié par', admin_archive_field_link: 'Lien',
+
+    sched_modal_title: 'Programmer un événement',
+    sched_field_title: 'Titre', sched_field_location: 'Où', sched_field_datetime: 'Quand',
+    sched_field_description: 'Plus de détails (optionnel)',
+    sched_submit: "Soumettre pour approbation par l'administrateur", sched_submitting: 'Envoi...',
+    sched_submitted_ok: 'Envoyé — en attente d\'approbation.',
+    sched_delete_btn: 'Supprimer', sched_confirm_delete: 'Supprimer cet événement ? Cette action est irréversible.',
+    sched_countdown_passed: 'En cours / passé',
+    sched_countdown_months: '{n}mo', sched_countdown_days: '{n}j',
+    sched_countdown_hms: '{h}:{m}:{s}',
+    admin_events_tab: 'Événements',
+    admin_events_field_title: 'Titre', admin_events_field_location: 'Où', admin_events_field_when: 'Quand',
+    admin_events_field_description: 'Détails', admin_events_field_posted_by: 'Proposé par',
   }
 };
 
@@ -2683,6 +2735,7 @@ if (langToggle){
     // it picks up the new language too, not just the static markup
     if (typeof loadRequests === 'function') loadRequests();
     if (typeof loadArchiveRequests === 'function') loadArchiveRequests();
+    if (typeof loadEventRequests === 'function') loadEventRequests();
     if (document.getElementById('tree-svg') && typeof loadTree === 'function') loadTree();
   });
 }

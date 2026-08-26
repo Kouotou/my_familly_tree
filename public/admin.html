@@ -99,6 +99,14 @@
       <button id="atab-rejected" data-i18n="rejected">Rejected</button>
     </div>
     <div id="archiveRequestsArea">Loading...</div>
+
+    <h3 style="margin-top:32px" data-i18n="admin_events_tab">Events</h3>
+    <div class="admin-toolbar-group" style="margin-bottom:12px">
+      <button id="etab-pending" class="active" data-i18n="pending">Pending</button>
+      <button id="etab-approved" data-i18n="approved">Approved</button>
+      <button id="etab-rejected" data-i18n="rejected">Rejected</button>
+    </div>
+    <div id="eventRequestsArea">Loading...</div>
   </main>
   <script>
     document.addEventListener('DOMContentLoaded', ()=>{
@@ -111,18 +119,20 @@
     // without a separate polling loop.
     async function updateNotificationBadge(){
       try{
-        const [counts, archive] = await Promise.all([
+        const [counts, archive, events] = await Promise.all([
           api('/admin/requests/counts').catch(()=>({pending:0,approved:0,rejected:0})),
-          api('/admin/archive?status=pending').catch(()=>[])
+          api('/admin/archive?status=pending').catch(()=>[]),
+          api('/admin/events?status=pending').catch(()=>[])
         ]);
         const archiveCount = Array.isArray(archive) ? archive.length : 0;
+        const eventCount = Array.isArray(events) ? events.length : 0;
         const setBadge = (id, count) => {
           const el = document.getElementById(id);
           if (!el) return;
           el.textContent = String(count);
           el.classList.toggle('hidden', count===0);
         };
-        setBadge('count-pending', (counts.pending||0) + archiveCount);
+        setBadge('count-pending', (counts.pending||0) + archiveCount + eventCount);
         setBadge('count-approved', counts.approved||0);
         setBadge('count-rejected', counts.rejected||0);
       }catch(e){ /* leave badges as-is on failure */ }
@@ -521,6 +531,75 @@
     const atabApproved = document.getElementById('atab-approved'); if (atabApproved) atabApproved.addEventListener('click', ()=> loadArchiveRequests('approved'));
     const atabRejected = document.getElementById('atab-rejected'); if (atabRejected) atabRejected.addEventListener('click', ()=> loadArchiveRequests('rejected'));
     loadArchiveRequests();
+
+    // --- Family events review (same shape as archive posts, own approval_status) ---
+    let currentEventStatus = 'pending';
+    function setActiveEventTab(s){
+      currentEventStatus = s;
+      const tp = document.getElementById('etab-pending'); const ta = document.getElementById('etab-approved'); const tr = document.getElementById('etab-rejected');
+      if (tp) tp.classList.toggle('active', s==='pending');
+      if (ta) ta.classList.toggle('active', s==='approved');
+      if (tr) tr.classList.toggle('active', s==='rejected');
+    }
+    function renderEventRequestCard(item){
+      const container = document.createElement('div'); container.className = 'request-item';
+      const header = document.createElement('div'); header.style.display='flex'; header.style.justifyContent='space-between'; header.style.alignItems='center';
+      const title = item.posted_by_name ? t('admin_events_field_posted_by') + ': ' + item.posted_by_name : t('req_unknown_person');
+      header.innerHTML = `<strong>${item.title}</strong> — ${title}<div style="font-size:12px;color:var(--muted)">${new Date(item.created_at).toLocaleString()}</div>`;
+      container.appendChild(header);
+
+      const info = document.createElement('div'); info.className = 'request-item-body';
+      const rows = document.createElement('div'); rows.style.flex = '1';
+      const row = (label, value)=>{ if (!value) return; const d = document.createElement('div'); d.style.marginBottom='6px'; d.innerHTML = `<strong style="display:inline-block;width:110px">${label}:</strong> ${value}`; rows.appendChild(d); };
+      row(t('admin_events_field_when'), new Date(item.event_at).toLocaleString());
+      row(t('admin_events_field_location'), item.location);
+      row(t('admin_events_field_description'), item.description);
+      info.appendChild(rows);
+      container.appendChild(info);
+
+      const actions = document.createElement('div'); actions.style.marginTop='10px';
+      if (item.approval_status === 'pending'){
+        const approveBtn = document.createElement('button'); approveBtn.textContent=t('btn_approve'); approveBtn.addEventListener('click', async ()=>{
+          if (!await showConfirm(t('confirm_approve'))) return;
+          try{ const res = await fetch('/api/admin/events/'+item.id+'/approve', { method:'POST', credentials:'same-origin' }); const j = await res.json(); if (j.ok){ await loadEventRequests(currentEventStatus); } else alert(t('alert_error_prefix',{msg: JSON.stringify(j)})); }catch(e){ alert(t('network_error')+' '+e.message); }
+        });
+        const rejectBtn = document.createElement('button'); rejectBtn.textContent=t('btn_reject'); rejectBtn.style.marginLeft='8px'; rejectBtn.addEventListener('click', async ()=>{
+          if (!await showConfirm(t('confirm_reject'))) return;
+          try{ const res = await fetch('/api/admin/events/'+item.id+'/reject', { method:'POST', credentials:'same-origin' }); const j = await res.json(); if (j.ok){ await loadEventRequests(currentEventStatus); } else alert(t('alert_error_prefix',{msg: JSON.stringify(j)})); }catch(e){ alert(t('network_error')+' '+e.message); }
+        });
+        actions.appendChild(approveBtn); actions.appendChild(rejectBtn);
+      } else {
+        const rev = document.createElement('div'); rev.style.fontSize='13px'; rev.style.color='var(--muted)'; rev.textContent = t('reviewed_by_line', { by: item.reviewed_by || 'n/a', at: item.reviewed_at || '' });
+        actions.appendChild(rev);
+        const deleteBtn = document.createElement('button'); deleteBtn.textContent = t('sched_delete_btn'); deleteBtn.style.marginTop='8px'; deleteBtn.addEventListener('click', async ()=>{
+          if (!await showConfirm(t('sched_confirm_delete'))) return;
+          try{ const res = await fetch('/api/admin/events/'+item.id+'/delete', { method:'POST', credentials:'same-origin' }); const j = await res.json(); if (j.ok){ await loadEventRequests(currentEventStatus); } else alert(t('alert_error_prefix',{msg: JSON.stringify(j)})); }catch(e){ alert(t('network_error')+' '+e.message); }
+        });
+        actions.appendChild(deleteBtn);
+      }
+      container.appendChild(actions);
+      return container;
+    }
+    async function loadEventRequests(status){
+      status = status || currentEventStatus || 'pending';
+      setActiveEventTab(status);
+      const area = document.getElementById('eventRequestsArea'); area.innerHTML = 'Loading...';
+      try{
+        const items = await api('/admin/events?status=' + encodeURIComponent(status));
+        if (!Array.isArray(items) || items.length===0){
+          area.innerHTML = `<div>${t('admin_no_requests', {status: t(status)})}</div>`;
+        } else {
+          area.innerHTML = '';
+          items.forEach(item => area.appendChild(renderEventRequestCard(item)));
+        }
+      }catch(e){ area.innerHTML = t('error_loading'); console.error(e); }
+      updateNotificationBadge();
+    }
+    window.loadEventRequests = loadEventRequests;
+    const etabPending = document.getElementById('etab-pending'); if (etabPending) etabPending.addEventListener('click', ()=> loadEventRequests('pending'));
+    const etabApproved = document.getElementById('etab-approved'); if (etabApproved) etabApproved.addEventListener('click', ()=> loadEventRequests('approved'));
+    const etabRejected = document.getElementById('etab-rejected'); if (etabRejected) etabRejected.addEventListener('click', ()=> loadEventRequests('rejected'));
+    loadEventRequests();
 
     // Edit modal
     // Builds one relation-item row for the relations editor. `r` is the relation entry from

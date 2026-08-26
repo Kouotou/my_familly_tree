@@ -468,7 +468,17 @@ button:disabled:hover{ transform:none; filter:blur(0.4px) grayscale(0.5); }
 .archive-card-caption{ color:var(--text); font-size:14px; margin:0 0 8px; word-break:break-word }
 .archive-card-meta{ font-size:12px; color:var(--muted) }
 .archive-empty{ color:var(--muted); padding:20px; text-align:center }
-.archive-new-post{ margin:6px 0 8px }
+.archive-card-highlighted{ outline:3px solid var(--accent-strong); outline-offset:2px }
+.archive-new-post-row{ display:flex; gap:10px; flex-wrap:wrap; margin:6px 0 8px }
+.archive-new-post{ margin:0 }
+
+/* --- family events (scheduled happenings, distinct from archive.event_type tags) --- */
+.event-card-title{ margin:0 0 6px; font-family:var(--font-display); font-size:18px; color:var(--text) }
+.event-card-countdown{ font-size:14px; font-weight:700; color:var(--accent-strong); margin-bottom:10px }
+.archive-detail-row{ font-size:13px; color:var(--text); margin-bottom:4px }
+.archive-detail-row strong{ color:var(--muted); font-weight:600 }
+.archive-event-actions{ display:flex; gap:8px; margin-top:10px }
+.archive-event-actions button{ margin-top:0; font-size:13px; padding:6px 12px }
 
 .archive-events-bar{ margin-bottom:0 }
 .archive-events-bar label{ display:flex; align-items:center; gap:8px; font-size:13px; color:var(--muted); margin-top:0 }
@@ -549,15 +559,15 @@ button:disabled:hover{ transform:none; filter:blur(0.4px) grayscale(0.5); }
 .kpi-table td{ color:var(--text) }
 
 /* --- new post modal --- */
-#new-post-modal{
+#new-post-modal, #new-event-modal{
 	position:fixed; inset:0; background:rgba(41,28,16,0.5); display:none; align-items:center; justify-content:center; z-index:85; padding:20px;
 }
-#new-post-card{
+#new-post-card, #new-event-card{
 	background:var(--card); padding:26px; border-radius:var(--rounded-lg); max-width:480px; width:100%;
 	max-height:88vh; overflow:auto; box-shadow:var(--shadow); position:relative; border:1px solid var(--border);
 }
-#new-post-card h3{ margin-top:0; font-family:var(--font-display) }
-#new-post-close{
+#new-post-card h3, #new-event-card h3{ margin-top:0; font-family:var(--font-display) }
+#new-post-close, #new-event-close{
 	position:absolute; top:16px; right:16px; width:32px; height:32px; border-radius:50%;
 	background:var(--card-alt); color:var(--text); border:1px solid var(--border); font-size:18px;
 	line-height:1; display:grid; place-items:center; padding:0; margin:0; box-shadow:none;
@@ -596,7 +606,7 @@ body{ max-width:100% }
 	.topbar h1{ font-size:19px }
 	.toggles button{ padding:7px 10px; font-size:12px }
 	.left-card, .center-card{ padding:20px }
-	#profile-card, #edit-profile-card, #add-relative-card, #new-post-card{ padding:18px; max-width:100% }
+	#profile-card, #edit-profile-card, #add-relative-card, #new-post-card, #new-event-card{ padding:18px; max-width:100% }
 	.request-item-media{ min-width:100%; }
 	.request-item-media img, .request-item-media > div{ width:100% !important; max-width:220px }
 	.tree-controls{ flex-wrap:wrap }
