@@ -386,6 +386,7 @@ function openEditProfileModal(person, opts){
           <label data-i18n="ep_occupation">Occupation<input type="text" id="ep-occupation" /></label>
           <label data-i18n="ep_residence">Residence<input type="text" id="ep-residence" /></label>
           <label data-i18n="ep_phone">Phone<input type="text" id="ep-phone" /></label>
+          <label data-i18n="ep_email" id="ep-email-row">Email (optional) — get notified of new posts and events<input type="email" id="ep-email" /></label>
           <fieldset class="parent-fieldset" id="ep-heir-fieldset">
             <legend data-i18n="reg_heir_legend">Heritage</legend>
             <label class="checkbox-label"><input type="checkbox" id="ep-is-heir" /><span data-i18n="ep_is_heir_question">Have you become an heir since registering — representing a deceased ancestor in the family?</span></label>
@@ -422,6 +423,7 @@ function openEditProfileModal(person, opts){
     ? t('ep_title_owner', { name: person.full_name || '' }) : t('ep_title');
   modal.querySelector('#ep-heir-fieldset').classList.toggle('hidden', !!ownerTargetId);
   modal.querySelector('#ep-password-section').classList.toggle('hidden', !!ownerTargetId);
+  modal.querySelector('#ep-email-row').classList.toggle('hidden', !!ownerTargetId);
   modal.querySelector('#ep-fullname').value = person.full_name || '';
   modal.querySelector('#ep-gender').value = (person.gender || 'male').toLowerCase();
   modal.querySelector('#ep-birthdate').value = person.birth_date || '';
@@ -429,6 +431,13 @@ function openEditProfileModal(person, opts){
   modal.querySelector('#ep-occupation').value = person.occupation || '';
   modal.querySelector('#ep-residence').value = person.residence || '';
   modal.querySelector('#ep-phone').value = person.phone || '';
+  modal.querySelector('#ep-email').value = '';
+  // email lives on the users row, not the people row `person` is, so it isn't already in
+  // hand here — only fetched/shown for editing yourself, never for the owner-editing-someone-
+  // else path (that mode hides the whole row above)
+  if (!ownerTargetId){
+    api('/auth/me').then(me=>{ modal.querySelector('#ep-email').value = (me.user && me.user.email) || ''; }).catch(()=>{});
+  }
   modal.querySelector('#ep-photo').value = '';
   modal.querySelector('#ep-is-heir').checked = false;
   modal.querySelector('#ep-heir-candidates-area').classList.add('hidden');
@@ -502,13 +511,17 @@ async function submitEditProfile(e){
   data.append('occupation', modal.querySelector('#ep-occupation').value);
   data.append('residence', modal.querySelector('#ep-residence').value);
   data.append('phone', modal.querySelector('#ep-phone').value);
+  const ownerTargetId = modal.dataset.ownerTargetId || '';
+  // email lives on users, not people, and only makes sense for editing yourself — never
+  // sent at all for the owner-editing-someone-else path (its row is hidden client-side too),
+  // so the server never mistakes "wasn't asked about" for "clear it"
+  if (!ownerTargetId) data.append('email', modal.querySelector('#ep-email').value);
   const photoEl = modal.querySelector('#ep-photo');
   if (photoEl.files && photoEl.files[0]) data.append('photo', await downscalePhoto(photoEl.files[0]));
   if (modal.querySelector('#ep-is-heir').checked){
     const heirIds = Array.from(modal.querySelectorAll('#ep-heir-candidates-area input[name="ep_heir_of"]:checked')).map(cb=>cb.value);
     if (heirIds.length) data.append('heir_of', JSON.stringify(heirIds));
   }
-  const ownerTargetId = modal.dataset.ownerTargetId || '';
   const endpoint = ownerTargetId ? ('/api/owner/people/' + ownerTargetId + '/request-update') : '/api/member/profile/update';
   try{
     const res = await fetch(endpoint, { method:'POST', body:data, credentials:'same-origin' });
@@ -2249,7 +2262,7 @@ const I18N = {
     req_changes_empty: '(empty)',
     reqchg_full_name: 'Full name', reqchg_gender: 'Gender', reqchg_birth_date: 'Birth date',
     reqchg_death_date: 'Date of death', reqchg_occupation: 'Occupation', reqchg_residence: 'Residence',
-    reqchg_phone: 'Phone', reqchg_photo: 'Photo', reqchg_heir_of: 'Heritage',
+    reqchg_phone: 'Phone', reqchg_photo: 'Photo', reqchg_heir_of: 'Heritage', reqchg_email: 'Email',
     btn_approve: 'Approve', btn_edit_approve: 'Edit & Approve', btn_reject: 'Reject',
     btn_modify_account: 'Modify account', btn_delete_account: 'Delete account',
     btn_set_new_password: 'Set new password',
@@ -2308,6 +2321,7 @@ const I18N = {
     ep_title_owner: 'Edit profile — {name}',
     ep_photo: 'Photo', ep_fullname: 'Full name', ep_gender: 'Gender', ep_birthdate: 'Birth date', ep_deathdate: 'Date of death (leave blank if living)',
     ep_occupation: 'Occupation', ep_residence: 'Residence', ep_phone: 'Phone',
+    ep_email: 'Email (optional) — get notified of new posts and events',
     ep_is_heir_question: 'Have you become an heir since registering — representing a deceased ancestor in the family?',
     ep_heir_no_parent: "Your father/mother aren't linked to a profile in the tree yet — heritage can only be claimed from an ancestor already on file.",
     ep_submit: 'Submit for admin approval',
@@ -2612,7 +2626,7 @@ const I18N = {
     req_changes_empty: '(vide)',
     reqchg_full_name: 'Nom complet', reqchg_gender: 'Genre', reqchg_birth_date: 'Date de naissance',
     reqchg_death_date: 'Date de décès', reqchg_occupation: 'Profession', reqchg_residence: 'Résidence',
-    reqchg_phone: 'Téléphone', reqchg_photo: 'Photo', reqchg_heir_of: 'Héritage',
+    reqchg_phone: 'Téléphone', reqchg_photo: 'Photo', reqchg_heir_of: 'Héritage', reqchg_email: 'Email',
     btn_approve: 'Approuver', btn_edit_approve: 'Modifier et approuver', btn_reject: 'Rejeter',
     btn_modify_account: 'Modifier le compte', btn_delete_account: 'Supprimer le compte',
     btn_set_new_password: 'Définir un nouveau mot de passe',
@@ -2671,6 +2685,7 @@ const I18N = {
     ep_title_owner: 'Modifier le profil — {name}',
     ep_photo: 'Photo', ep_fullname: 'Nom complet', ep_gender: 'Genre', ep_birthdate: 'Date de naissance', ep_deathdate: 'Date de décès (laisser vide si vivant(e))',
     ep_occupation: 'Profession', ep_residence: 'Résidence', ep_phone: 'Téléphone',
+    ep_email: 'Email (optionnel) — pour être notifié des nouvelles publications et événements',
     ep_is_heir_question: "Es-tu devenu(e) héritier(ère) depuis ton inscription — représentant un ancêtre décédé de la famille ?",
     ep_heir_no_parent: "Ton père/ta mère ne sont pas encore liés à un profil dans l'arbre — l'héritage ne peut être réclamé que d'un ancêtre déjà enregistré.",
     ep_submit: "Soumettre pour approbation par l'administrateur",

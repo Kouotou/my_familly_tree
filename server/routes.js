@@ -103,6 +103,7 @@ function buildProfileChangeSummary(current, updated, photoChanged, heirNames){
 const PROFILE_DIFF_LABELS_EN = {
   full_name: 'Full name', gender: 'Gender', birth_date: 'Birth date', death_date: 'Date of death',
   occupation: 'Occupation', residence: 'Residence', phone: 'Phone', photo: 'Photo', heir_of: 'Heritage',
+  email: 'Email',
 };
 // plain-English HTML summary for the admin notification email (no client-side i18n available here)
 function changeSummaryToHtml(changes){
@@ -703,6 +704,11 @@ async function processUpdatePerson(dbLike, payload, reviewerId){
   await dbLike.prepare('UPDATE people SET full_name = ?, gender = ?, birth_year = ?, birth_date = ?, death_date = ?, occupation = ?, residence = ?, phone = ?, photo_path = ?, last_edited_by = ?, last_edited_at = ? WHERE id = ?')
     .run(payload.full_name || current.full_name, payload.gender || current.gender, payload.birth_year || null, payload.birth_date || null, payload.death_date || null, payload.occupation || null, payload.residence || null, payload.phone || null, photoPath, reviewerId, now(), current.id);
   await applyHeirClaims(dbLike, current.id, payload.heir_of);
+  // email lives on users, not people — only touched at all if the edit form included it
+  // (the owner-editing-someone-else path never does, see buildUpdatePersonPayload)
+  if (Object.prototype.hasOwnProperty.call(payload, 'email')){
+    await dbLike.prepare('UPDATE users SET email = ? WHERE person_id = ?').run(payload.email, current.id);
+  }
   return current.id;
 }
 
@@ -789,8 +795,9 @@ router.get('/member/context', wrap(async (req,res)=>{
 // shared by /member/profile/update (editing yourself) and /owner/people/:id/request-update
 // (the owner editing someone else on their behalf) — builds the update_person payload,
 // including the field-by-field change summary, from a person's current row + the submitted
-// form fields.
-async function buildUpdatePersonPayload(current, body, file, heirOf){
+// form fields. `currentEmail` is only meaningful (and `body.email` only ever present) on the
+// self-edit path — see the callers.
+async function buildUpdatePersonPayload(current, body, file, heirOf, currentEmail){
   let birthDate = body.birth_date || null;
   let birthYear = null;
   if (birthDate){ try{ const d = new Date(birthDate); if (isFinite(d)) birthYear = d.getFullYear(); else birthDate = null; }catch(e){ birthDate = null; } }
@@ -817,6 +824,19 @@ async function buildUpdatePersonPayload(current, body, file, heirOf){
     if (ancestor) heirNames.push(ancestor.full_name);
   }
   payload.changes = buildProfileChangeSummary(current, payload, !!file, heirNames);
+
+  // email lives on users, not people, so it's handled separately from the generic
+  // people-table diff above. Only touched when the form actually included the field (the
+  // owner-editing-someone-else path never does) — an empty submitted value means "clear it",
+  // same optional/opt-out semantics as at registration, not "leave whatever's there".
+  if (Object.prototype.hasOwnProperty.call(body, 'email')){
+    const trimmed = (body.email || '').trim();
+    const isValidEmail = trimmed !== '' && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmed);
+    const newEmail = trimmed === '' ? null : (isValidEmail ? trimmed : (currentEmail || null));
+    if (newEmail !== (currentEmail || null)) payload.changes.push({ field: 'email', old: currentEmail || null, new: newEmail });
+    payload.email = newEmail;
+  }
+
   return payload;
 }
 
@@ -831,7 +851,7 @@ router.post('/member/profile/update', upload.single('photo'), wrap(async (req,re
   let heirOf = [];
   if (body.heir_of){ try{ const parsed = JSON.parse(body.heir_of); if (Array.isArray(parsed)) heirOf = parsed.filter(Boolean); }catch(e){ heirOf = []; } }
 
-  const payload = await buildUpdatePersonPayload(current, body, req.file, heirOf);
+  const payload = await buildUpdatePersonPayload(current, body, req.file, heirOf, req.session.user.email);
   const id = uuidv4();
   await db.prepare('INSERT INTO requests (id, type, payload, status, created_by, created_at) VALUES (?, ?, ?, ?, ?, ?)').run(id, 'update_person', JSON.stringify(payload), 'pending', req.session.user.id, now());
   res.json({ ok:true, id });
