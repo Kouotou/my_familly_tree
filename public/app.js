@@ -912,6 +912,7 @@ if (registerForm){
     data.append('occupation', maybe('reg-occupation'));
     data.append('residence', maybe('reg-residence'));
     data.append('phone', maybe('reg-phone'));
+    data.append('email', maybe('reg-email'));
     const photoEl = document.getElementById('reg-photo');
     if (photoEl && photoEl.files && photoEl.files[0]) data.append('photo', await downscalePhoto(photoEl.files[0]));
 
@@ -2106,6 +2107,7 @@ const I18N = {
     reg_occupation_label: 'Occupation',
     reg_residence_label: 'Residence',
     reg_phone_label: 'Phone',
+    reg_email_label: 'Email (optional) — get notified of new posts and events',
     reg_photo_label: 'Photo',
     crop_title: 'Crop your photo', crop_use_btn: 'Use this crop', crop_skip_btn: 'Use original photo',
     reg_father_legend: 'Father',
@@ -2468,6 +2470,7 @@ const I18N = {
     reg_occupation_label: 'Profession',
     reg_residence_label: 'Résidence',
     reg_phone_label: 'Téléphone',
+    reg_email_label: 'Email (optionnel) — pour être notifié des nouvelles publications et événements',
     reg_photo_label: 'Photo',
     crop_title: 'Recadrer votre photo', crop_use_btn: 'Utiliser ce recadrage', crop_skip_btn: "Utiliser la photo d'origine",
     reg_father_legend: 'Père',

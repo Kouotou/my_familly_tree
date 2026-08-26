@@ -72,6 +72,15 @@ async function getAdminRecipients(){
   return rows.map(r=>r.email);
 }
 
+// members who opted in with an email address at registration — notified once something they
+// submitted for review actually goes live (approved), not at submission time (that's what
+// getAdminRecipients() is for). Admins/owner are added separately by each call site that
+// wants them too, rather than folded in here, so a caller can choose member-only vs. everyone.
+async function getMemberRecipients(){
+  const rows = await db.prepare("SELECT email FROM users WHERE role = 'member' AND email IS NOT NULL AND email != ''").all();
+  return rows.map(r=>r.email);
+}
+
 // field-by-field diff between a person's current record and a pending update_person
 // payload, so an admin reviewing the request can see exactly what's being changed instead
 // of just "so-and-so wants to update their profile". Only stores machine-readable {field,
@@ -115,6 +124,19 @@ async function notifyAdmins(req, { subject, bodyHtml, highlightParam, highlightI
     if (!recipients.length) return;
     const link = `${req.protocol}://${req.get('host')}/admin.html?${highlightParam}=${encodeURIComponent(highlightId)}`;
     await sendEmail({ to: recipients, subject: `[Nah Adja Mbethe] ${subject}`, html: `${bodyHtml}<p><a href="${link}">Review and respond</a></p>` });
+  }catch(e){ console.error('[notify] failed', e && e.message || e); }
+}
+
+// fire-and-forget notification for something that just went *live* (approved) — opted-in
+// members only (getMemberRecipients()), separate from notifyAdmins() above which fires at
+// *submission* time to admins for review. A post/event can be approved with zero opted-in
+// members and this is just a silent no-op, same failure-swallowing as notifyAdmins.
+async function notifyMembers(req, { subject, bodyHtml, link }){
+  try{
+    const recipients = await getMemberRecipients();
+    if (!recipients.length) return;
+    const fullLink = `${req.protocol}://${req.get('host')}${link}`;
+    await sendEmail({ to: recipients, subject: `[Nah Adja Mbethe] ${subject}`, html: `${bodyHtml}<p><a href="${fullLink}">View it</a></p>` });
   }catch(e){ console.error('[notify] failed', e && e.message || e); }
 }
 
@@ -384,6 +406,7 @@ router.post('/auth/register', upload.fields([
     occupation: body.occupation || null,
     residence: body.residence || null,
     phone: body.phone || null,
+    email: (body.email && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(body.email.trim())) ? body.email.trim() : null,
     photo_path: body.photo_path || null,
     heir_of: heirOf,
     relations: []
@@ -561,11 +584,11 @@ async function linkSibling(dbLike, a,b){
   await ins.run(uuidv4(), b, a, 'sibling');
 }
 
-async function createLoginForPerson(dbLike, personId, username, password){
+async function createLoginForPerson(dbLike, personId, username, password, email){
   if (!username || !password) return;
   const pwdHash = bcrypt.hashSync(password, 10);
-  await dbLike.prepare('INSERT INTO users (id, username, password_hash, role, person_id) VALUES (?, ?, ?, ?, ?) ON CONFLICT (username) DO NOTHING').run(uuidv4(), username, pwdHash, 'member', personId);
-  await dbLike.prepare('UPDATE users SET person_id = ? WHERE username = ?').run(personId, username);
+  await dbLike.prepare('INSERT INTO users (id, username, password_hash, role, person_id, email) VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT (username) DO NOTHING').run(uuidv4(), username, pwdHash, 'member', personId, email || null);
+  await dbLike.prepare('UPDATE users SET person_id = ?, email = ? WHERE username = ?').run(personId, email || null, username);
 }
 
 async function unlinkParentChild(dbLike, childId, parentId){
@@ -621,7 +644,7 @@ async function applyParentEdits(dbLike, personId, relations, reviewerId){
 // helper to process create_person payload into the DB and return the created person id
 async function processCreatePerson(dbLike, payload, reviewerId){
   const personId = await createPersonRecord(dbLike, payload, reviewerId);
-  await createLoginForPerson(dbLike, personId, payload.username, payload.password);
+  await createLoginForPerson(dbLike, personId, payload.username, payload.password, payload.email);
 
   if (Array.isArray(payload.relations)){
     const father = payload.relations.find(r=> r.type==='parent' && r.which==='father');
@@ -1646,10 +1669,16 @@ router.get('/admin/archive', wrap(async (req,res)=>{
 
 router.post('/admin/archive/:id/approve', wrap(async (req,res)=>{
   if (!requireAdmin(req,res)) return;
-  const row = await db.prepare('SELECT id FROM archive WHERE id = ?').get(req.params.id);
+  const row = await db.prepare('SELECT * FROM archive WHERE id = ?').get(req.params.id);
   if (!row) return res.status(404).json({ error: 'not found' });
   await db.prepare("UPDATE archive SET approval_status = 'approved', reviewed_by = ?, reviewed_at = ? WHERE id = ?").run(req.session.user.id, now(), req.params.id);
   res.json({ ok:true });
+  const poster = row.person_id ? await db.prepare('SELECT full_name FROM people WHERE id = ?').get(row.person_id) : null;
+  await notifyMembers(req, {
+    subject: `New ${row.type} in the family archive`,
+    bodyHtml: `<p><strong>${poster ? poster.full_name : 'Someone'}</strong> posted a new ${row.type} to the family archive.</p>`,
+    link: `/archives.html?tab=${row.type}&highlight=${row.id}`,
+  });
 }));
 
 router.post('/admin/archive/:id/reject', wrap(async (req,res)=>{
