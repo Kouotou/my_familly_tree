@@ -75,6 +75,7 @@
       <div id="adminsList">Loading...</div>
       <h4 style="margin-bottom:8px" data-i18n="owner_add_admin_heading">Add a new administrator</h4>
       <form id="add-admin-form" style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end">
+        <label style="flex:1;min-width:160px" data-i18n="owner_admin_family_label">Family<select name="family_slug" id="add-admin-family-select" required><option value="" data-i18n="owner_admin_family_loading">Loading families...</option></select></label>
         <label style="flex:1;min-width:160px" data-i18n="owner_admin_username_label">Username<input name="username" required /></label>
         <label style="flex:1;min-width:200px" data-i18n="owner_admin_email_label">Email<input name="email" type="email" required /></label>
         <button type="submit" data-i18n="owner_add_admin_btn">Add administrator</button>
@@ -190,11 +191,22 @@
       feedback.textContent = res.ok ? t('owner_save_email_done') : (res.error || t('ep_error_generic'));
     });
 
+    async function populateAdminFamilySelect(){
+      const select = document.getElementById('add-admin-family-select');
+      try{
+        const families = await api('/platform/families');
+        const active = (Array.isArray(families) ? families : []).filter(f=> f.status === 'active');
+        select.innerHTML = active.length
+          ? active.map(f=> `<option value="${f.slug}">${f.name} (${f.slug})</option>`).join('')
+          : `<option value="">${t('owner_admin_family_none')}</option>`;
+      }catch(e){ select.innerHTML = `<option value="">${t('error_loading')}</option>`; }
+    }
+
     async function loadAdmins(){
       const list = document.getElementById('adminsList');
       list.textContent = t('loading') || 'Loading...';
       try{
-        const admins = await api('/owner/admins');
+        const admins = await api('/platform/admins');
         if (!Array.isArray(admins) || !admins.length){ list.innerHTML = `<div class="hint">${t('owner_no_admins')}</div>`; return; }
         list.innerHTML = '';
         admins.forEach(a=>{
@@ -202,7 +214,7 @@
           const statusPill = a.must_change_password
             ? `<span class="status-pill status-pill-pending">${t('owner_admin_status_pending')}</span>`
             : `<span class="status-pill status-pill-active">${t('owner_admin_status_active')}</span>`;
-          row.innerHTML = `<strong>${a.username}</strong> <span style="color:var(--muted)">${a.email||''}</span>${statusPill}`;
+          row.innerHTML = `<strong>${a.username}</strong> <span style="color:var(--muted)">${a.email||''}</span> <span class="status-pill">${a.family_name} (${a.family_slug})</span>${statusPill}`;
           if (a.must_change_password){
             const hint = document.createElement('div'); hint.className = 'hint'; hint.style.marginTop='4px';
             hint.textContent = t('owner_admin_pending_first_login');
@@ -212,14 +224,14 @@
           const resetBtn = document.createElement('button'); resetBtn.className='secondary'; resetBtn.textContent = t('owner_reset_password_btn');
           resetBtn.addEventListener('click', async ()=>{
             if (!await showConfirm(t('owner_reset_password_confirm', {name: a.username}))) return;
-            const res = await api('/owner/admins/' + a.id + '/reset-password', { method:'POST' });
+            const res = await api('/platform/admins/' + a.id + '/reset-password', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ family_slug: a.family_slug }) });
             if (res.ok) { alert(t('owner_reset_password_done')); await loadAdmins(); }
             else alert(t('alert_error_prefix', {msg: JSON.stringify(res)}));
           });
           const removeBtn = document.createElement('button'); removeBtn.className='secondary'; removeBtn.style.marginLeft='8px'; removeBtn.textContent = t('owner_remove_admin_btn');
           removeBtn.addEventListener('click', async ()=>{
             if (!await showConfirm(t('owner_remove_admin_confirm', {name: a.username}))) return;
-            const res = await api('/owner/admins/' + a.id + '/delete', { method:'POST' });
+            const res = await api('/platform/admins/' + a.id + '/delete', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ family_slug: a.family_slug }) });
             if (res.ok) await loadAdmins();
             else alert(t('alert_error_prefix', {msg: JSON.stringify(res)}));
           });
@@ -246,11 +258,11 @@
         list.innerHTML = '';
         rows.forEach(r=>{
           const row = document.createElement('div'); row.className = 'request-item'; row.dataset.requestId = r.id;
-          row.innerHTML = `<strong>${r.payload.username}</strong> <span style="color:var(--muted)">${new Date(r.created_at).toLocaleString()}</span>`;
+          row.innerHTML = `<strong>${r.payload.username}</strong> <span style="color:var(--muted)">${r.family_name} (${r.family_slug}) — ${new Date(r.created_at).toLocaleString()}</span>`;
           const btn = document.createElement('button'); btn.style.marginTop='8px'; btn.textContent = t('owner_resolve_reset_btn');
           btn.addEventListener('click', async ()=>{
             if (!await showConfirm(t('owner_resolve_reset_confirm', {name: r.payload.username}))) return;
-            const res = await api('/owner/password-reset-requests/' + r.id + '/resolve', { method:'POST' });
+            const res = await api('/owner/password-reset-requests/' + r.id + '/resolve', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ family_slug: r.family_slug }) });
             if (res.ok) { alert(t('owner_reset_password_done')); await loadResetRequests(); }
             else alert(t('alert_error_prefix', {msg: JSON.stringify(res)}));
           });
@@ -266,7 +278,8 @@
       const f = e.target;
       const feedback = document.getElementById('add-admin-feedback');
       feedback.textContent = '';
-      const res = await api('/owner/admins/create', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ username: f.username.value, email: f.email.value }) });
+      if (!f.family_slug.value){ feedback.textContent = t('owner_admin_family_required'); return; }
+      const res = await api('/platform/admins/create', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ family_slug: f.family_slug.value, username: f.username.value, email: f.email.value }) });
       if (res.ok){ feedback.textContent = t('owner_add_admin_done'); f.reset(); await loadAdmins(); }
       else feedback.textContent = res.error || t('ep_error_generic');
     });
@@ -467,6 +480,7 @@
     });
 
     checkMustChangePassword();
+    populateAdminFamilySelect();
     loadAdmins();
     loadResetRequests();
     loadFamilyRequests();

@@ -1129,23 +1129,99 @@ function credentialBlockHtml(username, tempPassword){
   return `<div style="border:1px solid #ddd;border-radius:8px;padding:14px;margin:12px 0">${row('Username', username)}${row('Temporary password', tempPassword)}</div><p style="color:#666;font-size:13px">Copy and paste these rather than typing them by hand — easy to mistype otherwise.</p>`;
 }
 
-async function resetAdminPasswordAndNotify(dbLike, userId){
+async function resetAdminPasswordAndNotify(dbLike, userId, familyName){
   const tempPassword = generateTempPassword();
   await dbLike.prepare('UPDATE users SET password_hash = ?, must_change_password = ? WHERE id = ?').run(bcrypt.hashSync(tempPassword, 10), true, userId);
   const user = await dbLike.prepare('SELECT username, email FROM users WHERE id = ?').get(userId);
   if (user && user.email){
     await sendEmail({
       to: user.email,
-      subject: '[Nah Adja Mbethe] Your administrator password has been reset',
+      subject: `Your administrator password has been reset${familyName ? ` (${familyName})` : ''}`,
       html: `<p>Your password has been reset by the platform owner.</p>${credentialBlockHtml(user.username, tempPassword)}<p>You'll be asked to set a new password when you next log in.</p>`,
     }).catch(()=>{});
   }
 }
 
-router.get('/owner/admins', wrap(async (req,res)=>{
+// --- cross-family administrator management, replacing the old single-family /owner/admins*
+// routes (which only ever touched whichever schema happened to be active for the request —
+// i.e. always Na Ajanbeta's own, silently creating every new admin there regardless of which
+// family the owner actually meant, with no way to even see which family an existing admin
+// belonged to). Every route below takes an explicit family_slug and operates inside that
+// family's own schema via db.withTenant, and the list endpoint tags each admin with which
+// family they belong to.
+router.get('/platform/admins', wrap(async (req,res)=>{
   if (!requirePlatformOwner(req,res)) return;
-  const rows = await db.prepare("SELECT id, username, email, created_at, must_change_password FROM users WHERE role = 'admin' ORDER BY created_at DESC").all();
-  res.json(rows);
+  const families = await db.prepare("SELECT slug, name, schema_name FROM public.families WHERE status = 'active' ORDER BY name").all();
+  const all = [];
+  for (const family of families){
+    const admins = await db.withTenant(family.schema_name, () =>
+      db.prepare("SELECT id, username, email, created_at, must_change_password FROM users WHERE role = 'admin' ORDER BY created_at DESC").all()
+    );
+    admins.forEach(a=> all.push({ ...a, family_slug: family.slug, family_name: family.name }));
+  }
+  res.json(all);
+}));
+
+router.post('/platform/admins/create', express.json(), wrap(async (req,res)=>{
+  if (!requirePlatformOwner(req,res)) return;
+  const familySlug = ((req.body && req.body.family_slug) || '').trim();
+  const username = ((req.body && req.body.username) || '').trim();
+  const email = ((req.body && req.body.email) || '').trim();
+  if (!familySlug) return res.status(400).json({ error: 'Choose a family.' });
+  if (!username || !email) return res.status(400).json({ error: 'Username and email are required.' });
+  const family = await db.prepare("SELECT * FROM public.families WHERE slug = ? AND status = 'active'").get(familySlug);
+  if (!family) return res.status(404).json({ error: 'Family not found.' });
+
+  const tempPassword = generateTempPassword();
+  const id = uuidv4();
+  let usernameTaken = false;
+  await db.withTenant(family.schema_name, async () => {
+    if (await db.prepare('SELECT id FROM users WHERE username = ?').get(username)) { usernameTaken = true; return; }
+    await db.prepare('INSERT INTO users (id, username, password_hash, role, email, must_change_password, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)')
+      .run(id, username, bcrypt.hashSync(tempPassword, 10), 'admin', email, true, now());
+  });
+  if (usernameTaken) return res.status(409).json({ error: 'That username is already taken in that family.' });
+
+  const base = process.env.PUBLIC_BASE_URL || `${req.protocol}://${req.get('host')}`;
+  const link = `${base}/f/${family.slug}/admin-login`;
+  await sendEmail({
+    to: email,
+    subject: `You have been added as an administrator for ${family.name}`,
+    html: `<p>You've been added as an administrator for <strong>${family.name}</strong>.</p>${credentialBlockHtml(username, tempPassword)}<p>You'll be asked to set a new password the first time you log in.</p><p><a href="${link}">${link}</a></p>`,
+  }).catch(()=>{});
+  res.json({ ok:true, id });
+}));
+
+router.post('/platform/admins/:id/reset-password', express.json(), wrap(async (req,res)=>{
+  if (!requirePlatformOwner(req,res)) return;
+  const familySlug = (req.body && req.body.family_slug) || '';
+  const family = await db.prepare('SELECT * FROM public.families WHERE slug = ?').get(familySlug);
+  if (!family) return res.status(404).json({ error: 'Family not found.' });
+  let found = false;
+  await db.withTenant(family.schema_name, async () => {
+    const user = await db.prepare("SELECT id FROM users WHERE id = ? AND role = 'admin'").get(req.params.id);
+    if (!user) return;
+    found = true;
+    await resetAdminPasswordAndNotify(db, user.id, family.name);
+  });
+  if (!found) return res.status(404).json({ error: 'not found' });
+  res.json({ ok:true });
+}));
+
+router.post('/platform/admins/:id/delete', express.json(), wrap(async (req,res)=>{
+  if (!requirePlatformOwner(req,res)) return;
+  const familySlug = (req.body && req.body.family_slug) || '';
+  const family = await db.prepare('SELECT * FROM public.families WHERE slug = ?').get(familySlug);
+  if (!family) return res.status(404).json({ error: 'Family not found.' });
+  let found = false;
+  await db.withTenant(family.schema_name, async () => {
+    const user = await db.prepare("SELECT id FROM users WHERE id = ? AND role = 'admin'").get(req.params.id);
+    if (!user) return;
+    found = true;
+    await db.prepare('DELETE FROM users WHERE id = ?').run(req.params.id);
+  });
+  if (!found) return res.status(404).json({ error: 'not found' });
+  res.json({ ok:true });
 }));
 
 // the owner's own notification email — separate from admins' emails (set by the owner when
@@ -1171,60 +1247,43 @@ router.post('/owner/username', express.json(), wrap(async (req,res)=>{
   res.json({ ok:true });
 }));
 
-router.post('/owner/admins/create', express.json(), wrap(async (req,res)=>{
-  if (!requirePlatformOwner(req,res)) return;
-  const username = ((req.body && req.body.username) || '').trim();
-  const email = ((req.body && req.body.email) || '').trim();
-  if (!username || !email) return res.status(400).json({ error: 'Username and email are required.' });
-  if (await isUsernameTaken(username)) return res.status(409).json({ error: 'That username is already taken.' });
-  const tempPassword = generateTempPassword();
-  const id = uuidv4();
-  await db.prepare('INSERT INTO users (id, username, password_hash, role, email, must_change_password, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)')
-    .run(id, username, bcrypt.hashSync(tempPassword, 10), 'admin', email, true, now());
-  const link = `${req.protocol}://${req.get('host')}/admin-login.html`;
-  await sendEmail({
-    to: email,
-    subject: '[Nah Adja Mbethe] You have been added as an administrator',
-    html: `<p>You've been added as an administrator for the Nah Adja Mbethe family tree.</p>${credentialBlockHtml(username, tempPassword)}<p>You'll be asked to set a new password the first time you log in.</p><p><a href="${link}">Log in</a></p>`,
-  }).catch(()=>{});
-  res.json({ ok:true, id });
-}));
-
-router.post('/owner/admins/:id/reset-password', wrap(async (req,res)=>{
-  if (!requirePlatformOwner(req,res)) return;
-  const user = await db.prepare("SELECT id FROM users WHERE id = ? AND role = 'admin'").get(req.params.id);
-  if (!user) return res.status(404).json({ error: 'not found' });
-  await resetAdminPasswordAndNotify(db, user.id);
-  res.json({ ok:true });
-}));
-
-router.post('/owner/admins/:id/delete', wrap(async (req,res)=>{
-  if (!requirePlatformOwner(req,res)) return;
-  const user = await db.prepare("SELECT id FROM users WHERE id = ? AND role = 'admin'").get(req.params.id);
-  if (!user) return res.status(404).json({ error: 'not found' });
-  await db.prepare('DELETE FROM users WHERE id = ?').run(req.params.id);
-  res.json({ ok:true });
-}));
-
-// pending admin_password_reset requests — owner-only, deliberately excluded from the regular
-// /admin/requests listing (see below) since these aren't relevant to other admins
+// pending admin_password_reset requests, across every family — each one lives in that
+// family's own `requests` table (filed by POST /auth/admin-password-reset-request, an
+// already-correctly-scoped per-tenant route), so listing "everything the owner needs to see"
+// means looping every active family the same way /platform/admins above does, not just
+// reading whichever schema happens to be active for this request.
 router.get('/owner/password-reset-requests', wrap(async (req,res)=>{
   if (!requirePlatformOwner(req,res)) return;
-  const rows = await db.prepare("SELECT * FROM requests WHERE type = 'admin_password_reset' AND status = 'pending' ORDER BY created_at DESC").all();
-  res.json(rows.map(r=> ({...r, payload: JSON.parse(r.payload)})));
+  const families = await db.prepare("SELECT slug, name, schema_name FROM public.families WHERE status = 'active' ORDER BY name").all();
+  const all = [];
+  for (const family of families){
+    const rows = await db.withTenant(family.schema_name, () =>
+      db.prepare("SELECT * FROM requests WHERE type = 'admin_password_reset' AND status = 'pending' ORDER BY created_at DESC").all()
+    );
+    rows.forEach(r=> all.push({ ...r, payload: JSON.parse(r.payload), family_slug: family.slug, family_name: family.name }));
+  }
+  res.json(all);
 }));
 
-router.post('/owner/password-reset-requests/:id/resolve', wrap(async (req,res)=>{
+router.post('/owner/password-reset-requests/:id/resolve', express.json(), wrap(async (req,res)=>{
   if (!requirePlatformOwner(req,res)) return;
-  const reqRow = await db.prepare('SELECT * FROM requests WHERE id = ?').get(req.params.id);
-  if (!reqRow) return res.status(404).json({ error: 'not found' });
-  const payload = JSON.parse(reqRow.payload);
-  const user = await db.prepare("SELECT id FROM users WHERE id = ? AND role IN ('admin','platform_owner')").get(payload.user_id);
-  if (!user) return res.status(404).json({ error: 'admin account not found' });
-  await db.transaction(async (tx) => {
-    await resetAdminPasswordAndNotify(tx, user.id);
-    await tx.prepare('UPDATE requests SET status = ?, reviewed_by = ?, reviewed_at = ? WHERE id = ?').run('approved', req.session.user.id, now(), req.params.id);
+  const familySlug = (req.body && req.body.family_slug) || '';
+  const family = await db.prepare('SELECT * FROM public.families WHERE slug = ?').get(familySlug);
+  if (!family) return res.status(404).json({ error: 'Family not found.' });
+  let resolved = false;
+  await db.withTenant(family.schema_name, async () => {
+    const reqRow = await db.prepare('SELECT * FROM requests WHERE id = ?').get(req.params.id);
+    if (!reqRow) return;
+    const payload = JSON.parse(reqRow.payload);
+    const user = await db.prepare("SELECT id FROM users WHERE id = ? AND role IN ('admin','platform_owner')").get(payload.user_id);
+    if (!user) return;
+    await db.transaction(async (tx) => {
+      await resetAdminPasswordAndNotify(tx, user.id, family.name);
+      await tx.prepare('UPDATE requests SET status = ?, reviewed_by = ?, reviewed_at = ? WHERE id = ?').run('approved', req.session.user.id, now(), req.params.id);
+    });
+    resolved = true;
   });
+  if (!resolved) return res.status(404).json({ error: 'not found' });
   res.json({ ok:true });
 }));
 
@@ -1312,9 +1371,14 @@ router.get('/platform/families/requests', wrap(async (req,res)=>{
 // public.families, and emails the admin their personalized link + temp password. Re-validates
 // the slug is still free (a second request for the same name could have been submitted, and
 // even approved, while this one sat pending) rather than trusting the check made at submission
-// time.
+// time — but only against public.families (an actually-created family), not against other
+// *pending* requests the way isFamilySlugTaken() does for the submission-time check. At
+// approval time, the request being approved right now is itself still 'pending' in
+// public.platform_requests (its status only flips to 'approved' after this function returns —
+// see the route below) — checking pending requests here would make every approval see its own
+// request as "already taken" and fail every single time.
 async function processCreateFamily(payload, reviewerId, req){
-  if (await isFamilySlugTaken(payload.slug)) throw new Error('That family ID has since been taken by another approved family.');
+  if (await db.prepare('SELECT id FROM public.families WHERE slug = ?').get(payload.slug)) throw new Error('That family ID has since been taken by another approved family.');
   const schemaName = schemaNameForSlug(payload.slug);
   await db.createFamilySchema(schemaName);
 
