@@ -800,10 +800,10 @@ if (loginForm){
     const password = document.getElementById('loginPassword').value;
     const feedback = document.getElementById('login-feedback');
     try{
-      const r = await api('/auth/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username,password})});
+      const r = await api('/auth/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username,password,preferred_language:currentLang()})});
       if (r.ok){
         track('login');
-        location.href = (r.role === 'member') ? '/tree.html' : '/admin.html';
+        location.href = familyPrefix() + ((r.role === 'member') ? '/tree.html' : '/admin.html');
       } else {
         feedback.textContent = t('login_feedback_fail');
       }
@@ -1020,6 +1020,8 @@ if (registerForm){
       const heirIds = Array.from(document.querySelectorAll('#heir-candidates-area input[name="heir_of"]:checked')).map(cb=>cb.value);
       if (heirIds.length) data.append('heir_of', JSON.stringify(heirIds));
     }
+
+    data.append('preferred_language', currentLang());
 
     const feedback = document.getElementById('register-feedback');
     if (feedback) feedback.textContent = t('reg_submitting');
@@ -2330,6 +2332,7 @@ const I18N = {
     owner_admin_family_required: 'Choose a family first.',
     owner_admin_username_label: 'Username',
     owner_admin_email_label: 'Email',
+    owner_admin_email_lang_label: 'Email language',
     owner_add_admin_btn: 'Add administrator',
     owner_add_admin_done: 'Administrator added — their temporary password has been emailed to them.',
     owner_password_resets_heading: 'Administrator password reset requests',
@@ -2793,6 +2796,7 @@ const I18N = {
     owner_admin_family_required: "Choisissez d'abord une famille.",
     owner_admin_username_label: "Nom d'utilisateur",
     owner_admin_email_label: 'Email',
+    owner_admin_email_lang_label: "Langue de l'email",
     owner_add_admin_btn: 'Ajouter un administrateur',
     owner_add_admin_done: 'Administrateur ajouté — son mot de passe temporaire lui a été envoyé par email.',
     owner_password_resets_heading: "Demandes de réinitialisation de mot de passe d'administrateur",

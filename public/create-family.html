@@ -78,6 +78,7 @@
             admin_username: document.getElementById('cf-admin-username').value.trim(),
             admin_email: document.getElementById('cf-admin-email').value.trim(),
             policy_accepted: true,
+            preferred_language: currentLang(),
           }),
         });
         const j = await res.json();

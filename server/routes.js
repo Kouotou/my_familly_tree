@@ -78,6 +78,26 @@ function generateTempPassword(){
   return Math.random().toString(36).slice(-10) + Math.random().toString(36).slice(-2).toUpperCase();
 }
 
+// tiny inline i18n for server-generated email text — the client has the full I18N dictionary
+// in public/app.js, but these are built server-side (before any page, and often before any
+// login), so each email picks between its own EN/FR pair directly rather than duplicating that
+// whole client-side dictionary here. `lang` is whatever's on file for the recipient (see
+// preferred_language below), defaulting to English for anything else (including no preference
+// captured yet, e.g. an account created before this existed).
+function emailT(lang, en, fr){ return lang === 'fr' ? fr : en; }
+
+// groups a list of {email, preferred_language} recipients into { en: [...], fr: [...] } so a
+// caller can send one localized email per language present, instead of one email in a single
+// language to everyone regardless of what they actually read.
+function groupEmailsByLang(recipients){
+  const groups = {};
+  recipients.forEach(r=>{
+    const lang = r.preferred_language === 'fr' ? 'fr' : 'en';
+    (groups[lang] = groups[lang] || []).push(r.email);
+  });
+  return groups;
+}
+
 // every current admin/owner with an email on file — used to fan out "something needs review"
 // notifications. An admin who hasn't yet logged in and set their own password (still on the
 // owner-issued temp one) is excluded — they're not a confirmed working account yet, so there's
@@ -86,8 +106,7 @@ function generateTempPassword(){
 // up. Admins without an email set (the original bootstrapped account, until the owner sets
 // one) simply don't get emailed, same as before this feature existed.
 async function getAdminRecipients(){
-  const rows = await db.prepare("SELECT email FROM users WHERE ((role = 'admin' AND must_change_password = false) OR role = 'platform_owner') AND email IS NOT NULL AND email != ''").all();
-  return rows.map(r=>r.email);
+  return db.prepare("SELECT email, preferred_language FROM users WHERE ((role = 'admin' AND must_change_password = false) OR role = 'platform_owner') AND email IS NOT NULL AND email != ''").all();
 }
 
 // members who opted in with an email address at registration — notified once something they
@@ -95,8 +114,7 @@ async function getAdminRecipients(){
 // getAdminRecipients() is for). Admins/owner are added separately by each call site that
 // wants them too, rather than folded in here, so a caller can choose member-only vs. everyone.
 async function getMemberRecipients(){
-  const rows = await db.prepare("SELECT email FROM users WHERE role = 'member' AND email IS NOT NULL AND email != ''").all();
-  return rows.map(r=>r.email);
+  return db.prepare("SELECT email, preferred_language FROM users WHERE role = 'member' AND email IS NOT NULL AND email != ''").all();
 }
 
 // field-by-field diff between a person's current record and a pending update_person
@@ -118,31 +136,47 @@ function buildProfileChangeSummary(current, updated, photoChanged, heirNames){
   return changes;
 }
 
-const PROFILE_DIFF_LABELS_EN = {
-  full_name: 'Full name', gender: 'Gender', birth_date: 'Birth date', death_date: 'Date of death',
-  occupation: 'Occupation', residence: 'Residence', phone: 'Phone', photo: 'Photo', heir_of: 'Heritage',
-  email: 'Email',
+const PROFILE_DIFF_LABELS = {
+  en: {
+    full_name: 'Full name', gender: 'Gender', birth_date: 'Birth date', death_date: 'Date of death',
+    occupation: 'Occupation', residence: 'Residence', phone: 'Phone', photo: 'Photo', heir_of: 'Heritage',
+    email: 'Email',
+  },
+  fr: {
+    full_name: 'Nom complet', gender: 'Genre', birth_date: 'Date de naissance', death_date: 'Date de décès',
+    occupation: 'Profession', residence: 'Résidence', phone: 'Téléphone', photo: 'Photo', heir_of: 'Héritage',
+    email: 'Email',
+  },
 };
-// plain-English HTML summary for the admin notification email (no client-side i18n available here)
-function changeSummaryToHtml(changes){
+// HTML summary of what changed, for the admin notification email — in the recipient's own
+// language, built from the same machine-readable diff the admin.html UI renders client-side
+function changeSummaryToHtml(changes, lang){
   if (!changes || !changes.length) return '';
+  const labels = PROFILE_DIFF_LABELS[lang === 'fr' ? 'fr' : 'en'];
   const items = changes.map(c=>{
-    const label = PROFILE_DIFF_LABELS_EN[c.field] || c.field;
-    if (c.field === 'photo') return `<li>${label} updated</li>`;
-    if (c.added) return `<li>${label}: claiming heritage from ${c.added.join(', ')}</li>`;
-    return `<li>${label}: "${c.old || '(empty)'}" → "${c.new || '(empty)'}"</li>`;
+    const label = labels[c.field] || c.field;
+    if (c.field === 'photo') return `<li>${emailT(lang, `${label} updated`, `${label} mis à jour`)}</li>`;
+    if (c.added) return `<li>${emailT(lang, `${label}: claiming heritage from ${c.added.join(', ')}`, `${label} : revendique un héritage de ${c.added.join(', ')}`)}</li>`;
+    return `<li>${label}: "${c.old || emailT(lang,'(empty)','(vide)')}" → "${c.new || emailT(lang,'(empty)','(vide)')}"</li>`;
   }).join('');
-  return `<p><strong>What changed:</strong></p><ul>${items}</ul>`;
+  return `<p><strong>${emailT(lang, 'What changed:', 'Ce qui a changé :')}</strong></p><ul>${items}</ul>`;
 }
 
 // fire-and-forget notification for a newly-pending request/archive post — never allowed to
-// break the request that triggered it, so every failure is swallowed after logging
-async function notifyAdmins(req, { subject, bodyHtml, highlightParam, highlightId }){
+// break the request that triggered it, so every failure is swallowed after logging. `buildContent`
+// is `(lang) => ({ subject, bodyHtml })` so each language group of recipients gets its own
+// localized email rather than everyone getting whatever language happened to be passed in.
+async function notifyAdmins(req, { buildContent, highlightParam, highlightId }){
   try{
     const recipients = await getAdminRecipients();
     if (!recipients.length) return;
     const link = `${req.protocol}://${req.get('host')}/admin.html?${highlightParam}=${encodeURIComponent(highlightId)}`;
-    await sendEmail({ to: recipients, subject: `[Nah Adja Mbethe] ${subject}`, html: `${bodyHtml}<p><a href="${link}">Review and respond</a></p>` });
+    const groups = groupEmailsByLang(recipients);
+    for (const [lang, emails] of Object.entries(groups)){
+      const { subject, bodyHtml } = buildContent(lang);
+      const reviewLink = emailT(lang, 'Review and respond', 'Examiner et répondre');
+      await sendEmail({ to: emails, subject: `[${req.family.name}] ${subject}`, html: `${bodyHtml}<p><a href="${link}">${reviewLink}</a></p>` });
+    }
   }catch(e){ console.error('[notify] failed', e && e.message || e); }
 }
 
@@ -150,12 +184,17 @@ async function notifyAdmins(req, { subject, bodyHtml, highlightParam, highlightI
 // members only (getMemberRecipients()), separate from notifyAdmins() above which fires at
 // *submission* time to admins for review. A post/event can be approved with zero opted-in
 // members and this is just a silent no-op, same failure-swallowing as notifyAdmins.
-async function notifyMembers(req, { subject, bodyHtml, link }){
+async function notifyMembers(req, { buildContent, link }){
   try{
     const recipients = await getMemberRecipients();
     if (!recipients.length) return;
     const fullLink = `${req.protocol}://${req.get('host')}${link}`;
-    await sendEmail({ to: recipients, subject: `[Nah Adja Mbethe] ${subject}`, html: `${bodyHtml}<p><a href="${fullLink}">View it</a></p>` });
+    const groups = groupEmailsByLang(recipients);
+    for (const [lang, emails] of Object.entries(groups)){
+      const { subject, bodyHtml } = buildContent(lang);
+      const viewLink = emailT(lang, 'View it', 'Voir');
+      await sendEmail({ to: emails, subject: `[${req.family.name}] ${subject}`, html: `${bodyHtml}<p><a href="${fullLink}">${viewLink}</a></p>` });
+    }
   }catch(e){ console.error('[notify] failed', e && e.message || e); }
 }
 
@@ -229,6 +268,12 @@ async function handleLogin(req, res){
   if (!user) return res.status(401).json({ error: 'invalid' });
   const ok = bcrypt.compareSync(password, user.password_hash);
   if (!ok) return res.status(401).json({ error: 'invalid' });
+  // refreshed on every login from whatever language the device/browser is currently in (or
+  // whatever the visitor last toggled to) — see currentLang()/familyPrefix() in public/app.js —
+  // so outbound email always follows wherever this person is actually reading the app from,
+  // without needing a separate "email language" setting.
+  const preferredLanguage = (req.body && req.body.preferred_language) === 'fr' ? 'fr' : 'en';
+  if (user.preferred_language !== preferredLanguage) await db.prepare('UPDATE users SET preferred_language = ? WHERE id = ?').run(preferredLanguage, user.id);
   req.session.user = { id: user.id, role: user.role, person_id: user.person_id, username: user.username, email: user.email || null, mustChangePassword: !!user.must_change_password, familySlug: req.family.slug };
   return res.json({ ok:true, role: user.role, person_id: user.person_id, mustChangePassword: !!user.must_change_password });
 }
@@ -247,6 +292,8 @@ router.post('/auth/owner-login', express.json(), wrap(async (req,res)=>{
   if (!user || user.role !== 'platform_owner' || !bcrypt.compareSync(password, user.password_hash)) {
     return res.status(401).json({ error: 'invalid' });
   }
+  const preferredLanguage = (req.body && req.body.preferred_language) === 'fr' ? 'fr' : 'en';
+  if (user.preferred_language !== preferredLanguage) await db.prepare('UPDATE users SET preferred_language = ? WHERE id = ?').run(preferredLanguage, user.id);
   req.session.user = { id: user.id, role: user.role, person_id: user.person_id, username: user.username, email: user.email || null, mustChangePassword: !!user.must_change_password, familySlug: req.family.slug };
   res.json({ ok:true, mustChangePassword: !!user.must_change_password });
 }));
@@ -264,14 +311,19 @@ router.post('/auth/admin-password-reset-request', express.json(), wrap(async (re
     const payload = { type: 'admin_password_reset', username, user_id: user.id };
     await db.prepare('INSERT INTO requests (id, type, payload, status, created_by, created_at) VALUES (?, ?, ?, ?, ?, ?)')
       .run(id, 'admin_password_reset', JSON.stringify(payload), 'pending', 'self-service', now());
-    const owners = await db.prepare("SELECT email FROM users WHERE role = 'platform_owner' AND email IS NOT NULL AND email != ''").all();
+    const owners = await db.prepare("SELECT email, preferred_language FROM users WHERE role = 'platform_owner' AND email IS NOT NULL AND email != ''").all();
     if (owners.length){
       const link = `${req.protocol}://${req.get('host')}/owner.html?highlight=${encodeURIComponent(id)}`;
-      await sendEmail({
-        to: owners.map(o=>o.email),
-        subject: '[Nah Adja Mbethe] Administrator password reset requested',
-        html: `<p><strong>${username}</strong> is locked out and has requested a password reset.</p><p><a href="${link}">Review and resolve</a></p>`,
-      }).catch(()=>{});
+      const groups = groupEmailsByLang(owners);
+      for (const [lang, emails] of Object.entries(groups)){
+        await sendEmail({
+          to: emails,
+          subject: `[${req.family.name}] ${emailT(lang, 'Administrator password reset requested', 'Réinitialisation du mot de passe administrateur demandée')}`,
+          html: `<p>${emailT(lang,
+            `<strong>${username}</strong> is locked out and has requested a password reset.`,
+            `<strong>${username}</strong> est bloqué(e) et a demandé une réinitialisation de mot de passe.`)}</p><p><a href="${link}">${emailT(lang,'Review and resolve','Examiner et résoudre')}</a></p>`,
+        }).catch(()=>{});
+      }
     }
   }
   res.json({ ok: true });
@@ -427,6 +479,7 @@ router.post('/auth/register', upload.fields([
     phone: body.phone || null,
     email: (body.email && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(body.email.trim())) ? body.email.trim() : null,
     photo_path: body.photo_path || null,
+    preferred_language: body.preferred_language === 'fr' ? 'fr' : 'en',
     heir_of: heirOf,
     relations: []
   };
@@ -475,8 +528,12 @@ router.post('/auth/register', upload.fields([
   // detached) since a Vercel serverless invocation can be torn down the moment the response
   // is sent, which would silently kill a fire-and-forget promise before it ever sends
   await notifyAdmins(req, {
-    subject: 'New account request',
-    bodyHtml: `<p><strong>${payload.full_name}</strong> wants to create an account in the family tree.</p>`,
+    buildContent: (lang)=> ({
+      subject: emailT(lang, 'New account request', 'Nouvelle demande de compte'),
+      bodyHtml: `<p>${emailT(lang,
+        `<strong>${payload.full_name}</strong> wants to create an account in the family tree.`,
+        `<strong>${payload.full_name}</strong> souhaite créer un compte dans l'arbre généalogique.`)}</p>`,
+    }),
     highlightParam: 'highlight', highlightId: id,
   });
 }));
@@ -602,11 +659,12 @@ async function linkSibling(dbLike, a,b){
   await ins.run(uuidv4(), b, a, 'sibling');
 }
 
-async function createLoginForPerson(dbLike, personId, username, password, email){
+async function createLoginForPerson(dbLike, personId, username, password, email, preferredLanguage){
   if (!username || !password) return;
   const pwdHash = bcrypt.hashSync(password, 10);
-  await dbLike.prepare('INSERT INTO users (id, username, password_hash, role, person_id, email) VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT (username) DO NOTHING').run(uuidv4(), username, pwdHash, 'member', personId, email || null);
-  await dbLike.prepare('UPDATE users SET person_id = ?, email = ? WHERE username = ?').run(personId, email || null, username);
+  const lang = preferredLanguage === 'fr' ? 'fr' : 'en';
+  await dbLike.prepare('INSERT INTO users (id, username, password_hash, role, person_id, email, preferred_language) VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT (username) DO NOTHING').run(uuidv4(), username, pwdHash, 'member', personId, email || null, lang);
+  await dbLike.prepare('UPDATE users SET person_id = ?, email = ?, preferred_language = ? WHERE username = ?').run(personId, email || null, lang, username);
 }
 
 async function unlinkParentChild(dbLike, childId, parentId){
@@ -662,7 +720,7 @@ async function applyParentEdits(dbLike, personId, relations, reviewerId){
 // helper to process create_person payload into the DB and return the created person id
 async function processCreatePerson(dbLike, payload, reviewerId){
   const personId = await createPersonRecord(dbLike, payload, reviewerId);
-  await createLoginForPerson(dbLike, personId, payload.username, payload.password, payload.email);
+  await createLoginForPerson(dbLike, personId, payload.username, payload.password, payload.email, payload.preferred_language);
 
   if (Array.isArray(payload.relations)){
     const father = payload.relations.find(r=> r.type==='parent' && r.which==='father');
@@ -873,8 +931,12 @@ router.post('/member/profile/update', upload.single('photo'), wrap(async (req,re
   await db.prepare('INSERT INTO requests (id, type, payload, status, created_by, created_at) VALUES (?, ?, ?, ?, ?, ?)').run(id, 'update_person', JSON.stringify(payload), 'pending', req.session.user.id, now());
   res.json({ ok:true, id });
   await notifyAdmins(req, {
-    subject: 'Profile update request',
-    bodyHtml: `<p><strong>${current.full_name}</strong> wants to update their profile.</p>${changeSummaryToHtml(payload.changes)}`,
+    buildContent: (lang)=> ({
+      subject: emailT(lang, 'Profile update request', 'Demande de modification de profil'),
+      bodyHtml: `<p>${emailT(lang,
+        `<strong>${current.full_name}</strong> wants to update their profile.`,
+        `<strong>${current.full_name}</strong> souhaite modifier son profil.`)}</p>${changeSummaryToHtml(payload.changes, lang)}`,
+    }),
     highlightParam: 'highlight', highlightId: id,
   });
 }));
@@ -895,8 +957,12 @@ router.post('/owner/people/:id/request-update', upload.single('photo'), wrap(asy
   await db.prepare('INSERT INTO requests (id, type, payload, status, created_by, created_at) VALUES (?, ?, ?, ?, ?, ?)').run(id, 'update_person', JSON.stringify(payload), 'pending', req.session.user.id, now());
   res.json({ ok:true, id });
   await notifyAdmins(req, {
-    subject: 'Profile update request (from the platform owner)',
-    bodyHtml: `<p>The platform owner wants to update <strong>${current.full_name}</strong>'s profile.</p>${changeSummaryToHtml(payload.changes)}`,
+    buildContent: (lang)=> ({
+      subject: emailT(lang, 'Profile update request (from the platform owner)', 'Demande de modification de profil (du propriétaire de la plateforme)'),
+      bodyHtml: `<p>${emailT(lang,
+        `The platform owner wants to update <strong>${current.full_name}</strong>'s profile.`,
+        `Le propriétaire de la plateforme souhaite modifier le profil de <strong>${current.full_name}</strong>.`)}</p>${changeSummaryToHtml(payload.changes, lang)}`,
+    }),
     highlightParam: 'highlight', highlightId: id,
   });
 }));
@@ -970,8 +1036,15 @@ router.post('/member/relatives/add', upload.single('photo'), wrap(async (req,res
   await db.prepare('INSERT INTO requests (id, type, payload, status, created_by, created_at) VALUES (?, ?, ?, ?, ?, ?)').run(id, 'add_relative', JSON.stringify(payload), 'pending', req.session.user.id, now());
   res.json({ ok:true, id });
   await notifyAdmins(req, {
-    subject: 'New relative request',
-    bodyHtml: `<p><strong>${requester.full_name}</strong> wants to add a ${payload.relation}.</p>`,
+    buildContent: (lang)=> {
+      const relationLabel = emailT(lang, payload.relation, { spouse: 'conjoint(e)', child: 'enfant', sibling: 'frère/sœur' }[payload.relation] || payload.relation);
+      return {
+        subject: emailT(lang, 'New relative request', 'Nouvelle demande de proche'),
+        bodyHtml: `<p>${emailT(lang,
+          `<strong>${requester.full_name}</strong> wants to add a ${relationLabel}.`,
+          `<strong>${requester.full_name}</strong> souhaite ajouter un(e) ${relationLabel}.`)}</p>`,
+      };
+    },
     highlightParam: 'highlight', highlightId: id,
   });
 }));
@@ -1124,20 +1197,21 @@ router.get('/admin/people/:id/relatives', wrap(async (req,res)=>{
 // is exactly what led to a real failed login (a stray space picked up when manually
 // retyping instead of copy-pasting was the likely cause; this doesn't eliminate that risk but
 // makes the boundary of what to copy much clearer, and says so explicitly)
-function credentialBlockHtml(username, tempPassword){
+function credentialBlockHtml(username, tempPassword, lang){
   const row = (label, value) => `<div style="margin-bottom:6px"><span style="color:#666">${label}:</span> <code style="background:#f3f1ea;padding:2px 8px;border-radius:4px;font-family:monospace;font-size:15px">${value}</code></div>`;
-  return `<div style="border:1px solid #ddd;border-radius:8px;padding:14px;margin:12px 0">${row('Username', username)}${row('Temporary password', tempPassword)}</div><p style="color:#666;font-size:13px">Copy and paste these rather than typing them by hand — easy to mistype otherwise.</p>`;
+  return `<div style="border:1px solid #ddd;border-radius:8px;padding:14px;margin:12px 0">${row(emailT(lang,'Username','Nom d\'utilisateur'), username)}${row(emailT(lang,'Temporary password','Mot de passe temporaire'), tempPassword)}</div><p style="color:#666;font-size:13px">${emailT(lang, 'Copy and paste these rather than typing them by hand — easy to mistype otherwise.', 'Copiez-collez ces informations plutôt que de les retaper — il est facile de faire une erreur sinon.')}</p>`;
 }
 
 async function resetAdminPasswordAndNotify(dbLike, userId, familyName){
   const tempPassword = generateTempPassword();
   await dbLike.prepare('UPDATE users SET password_hash = ?, must_change_password = ? WHERE id = ?').run(bcrypt.hashSync(tempPassword, 10), true, userId);
-  const user = await dbLike.prepare('SELECT username, email FROM users WHERE id = ?').get(userId);
+  const user = await dbLike.prepare('SELECT username, email, preferred_language FROM users WHERE id = ?').get(userId);
   if (user && user.email){
+    const lang = user.preferred_language;
     await sendEmail({
       to: user.email,
-      subject: `Your administrator password has been reset${familyName ? ` (${familyName})` : ''}`,
-      html: `<p>Your password has been reset by the platform owner.</p>${credentialBlockHtml(user.username, tempPassword)}<p>You'll be asked to set a new password when you next log in.</p>`,
+      subject: emailT(lang, `Your administrator password has been reset${familyName ? ` (${familyName})` : ''}`, `Votre mot de passe administrateur a été réinitialisé${familyName ? ` (${familyName})` : ''}`),
+      html: `<p>${emailT(lang, 'Your password has been reset by the platform owner.', 'Votre mot de passe a été réinitialisé par le propriétaire de la plateforme.')}</p>${credentialBlockHtml(user.username, tempPassword, lang)}<p>${emailT(lang, "You'll be asked to set a new password when you next log in.", 'Il vous sera demandé de définir un nouveau mot de passe lors de votre prochaine connexion.')}</p>`,
     }).catch(()=>{});
   }
 }
@@ -1167,6 +1241,7 @@ router.post('/platform/admins/create', express.json(), wrap(async (req,res)=>{
   const familySlug = ((req.body && req.body.family_slug) || '').trim();
   const username = ((req.body && req.body.username) || '').trim();
   const email = ((req.body && req.body.email) || '').trim();
+  const lang = (req.body && req.body.preferred_language) === 'fr' ? 'fr' : 'en';
   if (!familySlug) return res.status(400).json({ error: 'Choose a family.' });
   if (!username || !email) return res.status(400).json({ error: 'Username and email are required.' });
   const family = await db.prepare("SELECT * FROM public.families WHERE slug = ? AND status = 'active'").get(familySlug);
@@ -1177,8 +1252,8 @@ router.post('/platform/admins/create', express.json(), wrap(async (req,res)=>{
   let usernameTaken = false;
   await db.withTenant(family.schema_name, async () => {
     if (await db.prepare('SELECT id FROM users WHERE username = ?').get(username)) { usernameTaken = true; return; }
-    await db.prepare('INSERT INTO users (id, username, password_hash, role, email, must_change_password, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)')
-      .run(id, username, bcrypt.hashSync(tempPassword, 10), 'admin', email, true, now());
+    await db.prepare('INSERT INTO users (id, username, password_hash, role, email, must_change_password, created_at, preferred_language) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
+      .run(id, username, bcrypt.hashSync(tempPassword, 10), 'admin', email, true, now(), lang);
   });
   if (usernameTaken) return res.status(409).json({ error: 'That username is already taken in that family.' });
 
@@ -1186,8 +1261,8 @@ router.post('/platform/admins/create', express.json(), wrap(async (req,res)=>{
   const link = `${base}/f/${family.slug}/admin-login`;
   await sendEmail({
     to: email,
-    subject: `You have been added as an administrator for ${family.name}`,
-    html: `<p>You've been added as an administrator for <strong>${family.name}</strong>.</p>${credentialBlockHtml(username, tempPassword)}<p>You'll be asked to set a new password the first time you log in.</p><p><a href="${link}">${link}</a></p>`,
+    subject: emailT(lang, `You have been added as an administrator for ${family.name}`, `Vous avez été ajouté(e) comme administrateur(trice) pour ${family.name}`),
+    html: `<p>${emailT(lang, `You've been added as an administrator for <strong>${family.name}</strong>.`, `Vous avez été ajouté(e) comme administrateur(trice) pour <strong>${family.name}</strong>.`)}</p>${credentialBlockHtml(username, tempPassword, lang)}<p>${emailT(lang, "You'll be asked to set a new password the first time you log in.", 'Il vous sera demandé de définir un nouveau mot de passe lors de votre première connexion.')}</p><p><a href="${link}">${link}</a></p>`,
   }).catch(()=>{});
   res.json({ ok:true, id });
 }));
@@ -1318,21 +1393,27 @@ router.post('/families/request', express.json(), wrap(async (req,res)=>{
   if (!body.policy_accepted) return res.status(400).json({ error: 'You must confirm you have read and accepted the policy.' });
   if (await isFamilySlugTaken(slug)) return res.status(409).json({ error: 'That family ID is already taken. Please choose another.' });
 
+  const requesterLang = body.preferred_language === 'fr' ? 'fr' : 'en';
   const id = uuidv4();
-  const payload = { type: 'create_family', family_name: familyName, slug, admin_username: adminUsername, admin_email: adminEmail };
+  const payload = { type: 'create_family', family_name: familyName, slug, admin_username: adminUsername, admin_email: adminEmail, preferred_language: requesterLang };
   await db.prepare('INSERT INTO public.platform_requests (id, type, payload, status, created_at) VALUES (?, ?, ?, ?, ?)')
     .run(id, 'create_family', JSON.stringify(payload), 'pending', now());
   res.json({ ok:true, id });
 
   try{
-    const owners = await db.prepare("SELECT email FROM public.users WHERE role = 'platform_owner' AND email IS NOT NULL AND email != ''").all();
+    const owners = await db.prepare("SELECT email, preferred_language FROM public.users WHERE role = 'platform_owner' AND email IS NOT NULL AND email != ''").all();
     if (owners.length){
       const link = `${req.protocol}://${req.get('host')}/owner.html?highlight=${encodeURIComponent(id)}`;
-      await sendEmail({
-        to: owners.map(o=>o.email),
-        subject: `New family creation request: ${familyName}`,
-        html: `<p><strong>${familyName}</strong> (ID: ${slug}) has requested a new family, admin: ${adminUsername} (${adminEmail}).</p><p><a href="${link}">Review and respond</a></p>`,
-      });
+      const groups = groupEmailsByLang(owners);
+      for (const [lang, emails] of Object.entries(groups)){
+        await sendEmail({
+          to: emails,
+          subject: emailT(lang, `New family creation request: ${familyName}`, `Nouvelle demande de création de famille : ${familyName}`),
+          html: `<p>${emailT(lang,
+            `<strong>${familyName}</strong> (ID: ${slug}) has requested a new family, admin: ${adminUsername} (${adminEmail}).`,
+            `<strong>${familyName}</strong> (ID : ${slug}) a demandé la création d'une nouvelle famille, administrateur(trice) : ${adminUsername} (${adminEmail}).`)}</p><p><a href="${link}">${emailT(lang,'Review and respond','Examiner et répondre')}</a></p>`,
+        });
+      }
     }
   }catch(e){ console.error('[notify] failed', e && e.message || e); }
 }));
@@ -1348,13 +1429,18 @@ router.post('/families/deletion-request', express.json(), wrap(async (req,res)=>
     .run(id, 'delete_family', JSON.stringify(payload), 'pending', now());
   res.json({ ok:true, id });
   try{
-    const owners = await db.prepare("SELECT email FROM public.users WHERE role = 'platform_owner' AND email IS NOT NULL AND email != ''").all();
+    const owners = await db.prepare("SELECT email, preferred_language FROM public.users WHERE role = 'platform_owner' AND email IS NOT NULL AND email != ''").all();
     if (owners.length){
-      await sendEmail({
-        to: owners.map(o=>o.email),
-        subject: `Family deletion requested: ${req.family.name}`,
-        html: `<p><strong>${req.session.user.username}</strong>, an admin of <strong>${req.family.name}</strong> (ID: ${req.family.slug}), has requested this family be deleted.</p>`,
-      });
+      const groups = groupEmailsByLang(owners);
+      for (const [lang, emails] of Object.entries(groups)){
+        await sendEmail({
+          to: emails,
+          subject: emailT(lang, `Family deletion requested: ${req.family.name}`, `Suppression de famille demandée : ${req.family.name}`),
+          html: `<p>${emailT(lang,
+            `<strong>${req.session.user.username}</strong>, an admin of <strong>${req.family.name}</strong> (ID: ${req.family.slug}), has requested this family be deleted.`,
+            `<strong>${req.session.user.username}</strong>, un(e) administrateur(trice) de <strong>${req.family.name}</strong> (ID : ${req.family.slug}), a demandé la suppression de cette famille.`)}</p>`,
+        });
+      }
     }
   }catch(e){ console.error('[notify] failed', e && e.message || e); }
 }));
@@ -1381,11 +1467,12 @@ async function processCreateFamily(payload, reviewerId, req){
   if (await db.prepare('SELECT id FROM public.families WHERE slug = ?').get(payload.slug)) throw new Error('That family ID has since been taken by another approved family.');
   const schemaName = schemaNameForSlug(payload.slug);
   await db.createFamilySchema(schemaName);
+  const lang = payload.preferred_language === 'fr' ? 'fr' : 'en';
 
   const tempPassword = generateTempPassword();
   await db.withTenant(schemaName, async () => {
-    await db.prepare('INSERT INTO users (id, username, password_hash, role, email, must_change_password, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)')
-      .run(uuidv4(), payload.admin_username, bcrypt.hashSync(tempPassword, 10), 'admin', payload.admin_email, true, now());
+    await db.prepare('INSERT INTO users (id, username, password_hash, role, email, must_change_password, created_at, preferred_language) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
+      .run(uuidv4(), payload.admin_username, bcrypt.hashSync(tempPassword, 10), 'admin', payload.admin_email, true, now(), lang);
   });
 
   const familyId = uuidv4();
@@ -1396,15 +1483,15 @@ async function processCreateFamily(payload, reviewerId, req){
   const link = `${base}/f/${payload.slug}/admin-login`;
   await sendEmail({
     to: payload.admin_email,
-    subject: `Your family "${payload.family_name}" has been approved`,
-    html: `<p>Your request to create <strong>${payload.family_name}</strong> has been approved.</p>`
-      + credentialBlockHtml(payload.admin_username, tempPassword)
+    subject: emailT(lang, `Your family "${payload.family_name}" has been approved`, `Votre famille « ${payload.family_name} » a été approuvée`),
+    html: `<p>${emailT(lang, `Your request to create <strong>${payload.family_name}</strong> has been approved.`, `Votre demande de création de <strong>${payload.family_name}</strong> a été approuvée.`)}</p>`
+      + credentialBlockHtml(payload.admin_username, tempPassword, lang)
       + `<p><a href="${link}">${link}</a></p>`
-      + `<p><strong>Next steps:</strong></p><ol>`
-      + `<li>Open the link above and log in as an admin with the username and temporary password shown.</li>`
-      + `<li>You'll be asked to set a new password right away — this is required before you can do anything else.</li>`
-      + `<li>Create your family's root profile (the founding ancestor everyone else's tree hangs from).</li>`
-      + `<li>Share this same link with your family members so they can register their own accounts — each one will need your approval, the same way this one did.</li></ol>`,
+      + `<p><strong>${emailT(lang,'Next steps:','Prochaines étapes :')}</strong></p><ol>`
+      + `<li>${emailT(lang, 'Open the link above and log in as an admin with the username and temporary password shown.', 'Ouvrez le lien ci-dessus et connectez-vous en tant qu\'administrateur(trice) avec le nom d\'utilisateur et le mot de passe temporaire indiqués.')}</li>`
+      + `<li>${emailT(lang, "You'll be asked to set a new password right away — this is required before you can do anything else.", 'Il vous sera demandé de définir immédiatement un nouveau mot de passe — cette étape est obligatoire avant toute autre action.')}</li>`
+      + `<li>${emailT(lang, "Create your family's root profile (the founding ancestor everyone else's tree hangs from).", 'Créez le profil racine de votre famille (l\'ancêtre fondateur auquel se rattache la place de chacun dans l\'arbre).')}</li>`
+      + `<li>${emailT(lang, 'Share this same link with your family members so they can register their own accounts — each one will need your approval, the same way this one did.', 'Partagez ce même lien avec les membres de votre famille afin qu\'ils créent leurs propres comptes — chacun nécessitera votre approbation, comme celle-ci.')}</li></ol>`,
   }).catch(()=>{});
 }
 
@@ -1861,11 +1948,18 @@ router.post('/archive', upload.array('files', 10), wrap(async (req,res)=>{
     const recipients = await getAdminRecipients();
     if (recipients.length){
       const link = `${req.protocol}://${req.get('host')}/admin.html?archiveHighlight=${encodeURIComponent(id)}`;
-      await sendEmail({
-        to: recipients,
-        subject: `[Nah Adja Mbethe] New archive post (${type})`,
-        html: `<p><strong>${poster ? poster.full_name : 'Someone'}</strong> posted a ${type} to the archive.</p><p><a href="${link}">Review and respond</a></p>`,
-      });
+      const groups = groupEmailsByLang(recipients);
+      for (const [lang, emails] of Object.entries(groups)){
+        const typeLabel = emailT(lang, type, { photo: 'photo', audio: 'audio', video: 'vidéo' }[type] || type);
+        const posterName = poster ? poster.full_name : emailT(lang, 'Someone', 'Quelqu\'un');
+        await sendEmail({
+          to: emails,
+          subject: `[${req.family.name}] ${emailT(lang, `New archive post (${typeLabel})`, `Nouvelle publication dans les archives (${typeLabel})`)}`,
+          html: `<p>${emailT(lang,
+            `<strong>${posterName}</strong> posted a ${typeLabel} to the archive.`,
+            `<strong>${posterName}</strong> a publié un(e) ${typeLabel} dans les archives.`)}</p><p><a href="${link}">${emailT(lang,'Review and respond','Examiner et répondre')}</a></p>`,
+        });
+      }
     }
   }catch(e){ console.error('[notify] failed', e && e.message || e); }
 }));
@@ -1985,8 +2079,16 @@ router.post('/admin/archive/:id/approve', wrap(async (req,res)=>{
   res.json({ ok:true });
   const poster = row.person_id ? await db.prepare('SELECT full_name FROM people WHERE id = ?').get(row.person_id) : null;
   await notifyMembers(req, {
-    subject: `New ${row.type} in the family archive`,
-    bodyHtml: `<p><strong>${poster ? poster.full_name : 'Someone'}</strong> posted a new ${row.type} to the family archive.</p>`,
+    buildContent: (lang)=> {
+      const typeLabel = emailT(lang, row.type, { photo: 'photo', audio: 'audio', video: 'vidéo' }[row.type] || row.type);
+      const posterName = poster ? poster.full_name : emailT(lang, 'Someone', 'Quelqu\'un');
+      return {
+        subject: emailT(lang, `New ${typeLabel} in the family archive`, `Nouveau(elle) ${typeLabel} dans les archives familiales`),
+        bodyHtml: `<p>${emailT(lang,
+          `<strong>${posterName}</strong> posted a new ${typeLabel} to the family archive.`,
+          `<strong>${posterName}</strong> a publié un(e) nouveau(elle) ${typeLabel} dans les archives familiales.`)}</p>`,
+      };
+    },
     link: `/archives.html?tab=${row.type}&highlight=${row.id}`,
   });
 }));
@@ -2032,11 +2134,17 @@ router.post('/events', express.json(), wrap(async (req,res)=>{
     const recipients = await getAdminRecipients();
     if (recipients.length){
       const link = `${req.protocol}://${req.get('host')}/admin.html?eventHighlight=${encodeURIComponent(id)}`;
-      await sendEmail({
-        to: recipients,
-        subject: `[Nah Adja Mbethe] New event proposed: ${title}`,
-        html: `<p><strong>${poster ? poster.full_name : 'Someone'}</strong> proposed a new event: <strong>${title}</strong>.</p><p><a href="${link}">Review and respond</a></p>`,
-      });
+      const groups = groupEmailsByLang(recipients);
+      for (const [lang, emails] of Object.entries(groups)){
+        const posterName = poster ? poster.full_name : emailT(lang, 'Someone', 'Quelqu\'un');
+        await sendEmail({
+          to: emails,
+          subject: `[${req.family.name}] ${emailT(lang, `New event proposed: ${title}`, `Nouvel événement proposé : ${title}`)}`,
+          html: `<p>${emailT(lang,
+            `<strong>${posterName}</strong> proposed a new event: <strong>${title}</strong>.`,
+            `<strong>${posterName}</strong> a proposé un nouvel événement : <strong>${title}</strong>.`)}</p><p><a href="${link}">${emailT(lang,'Review and respond','Examiner et répondre')}</a></p>`,
+        });
+      }
     }
   }catch(e){ console.error('[notify] failed', e && e.message || e); }
 }));
@@ -2113,8 +2221,12 @@ router.post('/admin/events/:id/approve', wrap(async (req,res)=>{
   await db.prepare("UPDATE events SET approval_status = 'approved', reviewed_by = ?, reviewed_at = ? WHERE id = ?").run(req.session.user.id, now(), req.params.id);
   res.json({ ok:true });
   await notifyMembers(req, {
-    subject: `New event: ${row.title}`,
-    bodyHtml: `<p>A new family event has been announced: <strong>${row.title}</strong>, on ${new Date(row.event_at).toLocaleString()}.</p>`,
+    buildContent: (lang)=> ({
+      subject: emailT(lang, `New event: ${row.title}`, `Nouvel événement : ${row.title}`),
+      bodyHtml: `<p>${emailT(lang,
+        `A new family event has been announced: <strong>${row.title}</strong>, on ${new Date(row.event_at).toLocaleString()}.`,
+        `Un nouvel événement familial a été annoncé : <strong>${row.title}</strong>, le ${new Date(row.event_at).toLocaleString()}.`)}</p>`,
+    }),
     link: `/archives.html?tab=events&highlight=${row.id}`,
   });
 }));
@@ -2193,9 +2305,9 @@ router.post('/notifications/seen', wrap(async (req,res)=>{
 // out, it's marked sent and never re-sent, even if the daily check runs again tomorrow and
 // the event is still within that same window (e.g. still <30 days out).
 const REMINDER_THRESHOLDS = [
-  { field: 'reminder_month_sent', days: 30, label: '1 month' },
-  { field: 'reminder_week_sent', days: 7, label: '1 week' },
-  { field: 'reminder_day_sent', days: 1, label: '24 hours' },
+  { field: 'reminder_month_sent', days: 30, label: '1 month', labelFr: '1 mois' },
+  { field: 'reminder_week_sent', days: 7, label: '1 week', labelFr: '1 semaine' },
+  { field: 'reminder_day_sent', days: 1, label: '24 hours', labelFr: '24 heures' },
 ];
 // runs entirely within whichever schema is already active on db's current tenant context
 // (the caller — the loop in the route below — is responsible for that, via db.withTenant per
@@ -2203,9 +2315,11 @@ const REMINDER_THRESHOLDS = [
 // of this route.
 async function processEventRemindersForFamily(req, family){
   const events = await db.prepare("SELECT * FROM events WHERE approval_status = 'approved' AND event_at > ?").all(now());
-  const memberEmails = await getMemberRecipients();
-  const adminEmails = await getAdminRecipients();
-  const recipients = Array.from(new Set([...memberEmails, ...adminEmails]));
+  const memberRecipients = await getMemberRecipients();
+  const adminRecipients = await getAdminRecipients();
+  const byEmail = new Map();
+  [...memberRecipients, ...adminRecipients].forEach(r=> { if (!byEmail.has(r.email)) byEmail.set(r.email, r); });
+  const recipients = Array.from(byEmail.values());
 
   let sent = 0;
   for (const ev of events){
@@ -2215,15 +2329,21 @@ async function processEventRemindersForFamily(req, family){
       if (daysUntil > threshold.days) continue;
       await db.prepare(`UPDATE events SET ${threshold.field} = true WHERE id = ?`).run(ev.id);
       if (!recipients.length) continue;
-      try{
-        await sendEmail({
-          to: recipients,
-          subject: `[${family.name}] Reminder: ${ev.title} is in ${threshold.label}`,
-          html: `<p><strong>${ev.title}</strong> is coming up in ${threshold.label} — ${new Date(ev.event_at).toLocaleString()}${ev.location ? ` at ${ev.location}` : ''}.</p>`
-            + `<p><a href="${req.protocol}://${req.get('host')}/f/${family.slug}/archives.html?tab=events&highlight=${ev.id}">View details</a></p>`,
-        });
-        sent++;
-      }catch(e){ console.error('[cron] reminder email failed', e && e.message || e); }
+      const groups = groupEmailsByLang(recipients);
+      for (const [lang, emails] of Object.entries(groups)){
+        try{
+          const thresholdLabel = emailT(lang, threshold.label, threshold.labelFr);
+          await sendEmail({
+            to: emails,
+            subject: `[${family.name}] ${emailT(lang, `Reminder: ${ev.title} is in ${thresholdLabel}`, `Rappel : ${ev.title} est dans ${thresholdLabel}`)}`,
+            html: `<p>${emailT(lang,
+              `<strong>${ev.title}</strong> is coming up in ${thresholdLabel} — ${new Date(ev.event_at).toLocaleString()}${ev.location ? ` at ${ev.location}` : ''}.`,
+              `<strong>${ev.title}</strong> arrive dans ${thresholdLabel} — le ${new Date(ev.event_at).toLocaleString()}${ev.location ? ` à ${ev.location}` : ''}.`)}</p>`
+              + `<p><a href="${req.protocol}://${req.get('host')}/f/${family.slug}/archives.html?tab=events&highlight=${ev.id}">${emailT(lang,'View details','Voir les détails')}</a></p>`,
+          });
+          sent++;
+        }catch(e){ console.error('[cron] reminder email failed', e && e.message || e); }
+      }
     }
   }
   return { eventsChecked: events.length, remindersSent: sent };

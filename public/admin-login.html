@@ -45,7 +45,7 @@
       const p = document.getElementById('adminPwd').value;
       const f = document.getElementById('adminFeedback');
       try{
-        const r = await api('/auth/admin-login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username:u,password:p})});
+        const r = await api('/auth/admin-login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username:u,password:p,preferred_language:currentLang()})});
         if (r.ok) { window.location.href = familyPrefix()+'/admin.html'; }
         else f.textContent = typeof t === 'function' ? t('admin_login_failed') : 'Login failed';
       }catch(e){ f.textContent = typeof t === 'function' ? t('network_error') : 'Network error'; }

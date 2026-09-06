@@ -359,6 +359,12 @@ async function ensureSchema(schemaIdent) {
       -- went live (was approved) after this, computed on the fly rather than a separate
       -- per-user-per-item read-tracking table
       ALTER TABLE users ADD COLUMN IF NOT EXISTS notifications_seen_at TEXT;
+      -- 'en' or 'fr' — refreshed on every login from the device's/browser's current language
+      -- (see currentLang() in public/app.js), and set at account-creation time from whatever
+      -- language the requester's own device was in. Used to send every outbound email (server/
+      -- routes.js's emailT()/groupEmailsByLang()) in the recipient's own language instead of a
+      -- single hardcoded one.
+      ALTER TABLE users ADD COLUMN IF NOT EXISTS preferred_language TEXT DEFAULT 'en';
     `);
     console.log(`[db] schema ready (postgres) — ${schemaIdent}`);
   } finally {

@@ -31,7 +31,7 @@
       const p = document.getElementById('ownerPwd').value;
       const f = document.getElementById('ownerFeedback');
       try{
-        const r = await api('/auth/owner-login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username:u,password:p})});
+        const r = await api('/auth/owner-login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username:u,password:p,preferred_language:currentLang()})});
         if (r.ok) { window.location.href = '/owner.html'; }
         else f.textContent = typeof t === 'function' ? t('owner_login_failed') : 'Invalid owner credentials';
       }catch(e){ f.textContent = typeof t === 'function' ? t('network_error') : 'Network error'; }

@@ -78,6 +78,7 @@
         <label style="flex:1;min-width:160px" data-i18n="owner_admin_family_label">Family<select name="family_slug" id="add-admin-family-select" required><option value="" data-i18n="owner_admin_family_loading">Loading families...</option></select></label>
         <label style="flex:1;min-width:160px" data-i18n="owner_admin_username_label">Username<input name="username" required /></label>
         <label style="flex:1;min-width:200px" data-i18n="owner_admin_email_label">Email<input name="email" type="email" required /></label>
+        <label style="min-width:140px" data-i18n="owner_admin_email_lang_label">Email language<select name="preferred_language"><option value="en">English</option><option value="fr">Français</option></select></label>
         <button type="submit" data-i18n="owner_add_admin_btn">Add administrator</button>
       </form>
       <div id="add-admin-feedback" class="hint"></div>
@@ -273,13 +274,14 @@
     }
 
     const addAdminForm = document.getElementById('add-admin-form');
+    if (addAdminForm.preferred_language) addAdminForm.preferred_language.value = currentLang();
     addAdminForm.addEventListener('submit', async (e)=>{
       e.preventDefault();
       const f = e.target;
       const feedback = document.getElementById('add-admin-feedback');
       feedback.textContent = '';
       if (!f.family_slug.value){ feedback.textContent = t('owner_admin_family_required'); return; }
-      const res = await api('/platform/admins/create', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ family_slug: f.family_slug.value, username: f.username.value, email: f.email.value }) });
+      const res = await api('/platform/admins/create', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ family_slug: f.family_slug.value, username: f.username.value, email: f.email.value, preferred_language: f.preferred_language.value }) });
       if (res.ok){ feedback.textContent = t('owner_add_admin_done'); f.reset(); await loadAdmins(); }
       else feedback.textContent = res.error || t('ep_error_generic');
     });
