@@ -8,6 +8,7 @@ const path = require('path');
 const { put } = require('@vercel/blob');
 const { handleUpload } = require('@vercel/blob/client');
 const { sendEmail } = require('./email');
+const { isValidSlug, schemaNameForSlug, lookupFamilyBySlug } = require('./tenant');
 
 // 4MB backstop for server-routed uploads (photos) — comfortably under Vercel's 4.5MB
 // serverless request-body ceiling. Archive audio bypasses this entirely via client-direct
@@ -39,20 +40,37 @@ async function uploadPhoto(file, prefix){
 async function getSetting(key){ const row = await db.prepare('SELECT value FROM settings WHERE key = ?').get(key); return row ? row.value : null; }
 async function setSetting(key, value){ await db.prepare('INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value').run(key, value); }
 
+// A session cookie is shared across every family's pages on this one domain (there's no
+// per-family subdomain) — without this check, staying logged into one family in a browser tab
+// and then visiting a different family's `/f/<slug>/...` URL would let that stale session's
+// cached role (e.g. 'admin') authorize writes against a completely different family's schema,
+// even though `req.session.user.id` refers to a row that only exists in the *other* family's
+// `users` table. `familySlug` is stamped onto the session at login (see handleLogin below) and
+// checked against `req.family` (set per-request by the tenant-resolution middleware in
+// server/tenant.js) on every one of the guard functions below, so a mismatched session is
+// treated as simply not logged in for this particular request — it isn't destroyed, so it's
+// still valid back on the family it actually belongs to.
+function sessionMatchesFamily(req){
+  return !!(req.session.user && req.family && req.session.user.familySlug === req.family.slug);
+}
+
 function requireAdmin(req,res){
-  if (!req.session.user){ res.status(401).json({error:'not logged in'}); return false; }
+  if (!sessionMatchesFamily(req)){ res.status(401).json({error:'not logged in'}); return false; }
   if (!req.session.user.role || req.session.user.role==='member'){ res.status(403).json({error:'forbidden'}); return false; }
   return true;
 }
 
-// the platform owner — the original bootstrapped account (role 'superadmin', created by
+// the platform owner — the original bootstrapped account (role 'platform_owner', created by
 // server/seed.js) plus, conceptually, whoever else that account promotes to the role in the
 // future. Stricter than requireAdmin: family-level admins (role 'admin') pass requireAdmin
-// but not this — owner-only actions are adding/managing admins and resolving their locked-out
-// password-reset requests.
-function requireOwner(req,res){
-  if (!req.session.user){ res.status(401).json({error:'not logged in'}); return false; }
-  if (req.session.user.role !== 'superadmin'){ res.status(403).json({error:'forbidden'}); return false; }
+// but not this — owner-only actions are adding/managing admins, resolving their locked-out
+// password-reset requests, and reviewing family creation/deletion requests. Always a row in
+// Na Ajanbeta's own schema (`public`) — reached the same way any un-prefixed request is (see
+// server/tenant.js's DEFAULT_FAMILY), so `sessionMatchesFamily` holds for it exactly the same
+// way it does for any family-level admin.
+function requirePlatformOwner(req,res){
+  if (!sessionMatchesFamily(req)){ res.status(401).json({error:'not logged in'}); return false; }
+  if (req.session.user.role !== 'platform_owner'){ res.status(403).json({error:'forbidden'}); return false; }
   return true;
 }
 
@@ -68,7 +86,7 @@ function generateTempPassword(){
 // up. Admins without an email set (the original bootstrapped account, until the owner sets
 // one) simply don't get emailed, same as before this feature existed.
 async function getAdminRecipients(){
-  const rows = await db.prepare("SELECT email FROM users WHERE ((role = 'admin' AND must_change_password = false) OR role = 'superadmin') AND email IS NOT NULL AND email != ''").all();
+  const rows = await db.prepare("SELECT email FROM users WHERE ((role = 'admin' AND must_change_password = false) OR role = 'platform_owner') AND email IS NOT NULL AND email != ''").all();
   return rows.map(r=>r.email);
 }
 
@@ -143,7 +161,7 @@ async function notifyMembers(req, { subject, bodyHtml, link }){
 
 // any logged-in account with a linked profile (i.e. a real person, not a bare admin login)
 function requireLoggedInPerson(req,res){
-  if (!req.session.user){ res.status(401).json({error:'not logged in'}); return false; }
+  if (!sessionMatchesFamily(req)){ res.status(401).json({error:'not logged in'}); return false; }
   if (!req.session.user.person_id){ res.status(403).json({error:'no linked profile'}); return false; }
   return true;
 }
@@ -154,7 +172,7 @@ function requireLoggedInPerson(req,res){
 // delete a comment). Only for read/moderate routes — actions attributed to a person (liking,
 // commenting) still need a real person_id and keep using requireLoggedInPerson.
 function requireViewerAccess(req,res){
-  if (!req.session.user){ res.status(401).json({error:'not logged in'}); return false; }
+  if (!sessionMatchesFamily(req)){ res.status(401).json({error:'not logged in'}); return false; }
   if (req.session.user.person_id) return true;
   if (req.session.user.role && req.session.user.role !== 'member') return true;
   res.status(403).json({error:'no linked profile'}); return false;
@@ -163,7 +181,7 @@ function requireViewerAccess(req,res){
 // any logged-in account at all, member or admin — used for actions (like changing one's
 // own password) that don't need a linked person profile
 function requireLoggedIn(req,res){
-  if (!req.session.user){ res.status(401).json({error:'not logged in'}); return false; }
+  if (!sessionMatchesFamily(req)){ res.status(401).json({error:'not logged in'}); return false; }
   return true;
 }
 
@@ -211,7 +229,7 @@ async function handleLogin(req, res){
   if (!user) return res.status(401).json({ error: 'invalid' });
   const ok = bcrypt.compareSync(password, user.password_hash);
   if (!ok) return res.status(401).json({ error: 'invalid' });
-  req.session.user = { id: user.id, role: user.role, person_id: user.person_id, username: user.username, email: user.email || null, mustChangePassword: !!user.must_change_password };
+  req.session.user = { id: user.id, role: user.role, person_id: user.person_id, username: user.username, email: user.email || null, mustChangePassword: !!user.must_change_password, familySlug: req.family.slug };
   return res.json({ ok:true, role: user.role, person_id: user.person_id, mustChangePassword: !!user.must_change_password });
 }
 router.post('/auth/login', wrap(handleLogin));
@@ -219,17 +237,17 @@ router.post('/auth/login', wrap(handleLogin));
 router.post('/auth/admin-login', wrap(handleLogin));
 
 // the owner-only login surface — same credential check as handleLogin, but rejects anyone
-// whose account isn't role 'superadmin', even with a fully valid password, so this page can't
+// whose account isn't role 'platform_owner', even with a fully valid password, so this page can't
 // be used as a second way into a plain admin account
 router.post('/auth/owner-login', express.json(), wrap(async (req,res)=>{
   const username = ((req.body && req.body.username) || '').trim();
   const password = ((req.body && req.body.password) || '').trim();
   if (!username || !password) return res.status(400).json({ error: 'username and password are required' });
   const user = await db.prepare('SELECT * FROM users WHERE TRIM(username) = TRIM(?)').get(username);
-  if (!user || user.role !== 'superadmin' || !bcrypt.compareSync(password, user.password_hash)) {
+  if (!user || user.role !== 'platform_owner' || !bcrypt.compareSync(password, user.password_hash)) {
     return res.status(401).json({ error: 'invalid' });
   }
-  req.session.user = { id: user.id, role: user.role, person_id: user.person_id, username: user.username, email: user.email || null, mustChangePassword: !!user.must_change_password };
+  req.session.user = { id: user.id, role: user.role, person_id: user.person_id, username: user.username, email: user.email || null, mustChangePassword: !!user.must_change_password, familySlug: req.family.slug };
   res.json({ ok:true, mustChangePassword: !!user.must_change_password });
 }));
 
@@ -240,13 +258,13 @@ router.post('/auth/owner-login', express.json(), wrap(async (req,res)=>{
 router.post('/auth/admin-password-reset-request', express.json(), wrap(async (req,res)=>{
   const username = ((req.body && req.body.username) || '').trim();
   if (!username) return res.status(400).json({ error: 'Username is required.' });
-  const user = await db.prepare("SELECT id FROM users WHERE username = ? AND role IN ('admin','superadmin')").get(username);
+  const user = await db.prepare("SELECT id FROM users WHERE username = ? AND role IN ('admin','platform_owner')").get(username);
   if (user){
     const id = uuidv4();
     const payload = { type: 'admin_password_reset', username, user_id: user.id };
     await db.prepare('INSERT INTO requests (id, type, payload, status, created_by, created_at) VALUES (?, ?, ?, ?, ?, ?)')
       .run(id, 'admin_password_reset', JSON.stringify(payload), 'pending', 'self-service', now());
-    const owners = await db.prepare("SELECT email FROM users WHERE role = 'superadmin' AND email IS NOT NULL AND email != ''").all();
+    const owners = await db.prepare("SELECT email FROM users WHERE role = 'platform_owner' AND email IS NOT NULL AND email != ''").all();
     if (owners.length){
       const link = `${req.protocol}://${req.get('host')}/owner.html?highlight=${encodeURIComponent(id)}`;
       await sendEmail({
@@ -284,7 +302,7 @@ router.post('/auth/request-password-reset', express.json(), wrap(async (req,res)
 
 // get current session
 router.get('/auth/me', wrap(async (req,res)=>{
-  if (!req.session.user) return res.status(401).json({error:'not logged in'});
+  if (!sessionMatchesFamily(req)) return res.status(401).json({error:'not logged in'});
   const person = await db.prepare('SELECT * FROM people WHERE id = ?').get(req.session.user.person_id);
   res.json({ user: req.session.user, person });
 }));
@@ -499,8 +517,7 @@ async function healMissingResolvedPersonIds(){
 
 // admin: list requests (status can be pending|approved|rejected)
 router.get('/admin/requests', wrap(async (req,res)=>{
-  if (!req.session.user) return res.status(401).json({error:'not logged in'});
-  if (!req.session.user.role || req.session.user.role==='member') return res.status(403).json({error:'forbidden'});
+  if (!requireAdmin(req,res)) return;
   // the Rejected tab (both actual rejections and the "delete account" audit trail — see
   // /admin/people/:id/delete below, which files itself as a rejected delete_person request)
   // is meant to be a brief undo window, not a permanent log — purge anything past 24h.
@@ -867,7 +884,7 @@ router.post('/member/profile/update', upload.single('photo'), wrap(async (req,re
 // (and attributed to the owner's own user id, not the target person) so admins reviewing it
 // know it came from the owner, not the person themselves.
 router.post('/owner/people/:id/request-update', upload.single('photo'), wrap(async (req,res)=>{
-  if (!requireOwner(req,res)) return;
+  if (!requirePlatformOwner(req,res)) return;
   const current = await db.prepare('SELECT * FROM people WHERE id = ?').get(req.params.id);
   if (!current) return res.status(404).json({ error: 'profile not found' });
 
@@ -961,8 +978,7 @@ router.post('/member/relatives/add', upload.single('photo'), wrap(async (req,res
 
 // admin: reject request
 router.post('/admin/requests/:id/reject', express.json(), wrap(async (req,res)=>{
-  if (!req.session.user) return res.status(401).json({error:'not logged in'});
-  if (!req.session.user.role || req.session.user.role==='member') return res.status(403).json({error:'forbidden'});
+  if (!requireAdmin(req,res)) return;
   const id = req.params.id;
   const note = req.body && req.body.note ? String(req.body.note) : null;
   const reqRow = await db.prepare('SELECT * FROM requests WHERE id = ?').get(id);
@@ -973,8 +989,7 @@ router.post('/admin/requests/:id/reject', express.json(), wrap(async (req,res)=>
 
 // admin: edit payload then approve
 router.post('/admin/requests/:id/edit-approve', express.json(), wrap(async (req,res)=>{
-  if (!req.session.user) return res.status(401).json({error:'not logged in'});
-  if (!req.session.user.role || req.session.user.role==='member') return res.status(403).json({error:'forbidden'});
+  if (!requireAdmin(req,res)) return;
   const id = req.params.id;
   const newPayload = req.body && req.body.payload ? req.body.payload : null;
   const reqRow = await db.prepare('SELECT * FROM requests WHERE id = ?').get(id);
@@ -998,8 +1013,7 @@ router.post('/admin/requests/:id/edit-approve', express.json(), wrap(async (req,
 
 // Accept multipart edit+photo then approve
 router.post('/admin/requests/:id/edit-approve-multipart', upload.single('photo'), wrap(async (req,res)=>{
-  if (!req.session.user) return res.status(401).json({error:'not logged in'});
-  if (!req.session.user.role || req.session.user.role==='member') return res.status(403).json({error:'forbidden'});
+  if (!requireAdmin(req,res)) return;
   const id = req.params.id;
   const reqRow = await db.prepare('SELECT * FROM requests WHERE id = ?').get(id);
   if (!reqRow) return res.status(404).json({error:'not found'});
@@ -1050,8 +1064,7 @@ router.post('/admin/requests/:id/edit-approve-multipart', upload.single('photo')
 // Admin: update an existing person (JSON). Also handles setting a temporary password
 // (p.new_password) for the linked account, for admin-assisted password resets.
 router.post('/admin/people/:id/update', express.json(), wrap(async (req,res)=>{
-  if (!req.session.user) return res.status(401).json({error:'not logged in'});
-  if (!req.session.user.role || req.session.user.role==='member') return res.status(403).json({error:'forbidden'});
+  if (!requireAdmin(req,res)) return;
   const id = req.params.id;
   const p = req.body && req.body.payload ? req.body.payload : req.body;
   if (!p) return res.status(400).json({error:'missing payload'});
@@ -1130,7 +1143,7 @@ async function resetAdminPasswordAndNotify(dbLike, userId){
 }
 
 router.get('/owner/admins', wrap(async (req,res)=>{
-  if (!requireOwner(req,res)) return;
+  if (!requirePlatformOwner(req,res)) return;
   const rows = await db.prepare("SELECT id, username, email, created_at, must_change_password FROM users WHERE role = 'admin' ORDER BY created_at DESC").all();
   res.json(rows);
 }));
@@ -1138,7 +1151,7 @@ router.get('/owner/admins', wrap(async (req,res)=>{
 // the owner's own notification email — separate from admins' emails (set by the owner when
 // adding them), since the owner has no one else to set theirs for them
 router.post('/owner/email', express.json(), wrap(async (req,res)=>{
-  if (!requireOwner(req,res)) return;
+  if (!requirePlatformOwner(req,res)) return;
   const email = ((req.body && req.body.email) || '').trim();
   if (!email) return res.status(400).json({ error: 'Email is required.' });
   await db.prepare('UPDATE users SET email = ? WHERE id = ?').run(email, req.session.user.id);
@@ -1148,7 +1161,7 @@ router.post('/owner/email', express.json(), wrap(async (req,res)=>{
 
 // the owner's own login username — self-service, same reasoning as /owner/email
 router.post('/owner/username', express.json(), wrap(async (req,res)=>{
-  if (!requireOwner(req,res)) return;
+  if (!requirePlatformOwner(req,res)) return;
   const username = ((req.body && req.body.username) || '').trim();
   if (!username) return res.status(400).json({ error: 'Username is required.' });
   const current = await db.prepare('SELECT username FROM users WHERE id = ?').get(req.session.user.id);
@@ -1159,7 +1172,7 @@ router.post('/owner/username', express.json(), wrap(async (req,res)=>{
 }));
 
 router.post('/owner/admins/create', express.json(), wrap(async (req,res)=>{
-  if (!requireOwner(req,res)) return;
+  if (!requirePlatformOwner(req,res)) return;
   const username = ((req.body && req.body.username) || '').trim();
   const email = ((req.body && req.body.email) || '').trim();
   if (!username || !email) return res.status(400).json({ error: 'Username and email are required.' });
@@ -1178,7 +1191,7 @@ router.post('/owner/admins/create', express.json(), wrap(async (req,res)=>{
 }));
 
 router.post('/owner/admins/:id/reset-password', wrap(async (req,res)=>{
-  if (!requireOwner(req,res)) return;
+  if (!requirePlatformOwner(req,res)) return;
   const user = await db.prepare("SELECT id FROM users WHERE id = ? AND role = 'admin'").get(req.params.id);
   if (!user) return res.status(404).json({ error: 'not found' });
   await resetAdminPasswordAndNotify(db, user.id);
@@ -1186,7 +1199,7 @@ router.post('/owner/admins/:id/reset-password', wrap(async (req,res)=>{
 }));
 
 router.post('/owner/admins/:id/delete', wrap(async (req,res)=>{
-  if (!requireOwner(req,res)) return;
+  if (!requirePlatformOwner(req,res)) return;
   const user = await db.prepare("SELECT id FROM users WHERE id = ? AND role = 'admin'").get(req.params.id);
   if (!user) return res.status(404).json({ error: 'not found' });
   await db.prepare('DELETE FROM users WHERE id = ?').run(req.params.id);
@@ -1196,22 +1209,185 @@ router.post('/owner/admins/:id/delete', wrap(async (req,res)=>{
 // pending admin_password_reset requests — owner-only, deliberately excluded from the regular
 // /admin/requests listing (see below) since these aren't relevant to other admins
 router.get('/owner/password-reset-requests', wrap(async (req,res)=>{
-  if (!requireOwner(req,res)) return;
+  if (!requirePlatformOwner(req,res)) return;
   const rows = await db.prepare("SELECT * FROM requests WHERE type = 'admin_password_reset' AND status = 'pending' ORDER BY created_at DESC").all();
   res.json(rows.map(r=> ({...r, payload: JSON.parse(r.payload)})));
 }));
 
 router.post('/owner/password-reset-requests/:id/resolve', wrap(async (req,res)=>{
-  if (!requireOwner(req,res)) return;
+  if (!requirePlatformOwner(req,res)) return;
   const reqRow = await db.prepare('SELECT * FROM requests WHERE id = ?').get(req.params.id);
   if (!reqRow) return res.status(404).json({ error: 'not found' });
   const payload = JSON.parse(reqRow.payload);
-  const user = await db.prepare("SELECT id FROM users WHERE id = ? AND role IN ('admin','superadmin')").get(payload.user_id);
+  const user = await db.prepare("SELECT id FROM users WHERE id = ? AND role IN ('admin','platform_owner')").get(payload.user_id);
   if (!user) return res.status(404).json({ error: 'admin account not found' });
   await db.transaction(async (tx) => {
     await resetAdminPasswordAndNotify(tx, user.id);
     await tx.prepare('UPDATE requests SET status = ?, reviewed_by = ?, reviewed_at = ? WHERE id = ?').run('approved', req.session.user.id, now(), req.params.id);
   });
+  res.json({ ok:true });
+}));
+
+// --- platform-level: anyone can request a new family, the platform owner approves/rejects
+// from owner.html's "Families" tab. These routes deliberately touch only `public.families` and
+// `public.platform_requests` (both explicitly schema-qualified, never relying on whatever
+// schema happens to be active via search_path for the current request) — a family-creation
+// request has no tenant of its own yet, and reviewing/approving it is a platform-wide action,
+// not a family-level one. See server/db.js (createFamilySchema, withTenant) and
+// server/tenant.js (slug validation, schema naming) for the primitives this builds on.
+
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+async function isFamilySlugTaken(slug){
+  if (await db.prepare('SELECT id FROM public.families WHERE slug = ?').get(slug)) return true;
+  const pending = await db.prepare("SELECT payload FROM public.platform_requests WHERE type = 'create_family' AND status = 'pending'").all();
+  return pending.some(r=>{ try{ return JSON.parse(r.payload).slug === slug; }catch(e){ return false; } });
+}
+
+// public: submit a request for a brand new family — reviewed by the platform owner, never
+// auto-approved
+router.post('/families/request', express.json(), wrap(async (req,res)=>{
+  const body = req.body || {};
+  const familyName = (body.family_name || '').trim();
+  const slug = (body.slug || '').trim().toLowerCase();
+  const adminUsername = (body.admin_username || '').trim();
+  const adminEmail = (body.admin_email || '').trim();
+  if (!familyName) return res.status(400).json({ error: 'A family name is required.' });
+  if (!isValidSlug(slug)) return res.status(400).json({ error: 'Choose a family ID using only lowercase letters, numbers, and hyphens.' });
+  if (!adminUsername) return res.status(400).json({ error: 'An admin username is required.' });
+  if (!adminEmail || !EMAIL_RE.test(adminEmail)) return res.status(400).json({ error: 'A valid admin email is required.' });
+  if (!body.policy_accepted) return res.status(400).json({ error: 'You must confirm you have read and accepted the policy.' });
+  if (await isFamilySlugTaken(slug)) return res.status(409).json({ error: 'That family ID is already taken. Please choose another.' });
+
+  const id = uuidv4();
+  const payload = { type: 'create_family', family_name: familyName, slug, admin_username: adminUsername, admin_email: adminEmail };
+  await db.prepare('INSERT INTO public.platform_requests (id, type, payload, status, created_at) VALUES (?, ?, ?, ?, ?)')
+    .run(id, 'create_family', JSON.stringify(payload), 'pending', now());
+  res.json({ ok:true, id });
+
+  try{
+    const owners = await db.prepare("SELECT email FROM public.users WHERE role = 'platform_owner' AND email IS NOT NULL AND email != ''").all();
+    if (owners.length){
+      const link = `${req.protocol}://${req.get('host')}/owner.html?highlight=${encodeURIComponent(id)}`;
+      await sendEmail({
+        to: owners.map(o=>o.email),
+        subject: `New family creation request: ${familyName}`,
+        html: `<p><strong>${familyName}</strong> (ID: ${slug}) has requested a new family, admin: ${adminUsername} (${adminEmail}).</p><p><a href="${link}">Review and respond</a></p>`,
+      });
+    }
+  }catch(e){ console.error('[notify] failed', e && e.message || e); }
+}));
+
+// family-admin-initiated: ask the platform owner to delete this family. Uses req.family (set
+// by the tenant-resolution middleware from the URL this request came in on) rather than a
+// client-supplied slug, so this can only ever target the admin's own family.
+router.post('/families/deletion-request', express.json(), wrap(async (req,res)=>{
+  if (!requireAdmin(req,res)) return;
+  const id = uuidv4();
+  const payload = { type: 'delete_family', slug: req.family.slug, family_name: req.family.name, requested_by: req.session.user.username };
+  await db.prepare('INSERT INTO public.platform_requests (id, type, payload, status, created_at) VALUES (?, ?, ?, ?, ?)')
+    .run(id, 'delete_family', JSON.stringify(payload), 'pending', now());
+  res.json({ ok:true, id });
+  try{
+    const owners = await db.prepare("SELECT email FROM public.users WHERE role = 'platform_owner' AND email IS NOT NULL AND email != ''").all();
+    if (owners.length){
+      await sendEmail({
+        to: owners.map(o=>o.email),
+        subject: `Family deletion requested: ${req.family.name}`,
+        html: `<p><strong>${req.session.user.username}</strong>, an admin of <strong>${req.family.name}</strong> (ID: ${req.family.slug}), has requested this family be deleted.</p>`,
+      });
+    }
+  }catch(e){ console.error('[notify] failed', e && e.message || e); }
+}));
+
+router.get('/platform/families/requests', wrap(async (req,res)=>{
+  if (!requirePlatformOwner(req,res)) return;
+  const status = (req.query.status || 'pending').toLowerCase();
+  if (!['pending','approved','rejected'].includes(status)) return res.status(400).json({error:'invalid status'});
+  const rows = await db.prepare('SELECT * FROM public.platform_requests WHERE status = ? ORDER BY created_at DESC').all(status);
+  res.json(rows.map(r=> ({...r, payload: JSON.parse(r.payload)})));
+}));
+
+// creates the family's schema + tables, its first admin account, records it in
+// public.families, and emails the admin their personalized link + temp password. Re-validates
+// the slug is still free (a second request for the same name could have been submitted, and
+// even approved, while this one sat pending) rather than trusting the check made at submission
+// time.
+async function processCreateFamily(payload, reviewerId, req){
+  if (await isFamilySlugTaken(payload.slug)) throw new Error('That family ID has since been taken by another approved family.');
+  const schemaName = schemaNameForSlug(payload.slug);
+  await db.createFamilySchema(schemaName);
+
+  const tempPassword = generateTempPassword();
+  await db.withTenant(schemaName, async () => {
+    await db.prepare('INSERT INTO users (id, username, password_hash, role, email, must_change_password, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)')
+      .run(uuidv4(), payload.admin_username, bcrypt.hashSync(tempPassword, 10), 'admin', payload.admin_email, true, now());
+  });
+
+  const familyId = uuidv4();
+  await db.prepare('INSERT INTO public.families (id, slug, schema_name, name, status, owner_username, owner_email, created_at, approved_at, reviewed_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
+    .run(familyId, payload.slug, schemaName, payload.family_name, 'active', payload.admin_username, payload.admin_email, now(), now(), reviewerId);
+
+  const base = process.env.PUBLIC_BASE_URL || `${req.protocol}://${req.get('host')}`;
+  const link = `${base}/f/${payload.slug}/admin-login`;
+  await sendEmail({
+    to: payload.admin_email,
+    subject: `Your family "${payload.family_name}" has been approved`,
+    html: `<p>Your request to create <strong>${payload.family_name}</strong> has been approved.</p>`
+      + credentialBlockHtml(payload.admin_username, tempPassword)
+      + `<p><a href="${link}">${link}</a></p>`
+      + `<p><strong>Next steps:</strong></p><ol>`
+      + `<li>Open the link above and log in as an admin with the username and temporary password shown.</li>`
+      + `<li>You'll be asked to set a new password right away — this is required before you can do anything else.</li>`
+      + `<li>Create your family's root profile (the founding ancestor everyone else's tree hangs from).</li>`
+      + `<li>Share this same link with your family members so they can register their own accounts — each one will need your approval, the same way this one did.</li></ol>`,
+  }).catch(()=>{});
+}
+
+router.post('/platform/families/requests/:id/approve', wrap(async (req,res)=>{
+  if (!requirePlatformOwner(req,res)) return;
+  const reqRow = await db.prepare('SELECT * FROM public.platform_requests WHERE id = ?').get(req.params.id);
+  if (!reqRow) return res.status(404).json({ error: 'not found' });
+  const payload = JSON.parse(reqRow.payload);
+  try{
+    if (payload.type === 'create_family'){
+      await processCreateFamily(payload, req.session.user.id, req);
+    } else if (payload.type === 'delete_family'){
+      await db.prepare("UPDATE public.families SET status = 'deleted' WHERE slug = ?").run(payload.slug);
+    }
+    await db.prepare('UPDATE public.platform_requests SET status = ?, reviewed_by = ?, reviewed_at = ? WHERE id = ?').run('approved', req.session.user.id, now(), req.params.id);
+    res.json({ ok:true });
+  }catch(err){
+    console.error('Family request approve error', err && err.stack || err);
+    res.status(500).json({ error: String(err && err.message ? err.message : err) });
+  }
+}));
+
+router.post('/platform/families/requests/:id/reject', express.json(), wrap(async (req,res)=>{
+  if (!requirePlatformOwner(req,res)) return;
+  const note = req.body && req.body.note ? String(req.body.note) : null;
+  const reqRow = await db.prepare('SELECT * FROM public.platform_requests WHERE id = ?').get(req.params.id);
+  if (!reqRow) return res.status(404).json({ error: 'not found' });
+  await db.prepare('UPDATE public.platform_requests SET status = ?, reviewed_by = ?, reviewed_at = ?, review_note = ? WHERE id = ?').run('rejected', req.session.user.id, now(), note, req.params.id);
+  res.json({ ok:true });
+}));
+
+// overview for the platform owner's dashboard — every family regardless of status
+router.get('/platform/families', wrap(async (req,res)=>{
+  if (!requirePlatformOwner(req,res)) return;
+  const rows = await db.prepare('SELECT * FROM public.families ORDER BY created_at DESC').all();
+  res.json(rows);
+}));
+
+router.post('/platform/families/:id/suspend', wrap(async (req,res)=>{
+  if (!requirePlatformOwner(req,res)) return;
+  await db.prepare("UPDATE public.families SET status = 'suspended' WHERE id = ? AND slug != 'najambeta'").run(req.params.id);
+  res.json({ ok:true });
+}));
+
+router.post('/platform/families/:id/reactivate', wrap(async (req,res)=>{
+  if (!requirePlatformOwner(req,res)) return;
+  await db.prepare("UPDATE public.families SET status = 'active' WHERE id = ?").run(req.params.id);
   res.json({ ok:true });
 }));
 
@@ -1238,7 +1414,7 @@ router.post('/analytics/event', express.json(), wrap(async (req,res)=>{
 const ANALYTICS_PERIOD_DAYS = { today: 1, '7d': 7, '30d': 30, '90d': 90, '365d': 365 };
 
 router.get('/owner/analytics/summary', wrap(async (req,res)=>{
-  if (!requireOwner(req,res)) return;
+  if (!requirePlatformOwner(req,res)) return;
   const period = req.query.period || '7d';
   const days = ANALYTICS_PERIOD_DAYS[period];
   if (!days) return res.status(400).json({ error: 'invalid period' });
@@ -1276,8 +1452,7 @@ router.get('/owner/analytics/summary', wrap(async (req,res)=>{
 
 // Admin: update person with multipart (photo). Also handles new_password, same as above.
 router.post('/admin/people/:id/update-multipart', upload.single('photo'), wrap(async (req,res)=>{
-  if (!req.session.user) return res.status(401).json({error:'not logged in'});
-  if (!req.session.user.role || req.session.user.role==='member') return res.status(403).json({error:'forbidden'});
+  if (!requireAdmin(req,res)) return;
   const id = req.params.id;
   const body = req.body || {};
   const current = await db.prepare('SELECT photo_path FROM people WHERE id = ?').get(id);
@@ -1338,8 +1513,7 @@ async function deletePersonRecord(dbLike, id, reviewerId){
 // to take down in the same action — see GET /admin/people/:id/relatives, which is what the
 // confirmation UI lists them from.
 router.post('/admin/people/:id/delete', express.json(), wrap(async (req,res)=>{
-  if (!req.session.user) return res.status(401).json({error:'not logged in'});
-  if (!req.session.user.role || req.session.user.role==='member') return res.status(403).json({error:'forbidden'});
+  if (!requireAdmin(req,res)) return;
   const id = req.params.id;
   const alsoDelete = (req.body && Array.isArray(req.body.also_delete)) ? req.body.also_delete.filter(x=> x && x !== id) : [];
   try{
@@ -1399,8 +1573,7 @@ router.get('/tree/root', wrap(async (req,res)=>{
 
 // simple stats for admin
 router.get('/admin/stats', wrap(async (req,res)=>{
-  if (!req.session.user) return res.status(401).json({error:'not logged in'});
-  if (!req.session.user.role || req.session.user.role==='member') return res.status(403).json({error:'forbidden'});
+  if (!requireAdmin(req,res)) return;
   const total = (await db.prepare("SELECT COUNT(1) as c FROM people WHERE approval_status = 'approved'").get()).c;
   const male = (await db.prepare("SELECT COUNT(1) as c FROM people WHERE approval_status = 'approved' AND lower(gender) = 'male'").get()).c;
   const female = (await db.prepare("SELECT COUNT(1) as c FROM people WHERE approval_status = 'approved' AND lower(gender) = 'female'").get()).c;
@@ -1907,10 +2080,11 @@ const REMINDER_THRESHOLDS = [
   { field: 'reminder_week_sent', days: 7, label: '1 week' },
   { field: 'reminder_day_sent', days: 1, label: '24 hours' },
 ];
-router.get('/cron/event-reminders', wrap(async (req,res)=>{
-  const expected = process.env.CRON_SECRET;
-  if (expected && req.headers.authorization !== `Bearer ${expected}`) return res.status(401).json({ error: 'unauthorized' });
-
+// runs entirely within whichever schema is already active on db's current tenant context
+// (the caller — the loop in the route below — is responsible for that, via db.withTenant per
+// family), so every `db.prepare(...)` call here stays unchanged from the single-family version
+// of this route.
+async function processEventRemindersForFamily(req, family){
   const events = await db.prepare("SELECT * FROM events WHERE approval_status = 'approved' AND event_at > ?").all(now());
   const memberEmails = await getMemberRecipients();
   const adminEmails = await getAdminRecipients();
@@ -1927,15 +2101,34 @@ router.get('/cron/event-reminders', wrap(async (req,res)=>{
       try{
         await sendEmail({
           to: recipients,
-          subject: `[Nah Adja Mbethe] Reminder: ${ev.title} is in ${threshold.label}`,
+          subject: `[${family.name}] Reminder: ${ev.title} is in ${threshold.label}`,
           html: `<p><strong>${ev.title}</strong> is coming up in ${threshold.label} — ${new Date(ev.event_at).toLocaleString()}${ev.location ? ` at ${ev.location}` : ''}.</p>`
-            + `<p><a href="${req.protocol}://${req.get('host')}/archives.html?tab=events&highlight=${ev.id}">View details</a></p>`,
+            + `<p><a href="${req.protocol}://${req.get('host')}/f/${family.slug}/archives.html?tab=events&highlight=${ev.id}">View details</a></p>`,
         });
         sent++;
       }catch(e){ console.error('[cron] reminder email failed', e && e.message || e); }
     }
   }
-  res.json({ ok: true, eventsChecked: events.length, remindersSent: sent });
+  return { eventsChecked: events.length, remindersSent: sent };
+}
+
+// one cron trigger, every active family — each family's events are only ever reachable
+// through its own schema, so this loops db.withTenant() once per row in public.families
+// rather than assuming there's just the one family the way this route originally did.
+router.get('/cron/event-reminders', wrap(async (req,res)=>{
+  const expected = process.env.CRON_SECRET;
+  if (expected && req.headers.authorization !== `Bearer ${expected}`) return res.status(401).json({ error: 'unauthorized' });
+
+  const families = await db.prepare("SELECT * FROM public.families WHERE status = 'active'").all();
+  let totalEventsChecked = 0, totalRemindersSent = 0;
+  for (const family of families){
+    try{
+      const { eventsChecked, remindersSent } = await db.withTenant(family.schema_name, () => processEventRemindersForFamily(req, family));
+      totalEventsChecked += eventsChecked;
+      totalRemindersSent += remindersSent;
+    }catch(e){ console.error('[cron] reminders failed for family', family.slug, e && e.message || e); }
+  }
+  res.json({ ok: true, familiesChecked: families.length, eventsChecked: totalEventsChecked, remindersSent: totalRemindersSent });
 }));
 
 module.exports = router;

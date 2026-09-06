@@ -29,8 +29,8 @@
         <p style="color:var(--muted);margin:4px 0 0;font-size:13px" data-i18n="owner_admin_dashboard_desc">Approve/reject requests, manage the root profile, and everything else an administrator can do.</p>
       </div>
       <div style="display:flex;gap:10px;flex-wrap:wrap">
-        <a href="/admin.html" class="secondary-link" style="white-space:nowrap" data-i18n="owner_go_to_admin_btn">Go to Admin Dashboard →</a>
-        <a href="/tree.html" class="secondary-link" style="white-space:nowrap" data-i18n="owner_go_to_tree_btn">Go to Family Tree →</a>
+        <a href="/admin.html" data-platform-link class="secondary-link" style="white-space:nowrap" data-i18n="owner_go_to_admin_btn">Go to Admin Dashboard →</a>
+        <a href="/tree.html" data-platform-link class="secondary-link" style="white-space:nowrap" data-i18n="owner_go_to_tree_btn">Go to Family Tree →</a>
       </div>
     </div>
 
@@ -85,6 +85,15 @@
     <div style="padding:16px;background:var(--card);border-radius:10px;box-shadow:var(--shadow);margin-bottom:20px">
       <h3 style="margin-top:0" data-i18n="owner_password_resets_heading">Administrator password reset requests<span id="reset-badge" class="notif-badge hidden">0</span></h3>
       <div id="resetRequestsList">Loading...</div>
+    </div>
+
+    <div style="padding:16px;background:var(--card);border-radius:10px;box-shadow:var(--shadow);margin-bottom:20px">
+      <h3 style="margin-top:0" data-i18n="owner_families_heading">Families on this platform</h3>
+      <p style="color:var(--muted);margin-top:-6px;font-size:13px" data-i18n="owner_families_desc">Review requests for new families, and suspend or reactivate any existing one.</p>
+      <h4 style="margin-bottom:8px" data-i18n="owner_family_requests_heading">Pending family requests</h4>
+      <div id="familyRequestsList">Loading...</div>
+      <h4 style="margin-bottom:8px;margin-top:20px" data-i18n="owner_all_families_heading">All families</h4>
+      <div id="allFamiliesList">Loading...</div>
     </div>
 
     <div style="padding:16px;background:var(--card);border-radius:10px;box-shadow:var(--shadow)">
@@ -249,6 +258,79 @@
       else feedback.textContent = res.error || t('ep_error_generic');
     });
 
+    async function loadFamilyRequests(){
+      const list = document.getElementById('familyRequestsList');
+      list.textContent = t('loading') || 'Loading...';
+      try{
+        const rows = await api('/platform/families/requests?status=pending');
+        if (!Array.isArray(rows) || !rows.length){ list.innerHTML = `<div class="hint">${t('owner_no_family_requests')}</div>`; return; }
+        list.innerHTML = '';
+        rows.forEach(r=>{
+          const row = document.createElement('div'); row.className = 'request-item'; row.dataset.requestId = r.id;
+          if (r.payload.type === 'create_family'){
+            row.innerHTML = `<strong>${r.payload.family_name}</strong> <span style="color:var(--muted)">(${r.payload.slug}) — ${r.payload.admin_username} / ${r.payload.admin_email}</span>`;
+          } else {
+            row.innerHTML = `<strong>Delete: ${r.payload.family_name}</strong> <span style="color:var(--muted)">(${r.payload.slug}) — requested by ${r.payload.requested_by}</span>`;
+          }
+          const actions = document.createElement('div'); actions.style.marginTop='8px';
+          const approveBtn = document.createElement('button'); approveBtn.textContent = t('owner_family_request_approve_btn');
+          approveBtn.addEventListener('click', async ()=>{
+            if (!await showConfirm(t('owner_family_request_approve_confirm', {name: r.payload.family_name}))) return;
+            const res = await api('/platform/families/requests/' + r.id + '/approve', { method:'POST' });
+            if (res.ok){ alert(t('owner_family_request_approve_done')); await loadFamilyRequests(); await loadAllFamilies(); }
+            else alert(t('alert_error_prefix', {msg: res.error || JSON.stringify(res)}));
+          });
+          const rejectBtn = document.createElement('button'); rejectBtn.className='secondary'; rejectBtn.style.marginLeft='8px'; rejectBtn.textContent = t('owner_family_request_reject_btn');
+          rejectBtn.addEventListener('click', async ()=>{
+            if (!await showConfirm(t('owner_family_request_reject_confirm', {name: r.payload.family_name}))) return;
+            const res = await api('/platform/families/requests/' + r.id + '/reject', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({}) });
+            if (res.ok) await loadFamilyRequests();
+            else alert(t('alert_error_prefix', {msg: res.error || JSON.stringify(res)}));
+          });
+          actions.appendChild(approveBtn); actions.appendChild(rejectBtn);
+          row.appendChild(actions);
+          list.appendChild(row);
+        });
+      }catch(e){ list.innerHTML = t('error_loading'); }
+    }
+
+    async function loadAllFamilies(){
+      const list = document.getElementById('allFamiliesList');
+      list.textContent = t('loading') || 'Loading...';
+      try{
+        const rows = await api('/platform/families');
+        if (!Array.isArray(rows) || !rows.length){ list.innerHTML = `<div class="hint">${t('owner_no_families')}</div>`; return; }
+        list.innerHTML = '';
+        rows.forEach(f=>{
+          const row = document.createElement('div'); row.className = 'request-item';
+          const statusKey = 'owner_family_status_' + f.status;
+          row.innerHTML = `<strong>${f.name}</strong> <span style="color:var(--muted)">(${f.slug}) — ${f.owner_username||''} ${f.owner_email?('/ '+f.owner_email):''}</span> <span class="status-pill">${t(statusKey) || f.status}</span>`;
+          if (f.slug !== 'najambeta'){
+            const actions = document.createElement('div'); actions.style.marginTop='8px';
+            if (f.status === 'active'){
+              const suspendBtn = document.createElement('button'); suspendBtn.className='secondary'; suspendBtn.textContent = t('owner_family_suspend_btn');
+              suspendBtn.addEventListener('click', async ()=>{
+                if (!await showConfirm(t('owner_family_suspend_confirm', {name: f.name}))) return;
+                const res = await api('/platform/families/' + f.id + '/suspend', { method:'POST' });
+                if (res.ok) await loadAllFamilies(); else alert(t('alert_error_prefix', {msg: res.error || JSON.stringify(res)}));
+              });
+              actions.appendChild(suspendBtn);
+            } else if (f.status === 'suspended'){
+              const reactivateBtn = document.createElement('button'); reactivateBtn.textContent = t('owner_family_reactivate_btn');
+              reactivateBtn.addEventListener('click', async ()=>{
+                if (!await showConfirm(t('owner_family_reactivate_confirm', {name: f.name}))) return;
+                const res = await api('/platform/families/' + f.id + '/reactivate', { method:'POST' });
+                if (res.ok) await loadAllFamilies(); else alert(t('alert_error_prefix', {msg: res.error || JSON.stringify(res)}));
+              });
+              actions.appendChild(reactivateBtn);
+            }
+            row.appendChild(actions);
+          }
+          list.appendChild(row);
+        });
+      }catch(e){ list.innerHTML = t('error_loading'); }
+    }
+
     // highlight a specific pending reset request when arriving from an email deep link
     (function highlightFromQuery(){
       const params = new URLSearchParams(location.search);
@@ -345,6 +427,8 @@
     checkMustChangePassword();
     loadAdmins();
     loadResetRequests();
+    loadFamilyRequests();
+    loadAllFamilies();
     loadAnalytics(currentAnalyticsPeriod);
     });
   </script>

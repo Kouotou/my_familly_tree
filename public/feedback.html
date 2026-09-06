@@ -75,7 +75,7 @@
         if (!body) return;
         feedback.textContent = '';
         try{
-          const res = await fetch('/api/feedback', {
+          const res = await fetch(familyPrefix()+'/api/feedback', {
             method: 'POST', headers: {'Content-Type':'application/json'}, credentials: 'same-origin',
             body: JSON.stringify({ body }),
           });
@@ -87,8 +87,8 @@
 
       (async ()=>{
         try{
-          const res = await fetch('/api/auth/me', { credentials:'same-origin' });
-          if (!res.ok){ window.location.href = '/'; return; }
+          const res = await fetch(familyPrefix()+'/api/auth/me', { credentials:'same-origin' });
+          if (!res.ok){ window.location.href = familyPrefix()+'/'; return; }
         }catch(e){}
         load();
       })();

@@ -172,7 +172,7 @@
           const delBtn = document.createElement('button'); delBtn.type = 'button'; delBtn.className = 'secondary'; delBtn.textContent = t('sched_delete_btn');
           delBtn.addEventListener('click', async ()=>{
             if (!await showConfirm(t('sched_confirm_delete'))) return;
-            await fetch('/api/events/' + item.id + '/delete', { method:'POST', credentials:'same-origin' });
+            await fetch(familyPrefix()+'/api/events/' + item.id + '/delete', { method:'POST', credentials:'same-origin' });
             loadTab('events');
           });
           actions.appendChild(delBtn);
@@ -294,7 +294,7 @@
         likeBtn.addEventListener('click', async ()=>{
           likeBtn.disabled = true;
           try{
-            const res = await fetch('/api/archive/' + item.id + '/like', { method:'POST', credentials:'same-origin' });
+            const res = await fetch(familyPrefix()+'/api/archive/' + item.id + '/like', { method:'POST', credentials:'same-origin' });
             const j = await res.json();
             if (j.ok){
               if (j.liked) track('archive_like');
@@ -337,7 +337,7 @@
               delBtn.textContent = '×'; delBtn.setAttribute('aria-label', t('archives_comment_delete'));
               delBtn.addEventListener('click', async ()=>{
                 if (!await showConfirm(t('confirm_delete_comment'))) return;
-                await fetch('/api/admin/archive/comments/' + c.id + '/delete', { method:'POST', credentials:'same-origin' });
+                await fetch(familyPrefix()+'/api/admin/archive/comments/' + c.id + '/delete', { method:'POST', credentials:'same-origin' });
                 item.comment_count = Math.max(0, (item.comment_count || 1) - 1);
                 setToggleLabel();
                 renderComments();
@@ -361,7 +361,7 @@
           if (!text) return;
           submitBtn.disabled = true;
           try{
-            const res = await fetch('/api/archive/' + item.id + '/comments', {
+            const res = await fetch(familyPrefix()+'/api/archive/' + item.id + '/comments', {
               method:'POST', headers:{'Content-Type':'application/json'}, credentials:'same-origin',
               body: JSON.stringify({ body: text }),
             });
@@ -592,8 +592,8 @@
       // comment-delete button that should have been shown
       const identityReady = (async ()=>{
         try{
-          const res = await fetch('/api/auth/me', { credentials:'same-origin' });
-          if (!res.ok){ window.location.href = '/'; return; }
+          const res = await fetch(familyPrefix()+'/api/auth/me', { credentials:'same-origin' });
+          if (!res.ok){ window.location.href = familyPrefix()+'/'; return; }
           const me = await res.json();
           myPersonId = me.person ? me.person.id : null;
           myRole = me.user ? me.user.role : null;

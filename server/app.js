@@ -8,6 +8,7 @@ const multer = require('multer');
 
 const db = require('./db');
 const routes = require('./routes');
+const { tenantMiddleware } = require('./tenant');
 
 const app = express();
 
@@ -35,6 +36,11 @@ app.use(session({
 }));
 
 app.use(cors());
+
+// resolves which family (Postgres schema) this request belongs to from a `/f/<slug>/...` URL
+// prefix, stripping that prefix so the routes/static-file handling below needs no changes —
+// see server/tenant.js
+app.use(tenantMiddleware);
 
 // API routes
 app.use('/api', routes);

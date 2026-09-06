@@ -72,8 +72,8 @@
     // initialize tree page: load current user and tree
     (async ()=>{
       try{
-        const me = await fetch('/api/auth/me', { credentials:'same-origin' });
-        if (!me.ok){ window.location.href = '/'; return; }
+        const me = await fetch(familyPrefix()+'/api/auth/me', { credentials:'same-origin' });
+        if (!me.ok){ window.location.href = familyPrefix()+'/'; return; }
         const j = await me.json();
         const person = j.person;
         if (person && typeof t === 'function') document.getElementById('me-area').textContent = t('tree_hello', { name: person.full_name });

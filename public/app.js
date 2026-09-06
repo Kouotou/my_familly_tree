@@ -1,18 +1,43 @@
 // Every page has a back button (top-left of the header) so navigating back doesn't depend
 // on the browser's own back button, which is awkward to reach on mobile. Falls back to the
 // landing page if there's no in-app history to go back to (e.g. opened via a bookmark/link).
+// The platform serves every family from its own `/f/<slug>/...` path prefix (the same static
+// pages and client script, unmodified, for every family — only the server-side data behind
+// them differs). A page's own URL carries that prefix, but a same-origin `fetch('/api/...')`
+// call does not inherit it (a leading-slash path is always root-relative) — so every API call
+// re-derives it from the current page's URL and prepends it, landing back on the exact same
+// `/f/<slug>/...` route the tenant-resolution middleware already knows how to unwrap server-side.
+function familyPrefix(){
+  const m = window.location.pathname.match(/^\/f\/[a-z0-9-]+/);
+  return m ? m[0] : '';
+}
+
+// Most static cross-page links (sidebar nav, "back to tree", the login page's register/
+// admin-login links, ...) point at a plain root-relative path like "/tree.html" or "/" and
+// need to stay inside the current family's own /f/<slug> prefix rather than jumping back to
+// Na Ajanbeta's. A handful are deliberately platform-level instead (the owner's own pages, and
+// the landing page's "create a new family" link) — those are marked `data-platform-link` in
+// their HTML and skipped here. A no-op wherever there's no prefix to begin with.
+(function fixFamilyRelativeLinks(){
+  const prefix = familyPrefix();
+  if (!prefix) return;
+  document.querySelectorAll('a[href^="/"]:not([data-platform-link])').forEach(a=> {
+    a.setAttribute('href', prefix + a.getAttribute('href'));
+  });
+})();
+
 (function initPageBackButton(){
   const btn = document.getElementById('page-back-btn');
   if (!btn) return;
   btn.addEventListener('click', ()=>{
     if (window.history.length > 1) window.history.back();
-    else window.location.href = '/';
+    else window.location.href = familyPrefix() + '/';
   });
 })();
 
 async function api(path, opts={}){
   const merged = Object.assign({}, opts, { credentials: 'same-origin' });
-  const res = await fetch('/api'+path, merged);
+  const res = await fetch(familyPrefix()+'/api'+path, merged);
   const ct = res.headers.get('content-type')||'';
   if (ct.includes('application/json')) return res.json();
   return res.text();
@@ -26,7 +51,7 @@ function track(eventType, opts){
     const body = { event_type: eventType, page: location.pathname };
     if (opts && opts.meta !== undefined) body.meta = opts.meta;
     if (opts && opts.load_ms !== undefined) body.load_ms = opts.load_ms;
-    fetch('/api/analytics/event', {
+    fetch(familyPrefix()+'/api/analytics/event', {
       method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'same-origin', keepalive: true,
       body: JSON.stringify(body),
     }).catch(()=>{});
@@ -59,15 +84,17 @@ function track(eventType, opts){
   if (!brand) return;
   brand.addEventListener('click', async ()=>{
     try{
-      const res = await fetch('/api/auth/me', { credentials: 'same-origin' });
-      if (!res.ok){ window.location.href = '/'; return; }
+      const res = await fetch(familyPrefix()+'/api/auth/me', { credentials: 'same-origin' });
+      if (!res.ok){ window.location.href = familyPrefix() + '/'; return; }
       const j = await res.json();
       const role = j.user && j.user.role;
-      if (role === 'superadmin') window.location.href = '/owner.html';
-      else if (role === 'admin') window.location.href = '/admin.html';
-      else if (role === 'member') window.location.href = '/tree.html';
-      else window.location.href = '/';
-    }catch(e){ window.location.href = '/'; }
+      // the platform owner's dashboard is always at the root, never under a family's own
+      // /f/<slug> prefix — see server/tenant.js's DEFAULT_FAMILY and requirePlatformOwner
+      if (role === 'platform_owner') window.location.href = '/owner.html';
+      else if (role === 'admin') window.location.href = familyPrefix() + '/admin.html';
+      else if (role === 'member') window.location.href = familyPrefix() + '/tree.html';
+      else window.location.href = familyPrefix() + '/';
+    }catch(e){ window.location.href = familyPrefix() + '/'; }
   });
 })();
 
@@ -302,7 +329,7 @@ function showProfileModal(person, nodeMap, edges){
     });
     actions.appendChild(addRow);
     content.appendChild(actions);
-  } else if (window.myRole === 'superadmin'){
+  } else if (window.myRole === 'platform_owner'){
     // the platform owner can edit anyone's profile directly from the tree — still goes
     // through the normal admin-approval queue (see openEditProfileModal/submitEditProfile),
     // just attributed to the owner and tagged as such for the reviewing admin
@@ -541,7 +568,7 @@ async function submitChangePassword(e){
   if (nextPwd !== confirmPwd){ feedback.textContent = t('ep_password_mismatch'); return; }
   feedback.textContent = t('ep_password_updating');
   try{
-    const res = await fetch('/api/member/password', { method:'POST', headers:{'Content-Type':'application/json'}, credentials:'same-origin', body: JSON.stringify({ current_password: current, new_password: nextPwd }) });
+    const res = await fetch(familyPrefix()+'/api/member/password', { method:'POST', headers:{'Content-Type':'application/json'}, credentials:'same-origin', body: JSON.stringify({ current_password: current, new_password: nextPwd }) });
     const j = await res.json();
     if (j.ok){ feedback.textContent = t('ep_password_changed'); e.target.reset(); }
     else feedback.textContent = j.error || t('ep_error_generic');
@@ -714,7 +741,7 @@ async function openAddRelativeModal(relation, person){
       data.append('link_via_mother', mCb ? String(mCb.checked) : 'true');
     }
     try{
-      const res = await fetch('/api/member/relatives/add', { method:'POST', body:data, credentials:'same-origin' });
+      const res = await fetch(familyPrefix()+'/api/member/relatives/add', { method:'POST', body:data, credentials:'same-origin' });
       const j = await res.json();
       if (j.ok){ feedback.textContent = t('ar_submitted_ok'); setTimeout(()=>{ modal.style.display='none'; }, 1400); }
       else feedback.textContent = j.error || t('ep_error_generic');
@@ -956,16 +983,16 @@ if (registerForm){
     const feedback = document.getElementById('register-feedback');
     if (feedback) feedback.textContent = t('reg_submitting');
     try{
-      const res = await fetch('/api/auth/register', { method:'POST', body: data });
+      const res = await fetch(familyPrefix()+'/api/auth/register', { method:'POST', body: data });
       const j = await res.json();
-      if (j.ok){ track('register_submit'); if (feedback) feedback.textContent = t('reg_submitted_ok'); setTimeout(()=>{ location.href = '/'; }, 1400); }
+      if (j.ok){ track('register_submit'); if (feedback) feedback.textContent = t('reg_submitted_ok'); setTimeout(()=>{ location.href = familyPrefix() + '/'; }, 1400); }
       else if (feedback) feedback.textContent = j && j.error ? j.error : t('reg_error_generic');
     }catch(err){ if (feedback) feedback.textContent = t('network_error'); }
   });
 }
 
 const backToLanding = document.getElementById('back-to-landing');
-if (backToLanding){ backToLanding.addEventListener('click', async ()=>{ await api('/auth/logout',{method:'POST'}); location.href = '/'; }); }
+if (backToLanding){ backToLanding.addEventListener('click', async ()=>{ await api('/auth/logout',{method:'POST'}); location.href = familyPrefix() + '/'; }); }
 
 // {months, days, hours, minutes, seconds}-style countdown string toward targetIso — shared
 // by the public/tree-page events widget and the Archives Events tab, so the two always
@@ -1081,7 +1108,7 @@ function countdownString(targetIso){
       }
     }catch(e){ dropdown.innerHTML = `<div class="notif-empty">${t('error_loading')}</div>`; }
     badge.classList.add('hidden'); badge.textContent = '0';
-    try{ await fetch('/api/notifications/seen', { method:'POST', credentials:'same-origin' }); }catch(e){}
+    try{ await fetch(familyPrefix()+'/api/notifications/seen', { method:'POST', credentials:'same-origin' }); }catch(e){}
   }
 
   btn.addEventListener('click', (e)=>{ e.stopPropagation(); openDropdown(); });
@@ -2099,6 +2126,31 @@ const I18N = {
     create_profile_link: 'Profile not found — create your own profile',
     admin_link: 'Administrator login',
     forgot_password_link: 'Forgot password?',
+    landing_new_family_hint: 'Not part of this family? You can bring your own onto the platform.',
+    landing_create_family_link: "Create your family's tree →",
+
+    cf_brand: "Create Your Family's Tree",
+    cf_title: 'Before you request a family',
+    cf_intro: "This platform hosts many families, each with its own private space — photos, family tree, events, and discussions visible only to that family. Please read this before requesting one for yours.",
+    cf_point_unique_id: "The family ID you choose below must be unique across the whole platform — it becomes part of your family's own web address.",
+    cf_point_review: 'Requests are reviewed by the platform owner, usually within 48 hours.',
+    cf_point_approval_email: 'Once approved, the admin username you gave below will receive an email with a personalized link and a temporary password.',
+    cf_point_first_login: "On first login, you'll be required to set a new password before doing anything else.",
+    cf_point_root_profile: 'Your first task as admin is creating your family\'s "root profile" — the founding ancestor everyone else\'s place in the tree connects through.',
+    cf_point_invite_members: "You can then share your family's link so relatives can register their own accounts — each one will need your approval, the same way this request needs the platform owner's.",
+    cf_point_deletion: 'You can request your family be deleted at any time from your admin dashboard, if you ever need to.',
+    cf_family_name_label: 'Family name',
+    cf_family_name_placeholder: 'e.g. The Dubois Family',
+    cf_slug_label: "Family ID (used in your family's web address — unique, lowercase letters/numbers/hyphens only)",
+    cf_slug_placeholder: 'e.g. dubois',
+    cf_admin_username_label: 'Your admin username',
+    cf_admin_email_label: 'Your email',
+    cf_policy_checkbox: 'I have read and accept the points above.',
+    cf_submit_btn: 'Request my family',
+    cf_policy_required: 'Please confirm you have read and accept the points above.',
+    cf_submitting: 'Submitting your request...',
+    cf_submitted_ok: "Thank you — your request has been submitted. You'll hear back by email within about 48 hours.",
+    cf_error_generic: 'Something went wrong. Please try again.',
     forgot_password_username_label: 'Username',
     forgot_password_submit_btn: 'Request password reset',
     forgot_password_submitting: 'Sending request...',
@@ -2207,6 +2259,23 @@ const I18N = {
     owner_no_reset_requests: 'No pending password reset requests.',
     owner_resolve_reset_btn: 'Resolve (reset password)',
     owner_resolve_reset_confirm: "Reset {name}'s password to resolve this request?",
+    owner_families_heading: 'Families on this platform',
+    owner_families_desc: 'Review requests for new families, and suspend or reactivate any existing one.',
+    owner_family_requests_heading: 'Pending family requests',
+    owner_no_family_requests: 'No pending family requests.',
+    owner_family_request_approve_btn: 'Approve',
+    owner_family_request_approve_confirm: 'Approve "{name}"? This creates their family and emails the admin a temporary password.',
+    owner_family_request_approve_done: 'Approved — the admin has been emailed their login link and temporary password.',
+    owner_family_request_reject_btn: 'Reject',
+    owner_family_request_reject_confirm: 'Reject the request for "{name}"?',
+    owner_all_families_heading: 'All families',
+    owner_no_families: 'No families yet.',
+    owner_family_status_active: 'Active', owner_family_status_suspended: 'Suspended',
+    owner_family_status_deleted: 'Deleted', owner_family_status_pending: 'Pending',
+    owner_family_suspend_btn: 'Suspend',
+    owner_family_suspend_confirm: 'Suspend "{name}"? Its members will not be able to log in until reactivated.',
+    owner_family_reactivate_btn: 'Reactivate',
+    owner_family_reactivate_confirm: 'Reactivate "{name}"?',
     loading: 'Loading...',
 
     admin_root_title: 'Family Tree Root Profile',
@@ -2463,6 +2532,31 @@ const I18N = {
     create_profile_link: 'Profil introuvable — créez votre profil',
     admin_link: 'Connexion administrateur',
     forgot_password_link: 'Mot de passe oublié ?',
+    landing_new_family_hint: 'Vous ne faites pas partie de cette famille ? Vous pouvez inscrire la vôtre sur la plateforme.',
+    landing_create_family_link: 'Créer l\'arbre de votre famille →',
+
+    cf_brand: "Créer l'arbre de votre famille",
+    cf_title: 'Avant de faire votre demande',
+    cf_intro: "Cette plateforme héberge de nombreuses familles, chacune avec son propre espace privé — photos, arbre généalogique, événements et discussions visibles uniquement par cette famille. Merci de lire ceci avant de faire votre demande.",
+    cf_point_unique_id: "L'identifiant familial que vous choisissez ci-dessous doit être unique sur toute la plateforme — il fait partie de l'adresse web propre à votre famille.",
+    cf_point_review: 'Les demandes sont examinées par le propriétaire de la plateforme, généralement sous 48 heures.',
+    cf_point_approval_email: "Une fois approuvée, le nom d'utilisateur administrateur que vous avez indiqué recevra un email avec un lien personnalisé et un mot de passe temporaire.",
+    cf_point_first_login: 'Lors de la première connexion, vous devrez définir un nouveau mot de passe avant toute autre action.',
+    cf_point_root_profile: 'Votre première tâche en tant qu\'administrateur sera de créer le « profil racine » de votre famille — l\'ancêtre fondateur auquel se rattache la place de chacun dans l\'arbre.',
+    cf_point_invite_members: "Vous pourrez ensuite partager le lien de votre famille pour que vos proches créent leurs propres comptes — chacun nécessitera votre approbation, tout comme cette demande nécessite celle du propriétaire de la plateforme.",
+    cf_point_deletion: 'Vous pouvez demander la suppression de votre famille à tout moment depuis votre tableau de bord administrateur, si besoin.',
+    cf_family_name_label: 'Nom de la famille',
+    cf_family_name_placeholder: 'ex. Famille Dubois',
+    cf_slug_label: "Identifiant familial (utilisé dans l'adresse web de votre famille — unique, lettres minuscules/chiffres/tirets uniquement)",
+    cf_slug_placeholder: 'ex. dubois',
+    cf_admin_username_label: "Votre nom d'utilisateur administrateur",
+    cf_admin_email_label: 'Votre email',
+    cf_policy_checkbox: "J'ai lu et j'accepte les points ci-dessus.",
+    cf_submit_btn: 'Faire ma demande',
+    cf_policy_required: "Merci de confirmer avoir lu et accepté les points ci-dessus.",
+    cf_submitting: 'Envoi de votre demande...',
+    cf_submitted_ok: 'Merci — votre demande a été envoyée. Vous recevrez une réponse par email sous environ 48 heures.',
+    cf_error_generic: "Une erreur s'est produite. Merci de réessayer.",
     forgot_password_username_label: "Nom d'utilisateur",
     forgot_password_submit_btn: 'Demander une réinitialisation',
     forgot_password_submitting: 'Envoi de la demande...',
@@ -2571,6 +2665,23 @@ const I18N = {
     owner_no_reset_requests: 'Aucune demande de réinitialisation en attente.',
     owner_resolve_reset_btn: 'Résoudre (réinitialiser le mot de passe)',
     owner_resolve_reset_confirm: 'Réinitialiser le mot de passe de {name} pour résoudre cette demande ?',
+    owner_families_heading: 'Familles sur cette plateforme',
+    owner_families_desc: 'Examinez les demandes de nouvelles familles, et suspendez ou réactivez une famille existante.',
+    owner_family_requests_heading: 'Demandes de famille en attente',
+    owner_no_family_requests: 'Aucune demande de famille en attente.',
+    owner_family_request_approve_btn: 'Approuver',
+    owner_family_request_approve_confirm: 'Approuver « {name} » ? Cela crée leur famille et envoie à l\'administrateur un mot de passe temporaire par email.',
+    owner_family_request_approve_done: "Approuvé — l'administrateur a reçu par email son lien de connexion et son mot de passe temporaire.",
+    owner_family_request_reject_btn: 'Rejeter',
+    owner_family_request_reject_confirm: 'Rejeter la demande pour « {name} » ?',
+    owner_all_families_heading: 'Toutes les familles',
+    owner_no_families: "Aucune famille pour l'instant.",
+    owner_family_status_active: 'Active', owner_family_status_suspended: 'Suspendue',
+    owner_family_status_deleted: 'Supprimée', owner_family_status_pending: 'En attente',
+    owner_family_suspend_btn: 'Suspendre',
+    owner_family_suspend_confirm: 'Suspendre « {name} » ? Ses membres ne pourront plus se connecter jusqu\'à la réactivation.',
+    owner_family_reactivate_btn: 'Réactiver',
+    owner_family_reactivate_confirm: 'Réactiver « {name} » ?',
     loading: 'Chargement...',
 
     admin_root_title: "Profil racine de l'arbre généalogique",
@@ -2812,7 +2923,16 @@ const I18N = {
   }
 };
 
-function currentLang(){ return localStorage.getItem('ft_lang') || 'en'; }
+// once someone has explicitly picked a language (the toggle button), that choice sticks via
+// localStorage forever after, on every page. Before that, the very first visit falls back to
+// whatever language the visitor's own device/browser is set to, French or English — not a
+// hardcoded default — since a platform this deliberately bilingual should greet a French-
+// speaking visitor in French without them having to find and click a toggle first.
+function currentLang(){
+  const stored = localStorage.getItem('ft_lang');
+  if (stored) return stored;
+  return (navigator.language || '').toLowerCase().startsWith('fr') ? 'fr' : 'en';
+}
 
 // t('key', {name:'X'}) — looks up the active language, falls back to English, then the
 // key itself, and substitutes any {placeholders}.

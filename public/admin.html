@@ -110,7 +110,7 @@
   </main>
   <script>
     document.addEventListener('DOMContentLoaded', ()=>{
-    async function api(path, opts={}){ const merged = Object.assign({}, opts, { credentials: 'same-origin' }); const res = await fetch('/api'+path, merged); const ct = res.headers.get('content-type')||''; if (ct.includes('application/json')) return res.json(); return res.text(); }
+    // api() comes from the shared /app.js (family-prefix-aware) — not redefined here
 
     // badges on all three tabs: Pending also folds in archive submissions awaiting review
     // (preserving the original single-badge notification behavior), Approved/Rejected are
@@ -237,7 +237,7 @@
 
       const actions = document.createElement('div'); actions.style.marginTop='10px';
       if (req.status === 'pending'){
-        const approveBtn = document.createElement('button'); approveBtn.textContent=t('btn_approve'); approveBtn.addEventListener('click', async ()=>{ if (!await showConfirm(t('confirm_approve'))) return; try{ const res = await fetch('/api/admin/requests/'+req.id+'/approve',{method:'POST', credentials:'same-origin'}); const ct = res.headers.get('content-type')||''; const body = ct.includes('application/json')? await res.json() : await res.text(); if (res.ok){ await loadRequests(currentStatus); } else { alert(t('alert_approve_failed',{msg: body && (body.error||body.message) ? (body.error||body.message) : JSON.stringify(body)})); } }catch(e){ alert(t('network_error')+' '+e.message); } });
+        const approveBtn = document.createElement('button'); approveBtn.textContent=t('btn_approve'); approveBtn.addEventListener('click', async ()=>{ if (!await showConfirm(t('confirm_approve'))) return; try{ const res = await fetch(familyPrefix()+'/api/admin/requests/'+req.id+'/approve',{method:'POST', credentials:'same-origin'}); const ct = res.headers.get('content-type')||''; const body = ct.includes('application/json')? await res.json() : await res.text(); if (res.ok){ await loadRequests(currentStatus); } else { alert(t('alert_approve_failed',{msg: body && (body.error||body.message) ? (body.error||body.message) : JSON.stringify(body)})); } }catch(e){ alert(t('network_error')+' '+e.message); } });
         actions.appendChild(approveBtn);
         // the edit-before-approve modal only understands the create_person shape
         if (!req.payload.type || req.payload.type === 'create_person' || req.payload.type === 'create'){
@@ -254,7 +254,7 @@
           });
           actions.appendChild(setPwdBtn);
         }
-        const rejectBtn = document.createElement('button'); rejectBtn.textContent=t('btn_reject'); rejectBtn.style.marginLeft='8px'; rejectBtn.addEventListener('click', async ()=>{ const ok = await showConfirm(t('confirm_reject')); if (!ok) return; const note = prompt(t('prompt_rejection_reason'),''); try{ const res = await fetch('/api/admin/requests/'+req.id+'/reject',{method:'POST', headers:{'Content-Type':'application/json'}, credentials:'same-origin', body: JSON.stringify({note})}); const ct = res.headers.get('content-type')||''; const body = ct.includes('application/json')? await res.json() : await res.text(); if (res.ok){ await loadRequests(currentStatus); } else { alert(t('alert_reject_failed',{msg: body && (body.error||body.message) ? (body.error||body.message) : JSON.stringify(body)})); } }catch(e){ alert(t('network_error')+' '+e.message); } });
+        const rejectBtn = document.createElement('button'); rejectBtn.textContent=t('btn_reject'); rejectBtn.style.marginLeft='8px'; rejectBtn.addEventListener('click', async ()=>{ const ok = await showConfirm(t('confirm_reject')); if (!ok) return; const note = prompt(t('prompt_rejection_reason'),''); try{ const res = await fetch(familyPrefix()+'/api/admin/requests/'+req.id+'/reject',{method:'POST', headers:{'Content-Type':'application/json'}, credentials:'same-origin', body: JSON.stringify({note})}); const ct = res.headers.get('content-type')||''; const body = ct.includes('application/json')? await res.json() : await res.text(); if (res.ok){ await loadRequests(currentStatus); } else { alert(t('alert_reject_failed',{msg: body && (body.error||body.message) ? (body.error||body.message) : JSON.stringify(body)})); } }catch(e){ alert(t('network_error')+' '+e.message); } });
         actions.appendChild(rejectBtn);
       } else if (req.status === 'approved' && (!req.payload.type || req.payload.type === 'create_person' || req.payload.type === 'create')){
         // allow admin to modify or delete an approved account
@@ -275,7 +275,7 @@
             const personName = req.payload.full_name || t('req_unknown_person');
             const alsoDelete = await confirmDeleteWithRelatives(relatives, personName);
             if (alsoDelete === null) return; // cancelled
-            const res = await fetch('/api/admin/people/'+pid+'/delete', { method:'POST', headers:{'Content-Type':'application/json'}, credentials:'same-origin', body: JSON.stringify({ also_delete: alsoDelete }) });
+            const res = await fetch(familyPrefix()+'/api/admin/people/'+pid+'/delete', { method:'POST', headers:{'Content-Type':'application/json'}, credentials:'same-origin', body: JSON.stringify({ also_delete: alsoDelete }) });
             const ct = res.headers.get('content-type')||''; const body = ct.includes('application/json')? await res.json() : await res.text();
             if (res.ok){ await loadRequests('rejected'); } else { alert(t('alert_delete_failed',{msg: body && (body.error||body.message) ? (body.error||body.message) : JSON.stringify(body)})); }
           }catch(e){ alert(t('network_error')+' '+e.message); }
@@ -346,7 +346,7 @@
               const btn = document.createElement('button'); btn.textContent=t('admin_root_set_btn'); btn.style.marginTop='0';
               btn.addEventListener('click', async ()=>{
                 if (!await showConfirm(t('admin_root_set_confirm', {name: p.full_name}))) return;
-                const res = await fetch('/api/admin/root', { method:'POST', headers:{'Content-Type':'application/json'}, credentials:'same-origin', body: JSON.stringify({ person_id: p.id }) });
+                const res = await fetch(familyPrefix()+'/api/admin/root', { method:'POST', headers:{'Content-Type':'application/json'}, credentials:'same-origin', body: JSON.stringify({ person_id: p.id }) });
                 const j = await res.json();
                 if (j.ok){ await loadRoot(); rootChooseArea.style.display='none'; } else alert(t('alert_error_prefix',{msg: JSON.stringify(j)}));
               });
@@ -372,7 +372,7 @@
       const photoEl = f.querySelector('[name="photo"]');
       if (photoEl && photoEl.files && photoEl.files[0]) form.append('photo', await downscalePhoto(photoEl.files[0]));
       try{
-        const res = await fetch('/api/admin/people/create-direct', { method:'POST', credentials:'same-origin', body: form });
+        const res = await fetch(familyPrefix()+'/api/admin/people/create-direct', { method:'POST', credentials:'same-origin', body: form });
         const j = await res.json();
         if (j.ok){ alert(t('admin_root_created_ok')); f.reset(); rootCreateArea.style.display='none'; await loadRoot(); }
         else alert(t('alert_error_prefix',{msg: JSON.stringify(j)}));
@@ -492,11 +492,11 @@
       if (item.approval_status === 'pending'){
         const approveBtn = document.createElement('button'); approveBtn.textContent=t('btn_approve'); approveBtn.addEventListener('click', async ()=>{
           if (!await showConfirm(t('confirm_approve'))) return;
-          try{ const res = await fetch('/api/admin/archive/'+item.id+'/approve', { method:'POST', credentials:'same-origin' }); const j = await res.json(); if (j.ok){ await loadArchiveRequests(currentArchiveStatus); } else alert(t('alert_error_prefix',{msg: JSON.stringify(j)})); }catch(e){ alert(t('network_error')+' '+e.message); }
+          try{ const res = await fetch(familyPrefix()+'/api/admin/archive/'+item.id+'/approve', { method:'POST', credentials:'same-origin' }); const j = await res.json(); if (j.ok){ await loadArchiveRequests(currentArchiveStatus); } else alert(t('alert_error_prefix',{msg: JSON.stringify(j)})); }catch(e){ alert(t('network_error')+' '+e.message); }
         });
         const rejectBtn = document.createElement('button'); rejectBtn.textContent=t('btn_reject'); rejectBtn.style.marginLeft='8px'; rejectBtn.addEventListener('click', async ()=>{
           if (!await showConfirm(t('confirm_reject'))) return;
-          try{ const res = await fetch('/api/admin/archive/'+item.id+'/reject', { method:'POST', credentials:'same-origin' }); const j = await res.json(); if (j.ok){ await loadArchiveRequests(currentArchiveStatus); } else alert(t('alert_error_prefix',{msg: JSON.stringify(j)})); }catch(e){ alert(t('network_error')+' '+e.message); }
+          try{ const res = await fetch(familyPrefix()+'/api/admin/archive/'+item.id+'/reject', { method:'POST', credentials:'same-origin' }); const j = await res.json(); if (j.ok){ await loadArchiveRequests(currentArchiveStatus); } else alert(t('alert_error_prefix',{msg: JSON.stringify(j)})); }catch(e){ alert(t('network_error')+' '+e.message); }
         });
         actions.appendChild(approveBtn); actions.appendChild(rejectBtn);
       } else {
@@ -504,7 +504,7 @@
         actions.appendChild(rev);
         const deleteBtn = document.createElement('button'); deleteBtn.textContent = t('btn_delete_post'); deleteBtn.style.marginTop='8px'; deleteBtn.addEventListener('click', async ()=>{
           if (!await showConfirm(t('confirm_delete_post'))) return;
-          try{ const res = await fetch('/api/admin/archive/'+item.id+'/delete', { method:'POST', credentials:'same-origin' }); const j = await res.json(); if (j.ok){ await loadArchiveRequests(currentArchiveStatus); } else alert(t('alert_error_prefix',{msg: JSON.stringify(j)})); }catch(e){ alert(t('network_error')+' '+e.message); }
+          try{ const res = await fetch(familyPrefix()+'/api/admin/archive/'+item.id+'/delete', { method:'POST', credentials:'same-origin' }); const j = await res.json(); if (j.ok){ await loadArchiveRequests(currentArchiveStatus); } else alert(t('alert_error_prefix',{msg: JSON.stringify(j)})); }catch(e){ alert(t('network_error')+' '+e.message); }
         });
         actions.appendChild(deleteBtn);
       }
@@ -561,11 +561,11 @@
       if (item.approval_status === 'pending'){
         const approveBtn = document.createElement('button'); approveBtn.textContent=t('btn_approve'); approveBtn.addEventListener('click', async ()=>{
           if (!await showConfirm(t('confirm_approve'))) return;
-          try{ const res = await fetch('/api/admin/events/'+item.id+'/approve', { method:'POST', credentials:'same-origin' }); const j = await res.json(); if (j.ok){ await loadEventRequests(currentEventStatus); } else alert(t('alert_error_prefix',{msg: JSON.stringify(j)})); }catch(e){ alert(t('network_error')+' '+e.message); }
+          try{ const res = await fetch(familyPrefix()+'/api/admin/events/'+item.id+'/approve', { method:'POST', credentials:'same-origin' }); const j = await res.json(); if (j.ok){ await loadEventRequests(currentEventStatus); } else alert(t('alert_error_prefix',{msg: JSON.stringify(j)})); }catch(e){ alert(t('network_error')+' '+e.message); }
         });
         const rejectBtn = document.createElement('button'); rejectBtn.textContent=t('btn_reject'); rejectBtn.style.marginLeft='8px'; rejectBtn.addEventListener('click', async ()=>{
           if (!await showConfirm(t('confirm_reject'))) return;
-          try{ const res = await fetch('/api/admin/events/'+item.id+'/reject', { method:'POST', credentials:'same-origin' }); const j = await res.json(); if (j.ok){ await loadEventRequests(currentEventStatus); } else alert(t('alert_error_prefix',{msg: JSON.stringify(j)})); }catch(e){ alert(t('network_error')+' '+e.message); }
+          try{ const res = await fetch(familyPrefix()+'/api/admin/events/'+item.id+'/reject', { method:'POST', credentials:'same-origin' }); const j = await res.json(); if (j.ok){ await loadEventRequests(currentEventStatus); } else alert(t('alert_error_prefix',{msg: JSON.stringify(j)})); }catch(e){ alert(t('network_error')+' '+e.message); }
         });
         actions.appendChild(approveBtn); actions.appendChild(rejectBtn);
       } else {
@@ -573,7 +573,7 @@
         actions.appendChild(rev);
         const deleteBtn = document.createElement('button'); deleteBtn.textContent = t('sched_delete_btn'); deleteBtn.style.marginTop='8px'; deleteBtn.addEventListener('click', async ()=>{
           if (!await showConfirm(t('sched_confirm_delete'))) return;
-          try{ const res = await fetch('/api/admin/events/'+item.id+'/delete', { method:'POST', credentials:'same-origin' }); const j = await res.json(); if (j.ok){ await loadEventRequests(currentEventStatus); } else alert(t('alert_error_prefix',{msg: JSON.stringify(j)})); }catch(e){ alert(t('network_error')+' '+e.message); }
+          try{ const res = await fetch(familyPrefix()+'/api/admin/events/'+item.id+'/delete', { method:'POST', credentials:'same-origin' }); const j = await res.json(); if (j.ok){ await loadEventRequests(currentEventStatus); } else alert(t('alert_error_prefix',{msg: JSON.stringify(j)})); }catch(e){ alert(t('network_error')+' '+e.message); }
         });
         actions.appendChild(deleteBtn);
       }
@@ -899,14 +899,14 @@
       if (!personId && f.dataset.heirOf){ try{ payload.heir_of = JSON.parse(f.dataset.heirOf); }catch(e){} }
       if (personId){
         // no photo: send json update
-        const res = await fetch('/api/admin/people/' + personId + '/update', { method:'POST', headers:{'Content-Type':'application/json'}, credentials:'same-origin', body: JSON.stringify({ payload }) });
+        const res = await fetch(familyPrefix()+'/api/admin/people/' + personId + '/update', { method:'POST', headers:{'Content-Type':'application/json'}, credentials:'same-origin', body: JSON.stringify({ payload }) });
         const j = await res.json();
         if (j.ok){ alert(t('alert_person_updated')); document.getElementById('edit-modal').style.display='none'; await loadRequests(currentStatus); await loadRoot(); }
         else alert(t('alert_error_prefix',{msg: JSON.stringify(j)}));
         return;
       }
 
-      const res = await fetch('/api/admin/requests/' + id + '/edit-approve', { method:'POST', headers:{'Content-Type':'application/json'}, credentials:'same-origin', body: JSON.stringify({ payload }) });
+      const res = await fetch(familyPrefix()+'/api/admin/requests/' + id + '/edit-approve', { method:'POST', headers:{'Content-Type':'application/json'}, credentials:'same-origin', body: JSON.stringify({ payload }) });
       const j = await res.json();
       if (j.ok){ alert(t('alert_approved_with_edits')); document.getElementById('edit-modal').style.display='none'; await loadRequests(currentStatus); }
       else alert(t('alert_error_prefix',{msg:''}));
@@ -938,7 +938,7 @@
     const tabPending = document.getElementById('tab-pending'); if (tabPending) tabPending.addEventListener('click', ()=> loadRequests('pending'));
     const tabApproved = document.getElementById('tab-approved'); if (tabApproved) tabApproved.addEventListener('click', ()=> loadRequests('approved'));
     const tabRejected = document.getElementById('tab-rejected'); if (tabRejected) tabRejected.addEventListener('click', ()=> loadRequests('rejected'));
-    const logoutBtn = document.getElementById('admin-logout'); if (logoutBtn) logoutBtn.addEventListener('click', async ()=>{ await api('/auth/logout',{method:'POST'}); window.location.href='/'; });
+    const logoutBtn = document.getElementById('admin-logout'); if (logoutBtn) logoutBtn.addEventListener('click', async ()=>{ await api('/auth/logout',{method:'POST'}); window.location.href=familyPrefix()+'/'; });
 
     // change my own password (works for admin accounts too, which have no linked profile)
     const acpModal = document.getElementById('admin-change-password-modal');
@@ -959,7 +959,7 @@
       if (nextPwd !== confirmPwd){ acpFeedback.textContent = t('ep_password_mismatch'); return; }
       acpFeedback.textContent = t('ep_password_updating');
       try{
-        const res = await fetch('/api/member/password', { method:'POST', headers:{'Content-Type':'application/json'}, credentials:'same-origin', body: JSON.stringify({ current_password: current, new_password: nextPwd }) });
+        const res = await fetch(familyPrefix()+'/api/member/password', { method:'POST', headers:{'Content-Type':'application/json'}, credentials:'same-origin', body: JSON.stringify({ current_password: current, new_password: nextPwd }) });
         const j = await res.json();
         if (j.ok){
           acpFeedback.textContent = t('ep_password_changed'); acpForm.reset();

@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Create Your Family</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="topbar-left">
+      <button type="button" id="page-back-btn" class="page-back-btn" aria-label="Back">‹</button>
+      <h1 data-i18n="cf_brand">Create Your Family's Tree</h1>
+    </div>
+    <div class="toggles">
+      <button id="lang-toggle">FR/EN</button>
+      <button id="theme-toggle">Light/Dark</button>
+    </div>
+  </header>
+  <main class="center-card" style="max-width:560px">
+    <h2 data-i18n="cf_title">Before you request a family</h2>
+    <p class="hint" data-i18n="cf_intro">This platform hosts many families, each with its own private space — photos, family tree, events, and discussions visible only to that family. Please read this before requesting one for yours.</p>
+    <ul style="padding-left:20px;line-height:1.6;color:var(--muted);font-size:14px">
+      <li data-i18n="cf_point_unique_id">The family ID you choose below must be unique across the whole platform — it becomes part of your family's own web address.</li>
+      <li data-i18n="cf_point_review">Requests are reviewed by the platform owner, usually within 48 hours.</li>
+      <li data-i18n="cf_point_approval_email">Once approved, the admin username you gave below will receive an email with a personalized link and a temporary password.</li>
+      <li data-i18n="cf_point_first_login">On first login, you'll be required to set a new password before doing anything else.</li>
+      <li data-i18n="cf_point_root_profile">Your first task as admin is creating your family's "root profile" — the founding ancestor everyone else's place in the tree connects through.</li>
+      <li data-i18n="cf_point_invite_members">You can then share your family's link so relatives can register their own accounts — each one will need your approval, the same way this request needs the platform owner's.</li>
+      <li data-i18n="cf_point_deletion">You can request your family be deleted at any time from your admin dashboard, if you ever need to.</li>
+    </ul>
+
+    <form id="create-family-form" style="margin-top:20px">
+      <label data-i18n="cf_family_name_label">Family name
+        <input id="cf-family-name" name="family_name" required data-i18n-placeholder="cf_family_name_placeholder" placeholder="e.g. The Dubois Family" />
+      </label>
+      <label data-i18n="cf_slug_label">Family ID (used in your family's web address — unique, lowercase letters/numbers/hyphens only)
+        <input id="cf-slug" name="slug" required pattern="[a-z0-9]+(-[a-z0-9]+)*" data-i18n-placeholder="cf_slug_placeholder" placeholder="e.g. dubois" />
+      </label>
+      <label data-i18n="cf_admin_username_label">Your admin username
+        <input id="cf-admin-username" name="admin_username" required />
+      </label>
+      <label data-i18n="cf_admin_email_label">Your email
+        <input id="cf-admin-email" name="admin_email" type="email" required />
+      </label>
+      <label class="checkbox-label">
+        <input type="checkbox" id="cf-policy" required />
+        <span data-i18n="cf_policy_checkbox">I have read and accept the points above.</span>
+      </label>
+      <button type="submit" data-i18n="cf_submit_btn">Request my family</button>
+    </form>
+    <div id="create-family-feedback" class="hint"></div>
+  </main>
+  <script src="/app.js"></script>
+  <script>
+    // suggest a slug from the family name, but never overwrite something the visitor already
+    // typed themselves into the slug field directly
+    const nameInput = document.getElementById('cf-family-name');
+    const slugInput = document.getElementById('cf-slug');
+    let slugTouched = false;
+    slugInput.addEventListener('input', ()=>{ slugTouched = true; });
+    nameInput.addEventListener('input', ()=>{
+      if (slugTouched) return;
+      slugInput.value = nameInput.value.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+    });
+
+    document.getElementById('create-family-form').addEventListener('submit', async (e)=>{
+      e.preventDefault();
+      const feedback = document.getElementById('create-family-feedback');
+      if (!document.getElementById('cf-policy').checked){ feedback.textContent = t('cf_policy_required'); return; }
+      feedback.textContent = t('cf_submitting');
+      try{
+        const res = await fetch('/api/families/request', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            family_name: nameInput.value.trim(),
+            slug: slugInput.value.trim().toLowerCase(),
+            admin_username: document.getElementById('cf-admin-username').value.trim(),
+            admin_email: document.getElementById('cf-admin-email').value.trim(),
+            policy_accepted: true,
+          }),
+        });
+        const j = await res.json();
+        if (j.ok){ feedback.textContent = t('cf_submitted_ok'); document.getElementById('create-family-form').reset(); slugTouched = false; }
+        else feedback.textContent = j.error || t('cf_error_generic');
+      }catch(err){ feedback.textContent = t('network_error'); }
+    });
+  </script>
+</body>
+</html>
