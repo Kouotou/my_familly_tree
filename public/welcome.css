@@ -1,0 +1,93 @@
+/* Marketing landing page only — reuses the app's existing CSS variables (styles.css) so the
+   whole product shares one warm, earth-toned palette instead of introducing a second one. */
+
+.w-page{ max-width:1080px; margin:0 auto; padding:0 24px 64px; }
+
+/* --- Hero --- */
+.w-hero{
+	display:flex; align-items:center; gap:48px; padding:56px 0 40px; flex-wrap:wrap;
+}
+.w-hero-text{ flex:1 1 420px; min-width:280px }
+.w-eyebrow{
+	display:inline-block; margin:0 0 12px; padding:6px 14px; border-radius:999px;
+	background:var(--accent-soft); color:var(--accent-strong); font-weight:700; font-size:13px; letter-spacing:0.3px;
+}
+.w-hero-text h2{
+	font-family:var(--font-display); font-size:40px; line-height:1.15; margin:0 0 18px; color:var(--text);
+}
+.w-hero-desc{ color:var(--muted); font-size:16px; line-height:1.6; max-width:520px; margin:0 0 26px }
+.w-hero-actions{ display:flex; gap:14px; flex-wrap:wrap; align-items:center }
+.w-btn-primary{
+	display:inline-block; padding:13px 24px; border-radius:999px; text-decoration:none;
+	background:linear-gradient(120deg,var(--accent),var(--accent-strong)); color:#fff8ee; font-weight:700; font-size:15px;
+	box-shadow:0 10px 22px var(--accent-soft); transition:transform 150ms ease, box-shadow 150ms ease;
+}
+.w-btn-primary:hover{ transform:translateY(-2px); box-shadow:0 14px 28px var(--accent-soft) }
+.w-btn-ghost{
+	display:inline-block; padding:12px 20px; border-radius:999px; text-decoration:none;
+	color:var(--accent-strong); font-weight:700; font-size:15px; border:1.5px solid var(--border);
+	transition:border-color 150ms ease, background 150ms ease;
+}
+.w-btn-ghost:hover{ background:var(--accent-soft); border-color:var(--accent) }
+.w-hero-visual{ flex:1 1 320px; min-width:260px; text-align:center }
+.w-hero-visual img{
+	width:100%; max-width:420px; border-radius:var(--rounded-lg); background:var(--card);
+	border:1px solid var(--border); box-shadow:var(--shadow); padding:18px;
+}
+
+/* --- Returning-member quick jump --- */
+.w-returning{ padding:8px 0 40px }
+.w-returning-card{
+	background:var(--card); border:1px solid var(--border); border-radius:var(--rounded);
+	box-shadow:var(--shadow-sm); padding:22px 26px; max-width:520px;
+}
+.w-returning-card h3{ margin:0 0 4px; font-family:var(--font-display); font-size:19px }
+.w-returning-card .hint{ margin:0 0 14px }
+#w-family-jump-form{ display:flex; gap:10px; flex-wrap:wrap }
+#w-family-jump-form input{
+	flex:1; min-width:160px; padding:10px 14px; border-radius:999px; border:1.5px solid var(--border);
+	background:var(--bg); color:var(--text); font-size:14px;
+}
+#w-family-jump-form button{ margin-top:0; padding:10px 20px; font-size:14px }
+
+/* --- About / Mission / Vision --- */
+.w-about{ display:grid; grid-template-columns:repeat(3, 1fr); gap:20px; padding:24px 0 56px }
+.w-about-card{
+	background:var(--card); border:1px solid var(--border); border-radius:var(--rounded-lg);
+	box-shadow:var(--shadow-sm); padding:26px; position:relative;
+}
+.w-about-icon{ font-size:28px; display:block; margin-bottom:10px }
+.w-about-card h3{ margin:0 0 10px; font-family:var(--font-display); font-size:20px }
+.w-about-card p{ margin:0; color:var(--muted); font-size:14.5px; line-height:1.6 }
+
+/* --- How it works --- */
+.w-how{ padding:16px 0 56px }
+.w-how h2{ font-family:var(--font-display); font-size:30px; margin:0 0 6px; text-align:center }
+.w-how-sub{ color:var(--muted); text-align:center; margin:0 0 26px }
+.w-how-tabs{ justify-content:center; margin-bottom:24px }
+.w-how-panel{
+	display:grid; grid-template-columns:repeat(2, 1fr); gap:20px; max-width:880px; margin:0 auto;
+}
+.w-how-item{
+	background:var(--card); border:1px solid var(--border); border-radius:var(--rounded);
+	box-shadow:var(--shadow-sm); padding:20px;
+}
+.w-how-item h4{ margin:0 0 8px; font-size:15.5px; color:var(--accent-strong) }
+.w-how-item p{ margin:0; color:var(--muted); font-size:14px; line-height:1.55 }
+
+/* --- Closing CTA --- */
+.w-closing{
+	text-align:center; padding:44px 32px; border-radius:var(--rounded-lg);
+	background:linear-gradient(120deg, var(--topbar-grad-1), var(--topbar-grad-2));
+	box-shadow:var(--shadow);
+}
+.w-closing h2{ font-family:var(--font-display); color:var(--topbar-text); margin:0 0 8px; font-size:26px }
+.w-closing p{ color:var(--topbar-text); opacity:0.85; margin:0 0 20px }
+.w-closing .w-btn-primary{ background:#fff8ee; color:var(--accent-strong); box-shadow:0 10px 22px rgba(0,0,0,0.2) }
+
+@media (max-width:720px){
+	.w-hero{ padding:32px 0 24px; gap:28px }
+	.w-hero-text h2{ font-size:30px }
+	.w-about{ grid-template-columns:1fr }
+	.w-how-panel{ grid-template-columns:1fr }
+}

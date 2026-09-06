@@ -46,6 +46,12 @@ async function tenantMiddleware(req, res, next) {
       family = DEFAULT_FAMILY;
     }
     req.family = family;
+    // true only when the request actually carried a /f/:slug prefix — distinct from "resolved
+    // to the default family because there was no prefix at all". server/app.js uses this to
+    // serve the platform's marketing page at a bare "/", while still serving Na Ajanbeta's own
+    // login page at "/f/najambeta/" (which also rewrites down to req.url === '/' by this point,
+    // and would otherwise be indistinguishable from the bare-root case).
+    req.familyFromPrefix = !!match;
 
     // Only /api/... requests ever touch the database — static assets and the SPA-shell
     // catch-all (plain res.sendFile calls) don't run a single query. A page load fires off

@@ -1,0 +1,152 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Africa Family Trees</title>
+  <link rel="stylesheet" href="/styles.css">
+  <link rel="stylesheet" href="/welcome.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="topbar-left">
+      <h1 data-i18n="w_brand">Africa Family Trees</h1>
+    </div>
+    <div class="toggles">
+      <button id="lang-toggle">FR/EN</button>
+      <button id="theme-toggle">Light/Dark</button>
+    </div>
+  </header>
+
+  <main class="w-page">
+
+    <!-- Hero -->
+    <section class="w-hero">
+      <div class="w-hero-text">
+        <p class="w-eyebrow" data-i18n="w_hero_eyebrow">A private home for every family's story</p>
+        <h2 data-i18n="w_hero_title">Your family's history, kept safe, shared with pride.</h2>
+        <p class="w-hero-desc" data-i18n="w_hero_desc">Africa Family Trees gives every family its own private space to build a family tree together, share photos, audio and video memories, plan gatherings, and keep the generations connected — wherever they live.</p>
+        <div class="w-hero-actions">
+          <a href="/create-family.html" class="w-btn-primary" data-i18n="w_hero_cta">Create your family's tree</a>
+          <a href="#w-how-it-works" class="w-btn-ghost" data-i18n="w_hero_secondary">See how it works ↓</a>
+        </div>
+      </div>
+      <div class="w-hero-visual">
+        <img src="/family-illustration.svg" alt="" />
+      </div>
+    </section>
+
+    <!-- Returning member: jump to your family -->
+    <section class="w-returning">
+      <div class="w-returning-card">
+        <h3 data-i18n="w_returning_title">Already part of a family here?</h3>
+        <p class="hint" data-i18n="w_returning_desc">Enter your family's ID to go straight to its login page.</p>
+        <form id="w-family-jump-form">
+          <input id="w-family-jump-input" type="text" required data-i18n-placeholder="w_returning_placeholder" placeholder="e.g. dubois" />
+          <button type="submit" data-i18n="w_returning_btn">Go to my family →</button>
+        </form>
+        <p id="w-family-jump-feedback" class="hint"></p>
+      </div>
+    </section>
+
+    <!-- About / Mission / Vision -->
+    <section class="w-about" id="w-about">
+      <div class="w-about-card">
+        <span class="w-about-icon">🌍</span>
+        <h3 data-i18n="w_about_title">About</h3>
+        <p data-i18n="w_about_body">Africa Family Trees started as one family's project to preserve their own history — and grew into a platform any family can bring their own onto. Each family gets a completely private space: nothing you post is visible to any other family on the platform.</p>
+      </div>
+      <div class="w-about-card">
+        <span class="w-about-icon">🎯</span>
+        <h3 data-i18n="w_mission_title">Mission</h3>
+        <p data-i18n="w_mission_body">To make it simple for any family, anywhere, to record who they are, where they come from, and the moments that matter — in a space built and moderated by the family itself, not a stranger's algorithm.</p>
+      </div>
+      <div class="w-about-card">
+        <span class="w-about-icon">🌱</span>
+        <h3 data-i18n="w_vision_title">Vision</h3>
+        <p data-i18n="w_vision_body">A future where no family's history is lost to distance, time, or a single person's memory — where every generation can add their part, and every new member can find their place.</p>
+      </div>
+    </section>
+
+    <!-- How it works -->
+    <section class="w-how" id="w-how-it-works">
+      <h2 data-i18n="w_how_title">How it works</h2>
+      <p class="w-how-sub" data-i18n="w_how_sub">A quick look at what your family can do together once your tree is set up.</p>
+
+      <div class="archive-tabs w-how-tabs">
+        <button type="button" data-how-tab="tree" class="active" data-i18n="w_how_tab_tree">Growing the tree</button>
+        <button type="button" data-how-tab="memories" data-i18n="w_how_tab_memories">Sharing memories</button>
+        <button type="button" data-how-tab="together" data-i18n="w_how_tab_together">Events &amp; discussion</button>
+      </div>
+
+      <div class="w-how-panel" data-how-panel="tree">
+        <div class="w-how-item">
+          <h4 data-i18n="w_how_tree_root_title">1. Start with a root profile</h4>
+          <p data-i18n="w_how_tree_root_body">Once your family is approved, the admin's first task is creating the "root profile" — the founding ancestor everyone else's place in the tree connects through.</p>
+        </div>
+        <div class="w-how-item">
+          <h4 data-i18n="w_how_tree_join_title">2. Family members join</h4>
+          <p data-i18n="w_how_tree_join_body">Share your family's link with relatives. Each person registers with their own username and password, linking themselves to their father and mother in the tree — the admin approves each new account.</p>
+        </div>
+        <div class="w-how-item">
+          <h4 data-i18n="w_how_tree_relatives_title">3. Add spouses, children, siblings</h4>
+          <p data-i18n="w_how_tree_relatives_body">From your own profile, add a spouse, a child, or a sibling at any time — as an existing member or a new profile — and the admin reviews it before it goes live on the tree.</p>
+        </div>
+        <div class="w-how-item">
+          <h4 data-i18n="w_how_tree_heir_title">4. Claim heritage</h4>
+          <p data-i18n="w_how_tree_heir_body">If you represent a deceased ancestor in the family, you can claim that heritage when you register or later from your profile — a way of keeping their place in the family visible.</p>
+        </div>
+      </div>
+
+      <div class="w-how-panel hidden" data-how-panel="memories">
+        <div class="w-how-item">
+          <h4 data-i18n="w_how_mem_photo_title">Photos, audio &amp; video</h4>
+          <p data-i18n="w_how_mem_photo_body">Post photos from a gathering, a voice memo, or a link to a video — each one goes into the family archive once an admin approves it, so it stays organized and on-topic.</p>
+        </div>
+        <div class="w-how-item">
+          <h4 data-i18n="w_how_mem_like_title">Like &amp; comment</h4>
+          <p data-i18n="w_how_mem_like_body">Once a post is live, anyone in the family can like it or leave a comment — no approval needed, so the conversation stays natural.</p>
+        </div>
+      </div>
+
+      <div class="w-how-panel hidden" data-how-panel="together">
+        <div class="w-how-item">
+          <h4 data-i18n="w_how_tog_events_title">Plan an event</h4>
+          <p data-i18n="w_how_tog_events_body">Propose a wedding, a reunion, a funeral — any family gathering — with a date and location. Once approved, everyone sees a countdown and gets reminder emails at one month, one week, and 24 hours out.</p>
+        </div>
+        <div class="w-how-item">
+          <h4 data-i18n="w_how_tog_feedback_title">Feedback board</h4>
+          <p data-i18n="w_how_tog_feedback_body">A shared space for the whole family to discuss, ask questions, or suggest changes — think of it as your family's own group chat, built into the platform.</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- Closing CTA -->
+    <section class="w-closing">
+      <h2 data-i18n="w_closing_title">Ready to bring your family onto the platform?</h2>
+      <p data-i18n="w_closing_desc" class="hint">It takes a few minutes to request your family — most requests are reviewed within 48 hours.</p>
+      <a href="/create-family.html" class="w-btn-primary" data-i18n="w_hero_cta">Create your family's tree</a>
+    </section>
+
+  </main>
+
+  <script src="/app.js"></script>
+  <script>
+    document.getElementById('w-family-jump-form').addEventListener('submit', (e)=>{
+      e.preventDefault();
+      const slug = document.getElementById('w-family-jump-input').value.trim().toLowerCase();
+      const feedback = document.getElementById('w-family-jump-feedback');
+      if (!/^[a-z0-9]+(-[a-z0-9]+)*$/.test(slug)){ feedback.textContent = t('w_returning_invalid'); return; }
+      window.location.href = '/f/' + encodeURIComponent(slug) + '/';
+    });
+
+    document.querySelectorAll('[data-how-tab]').forEach(btn=>{
+      btn.addEventListener('click', ()=>{
+        document.querySelectorAll('[data-how-tab]').forEach(b=> b.classList.toggle('active', b===btn));
+        const tab = btn.dataset.howTab;
+        document.querySelectorAll('[data-how-panel]').forEach(p=> p.classList.toggle('hidden', p.dataset.howPanel !== tab));
+      });
+    });
+  </script>
+</body>
+</html>
