@@ -47,18 +47,23 @@ app.use('/api', routes);
 
 // The platform's own marketing page lives at the bare root — but a request to a specific
 // family's own root (e.g. /f/najambeta/, which tenantMiddleware already rewrote down to
-// req.url === '/' by this point) must still reach that family's login page below, not this.
-// req.familyFromPrefix (set by tenantMiddleware) is what tells the two apart, since by now
-// req.url alone can't.
-app.get('/', (req, res, next) => {
-  if (req.familyFromPrefix) return next();
-  res.sendFile(path.join(__dirname, '../public/welcome.html'));
+// req.url === '/' by this point) must still reach that family's login page (login.html)
+// instead. req.familyFromPrefix (set by tenantMiddleware) is what tells the two apart, since
+// by now req.url alone can't.
+//
+// Deliberately explicit rather than leaning on express.static's automatic "serve index.html
+// for a directory path" convention — Vercel's own filesystem-based static routing gives a
+// literal public/index.html priority over vercel.json's rewrite rule for the exact "/" path,
+// which would silently reintroduce the old login page at the root no matter what this function
+// does. There is no file named index.html in public/ any more specifically to avoid that.
+app.get('/', (req, res) => {
+  res.sendFile(path.join(__dirname, req.familyFromPrefix ? '../public/login.html' : '../public/welcome.html'));
 });
 
 // Serve static frontend
 app.use(express.static(path.join(__dirname, '../public')));
 app.get('*', (req, res) => {
-  res.sendFile(path.join(__dirname, '../public/index.html'));
+  res.sendFile(path.join(__dirname, '../public/login.html'));
 });
 
 // clean JSON error responses for multer errors (e.g. file too large) and anything an
