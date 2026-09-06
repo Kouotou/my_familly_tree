@@ -132,6 +132,15 @@
 
   <script src="/app.js"></script>
   <script>
+    // the platform owner can override the hero photo/title/description from owner.html
+    // without a code deploy — falls back to the built-in illustration and copy when unset
+    fetch('/api/platform/marketing-content').then(r=> r.ok ? r.json() : null).then(data=>{
+      if (!data) return;
+      if (data.hero_image_path) document.querySelector('.w-hero-visual img').src = data.hero_image_path;
+      if (data.hero_title) document.querySelector('.w-hero-text h2').textContent = data.hero_title;
+      if (data.hero_desc) document.querySelector('.w-hero-desc').textContent = data.hero_desc;
+    }).catch(()=>{});
+
     document.getElementById('w-family-jump-form').addEventListener('submit', (e)=>{
       e.preventDefault();
       const slug = document.getElementById('w-family-jump-input').value.trim().toLowerCase();

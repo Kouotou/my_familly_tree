@@ -1391,6 +1391,41 @@ router.post('/platform/families/:id/reactivate', wrap(async (req,res)=>{
   res.json({ ok:true });
 }));
 
+// --- marketing site content (welcome.html) — platform owner only. Stored in public.settings
+// (always explicitly schema-qualified here, never through search_path) under keys namespaced
+// with a marketing_ prefix so they can never collide with a family's own settings — e.g.
+// Na Ajanbeta's own hero_image_path (see POST /admin/settings/hero-image above) lives in that
+// same public.settings table under an unrelated key, since Na Ajanbeta's schema *is* public.
+const MARKETING_SETTINGS_KEYS = ['marketing_hero_image_path', 'marketing_hero_title', 'marketing_hero_desc'];
+
+router.get('/platform/marketing-content', wrap(async (req,res)=>{
+  const rows = await db.prepare(
+    `SELECT key, value FROM public.settings WHERE key IN (${MARKETING_SETTINGS_KEYS.map(()=>'?').join(',')})`
+  ).all(...MARKETING_SETTINGS_KEYS);
+  const byKey = {};
+  rows.forEach(r=> { byKey[r.key] = r.value; });
+  res.json({
+    hero_image_path: byKey.marketing_hero_image_path || null,
+    hero_title: byKey.marketing_hero_title || null,
+    hero_desc: byKey.marketing_hero_desc || null,
+  });
+}));
+
+router.post('/platform/marketing-content', upload.single('photo'), wrap(async (req,res)=>{
+  if (!requirePlatformOwner(req,res)) return;
+  const body = req.body || {};
+  async function setPlatformSetting(key, value){
+    await db.prepare('INSERT INTO public.settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value').run(key, value);
+  }
+  if (req.file){
+    const url = await uploadPhoto(req.file, 'branding');
+    await setPlatformSetting('marketing_hero_image_path', url);
+  }
+  if (Object.prototype.hasOwnProperty.call(body, 'hero_title')) await setPlatformSetting('marketing_hero_title', body.hero_title || '');
+  if (Object.prototype.hasOwnProperty.call(body, 'hero_desc')) await setPlatformSetting('marketing_hero_desc', body.hero_desc || '');
+  res.json({ ok:true });
+}));
+
 // --- lightweight usage telemetry: page views + a handful of key actions, so the owner can
 // see what people actually do on the platform. Deliberately best-effort — a failure here
 // must never surface as a user-facing error, since it's a background signal, not a feature.
@@ -1561,6 +1596,24 @@ router.post('/admin/root', express.json(), wrap(async (req,res)=>{
   if (!p) return res.status(404).json({ error: 'person not found' });
   await setSetting('root_person_id', personId);
   res.json({ ok:true });
+}));
+
+// admin: replace this family's own landing-page photo (the picture shown on their own
+// login page) — reuses the generic settings key/value table, unqualified so it always lands
+// in whichever family's schema the current request belongs to, same as root_person_id above.
+router.post('/admin/settings/hero-image', upload.single('photo'), wrap(async (req,res)=>{
+  if (!requireAdmin(req,res)) return;
+  if (!req.file) return res.status(400).json({ error: 'A photo is required.' });
+  const url = await uploadPhoto(req.file, 'branding');
+  await setSetting('hero_image_path', url);
+  res.json({ ok:true, url });
+}));
+
+// public: this family's current landing-page photo, or null if they haven't set one (the
+// login page falls back to the platform default photo in that case)
+router.get('/settings/hero-image', wrap(async (req,res)=>{
+  const url = await getSetting('hero_image_path');
+  res.json({ url: url || null });
 }));
 
 // public: the current root profile, so the tree page knows where to anchor the layout

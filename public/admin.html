@@ -60,6 +60,16 @@
         </form>
       </div>
     </div>
+    <div id="heroPhotoPanel" style="padding:16px;background:var(--card);border-radius:10px;box-shadow:var(--shadow);margin-bottom:20px">
+      <h3 style="margin-top:0" data-i18n="admin_hero_photo_title">Your family's login page photo</h3>
+      <p style="color:var(--muted);margin-top:-6px;font-size:13px" data-i18n="admin_hero_photo_desc">Shown on your family's own login page — replace it with a photo of your choice to make it feel like your family's own space.</p>
+      <img id="heroPhotoPreview" src="/family-photo.jpg" alt="" style="width:100%;max-width:320px;height:160px;object-fit:cover;border-radius:10px;border:1px solid var(--border);display:block;margin-bottom:10px" />
+      <form id="heroPhotoForm" style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+        <input type="file" name="photo" accept="image/*" required />
+        <button type="submit" data-i18n="admin_hero_photo_save_btn">Save photo</button>
+      </form>
+      <div id="heroPhotoFeedback" class="hint"></div>
+    </div>
     <div class="admin-toolbar">
       <div class="admin-toolbar-group">
         <button id="tab-pending" class="active" data-i18n="pending">Pending<span id="count-pending" class="notif-badge hidden">0</span></button>
@@ -379,6 +389,31 @@
       }catch(err){ alert(t('network_error')+' '+err.message); }
     });
     loadRoot();
+
+    async function loadHeroPhoto(){
+      try{
+        const data = await api('/settings/hero-image');
+        if (data && data.url) document.getElementById('heroPhotoPreview').src = data.url;
+      }catch(e){}
+    }
+    loadHeroPhoto();
+
+    const heroPhotoForm = document.getElementById('heroPhotoForm');
+    if (heroPhotoForm) heroPhotoForm.addEventListener('submit', async (e)=>{
+      e.preventDefault();
+      const feedback = document.getElementById('heroPhotoFeedback');
+      const fileInput = heroPhotoForm.querySelector('[name="photo"]');
+      if (!fileInput.files || !fileInput.files[0]){ feedback.textContent = t('admin_hero_photo_required'); return; }
+      feedback.textContent = t('admin_hero_photo_saving');
+      const form = new FormData();
+      form.append('photo', await downscalePhoto(fileInput.files[0]));
+      try{
+        const res = await fetch(familyPrefix()+'/api/admin/settings/hero-image', { method:'POST', credentials:'same-origin', body: form });
+        const j = await res.json();
+        if (j.ok){ feedback.textContent = t('admin_hero_photo_saved'); document.getElementById('heroPhotoPreview').src = j.url; heroPhotoForm.reset(); }
+        else feedback.textContent = j.error || t('ep_error_generic');
+      }catch(err){ feedback.textContent = t('network_error'); }
+    });
 
     let currentStatus = 'pending';
     function setActiveTab(s){ currentStatus = s; const tp = document.getElementById('tab-pending'); const ta = document.getElementById('tab-approved'); const tr = document.getElementById('tab-rejected'); if (tp) tp.classList.toggle('active', s==='pending'); if (ta) ta.classList.toggle('active', s==='approved'); if (tr) tr.classList.toggle('active', s==='rejected'); }

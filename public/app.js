@@ -26,6 +26,18 @@ function familyPrefix(){
   });
 })();
 
+// a family's own login page can show a photo the family's admin chose (POST /admin/settings/
+// hero-image) instead of the platform's generic default — swapped in after load rather than
+// server-rendered, since this is a plain static HTML file shared by every family
+(function initHeroPhoto(){
+  const img = document.getElementById('hero-photo');
+  if (!img) return;
+  fetch(familyPrefix()+'/api/settings/hero-image', { credentials:'same-origin' })
+    .then(r=> r.ok ? r.json() : null)
+    .then(data=> { if (data && data.url) img.src = data.url; })
+    .catch(()=>{});
+})();
+
 (function initPageBackButton(){
   const btn = document.getElementById('page-back-btn');
   if (!btn) return;
@@ -2317,6 +2329,12 @@ const I18N = {
     owner_family_suspend_confirm: 'Suspend "{name}"? Its members will not be able to log in until reactivated.',
     owner_family_reactivate_btn: 'Reactivate',
     owner_family_reactivate_confirm: 'Reactivate "{name}"?',
+    owner_marketing_heading: 'Marketing site content',
+    owner_marketing_desc: "Change the photo and headline shown on the platform's public landing page (the bare root domain) — no code deploy needed.",
+    owner_marketing_photo_label: 'Hero photo (optional — leave blank to keep the current one)',
+    owner_marketing_title_label: 'Hero headline',
+    owner_marketing_desc_label: 'Hero description',
+    owner_marketing_saved: 'Saved — visible on the landing page now.',
     loading: 'Loading...',
 
     admin_root_title: 'Family Tree Root Profile',
@@ -2337,6 +2355,12 @@ const I18N = {
     admin_root_create_photo: 'Photo',
     admin_root_create_submit: 'Create & set as root',
     admin_root_created_ok: 'Root profile created',
+    admin_hero_photo_title: "Your family's login page photo",
+    admin_hero_photo_desc: 'Shown on your family\'s own login page — replace it with a photo of your choice to make it feel like your family\'s own space.',
+    admin_hero_photo_save_btn: 'Save photo',
+    admin_hero_photo_required: 'Choose a photo first.',
+    admin_hero_photo_saving: 'Saving photo...',
+    admin_hero_photo_saved: 'Photo saved.',
 
     admin_logout_btn: 'Logout',
     admin_refresh_btn: 'Refresh',
@@ -2764,6 +2788,12 @@ const I18N = {
     owner_family_suspend_confirm: 'Suspendre « {name} » ? Ses membres ne pourront plus se connecter jusqu\'à la réactivation.',
     owner_family_reactivate_btn: 'Réactiver',
     owner_family_reactivate_confirm: 'Réactiver « {name} » ?',
+    owner_marketing_heading: 'Contenu du site vitrine',
+    owner_marketing_desc: "Modifiez la photo et le titre affichés sur la page d'accueil publique de la plateforme (le domaine racine) — sans déploiement de code.",
+    owner_marketing_photo_label: 'Photo principale (facultatif — laissez vide pour garder la photo actuelle)',
+    owner_marketing_title_label: 'Titre principal',
+    owner_marketing_desc_label: 'Description principale',
+    owner_marketing_saved: "Enregistré — visible sur la page d'accueil dès maintenant.",
     loading: 'Chargement...',
 
     admin_root_title: "Profil racine de l'arbre généalogique",
@@ -2784,6 +2814,12 @@ const I18N = {
     admin_root_create_photo: 'Photo',
     admin_root_create_submit: 'Créer et définir comme racine',
     admin_root_created_ok: 'Profil racine créé',
+    admin_hero_photo_title: 'Photo de la page de connexion de votre famille',
+    admin_hero_photo_desc: "Affichée sur la page de connexion de votre famille — remplacez-la par une photo de votre choix pour personnaliser l'espace de votre famille.",
+    admin_hero_photo_save_btn: 'Enregistrer la photo',
+    admin_hero_photo_required: "Choisissez d'abord une photo.",
+    admin_hero_photo_saving: 'Enregistrement de la photo...',
+    admin_hero_photo_saved: 'Photo enregistrée.',
 
     admin_logout_btn: 'Déconnexion',
     admin_refresh_btn: 'Actualiser',

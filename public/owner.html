@@ -96,6 +96,19 @@
       <div id="allFamiliesList">Loading...</div>
     </div>
 
+    <div style="padding:16px;background:var(--card);border-radius:10px;box-shadow:var(--shadow);margin-bottom:20px">
+      <h3 style="margin-top:0" data-i18n="owner_marketing_heading">Marketing site content</h3>
+      <p style="color:var(--muted);margin-top:-6px;font-size:13px" data-i18n="owner_marketing_desc">Change the photo and headline shown on the platform's public landing page (the bare root domain) — no code deploy needed.</p>
+      <img id="marketingHeroPreview" src="/family-illustration.svg" alt="" style="width:100%;max-width:320px;height:160px;object-fit:cover;border-radius:10px;border:1px solid var(--border);display:block;margin-bottom:10px;background:var(--card-alt)" />
+      <form id="marketingContentForm">
+        <label data-i18n="owner_marketing_photo_label">Hero photo (optional — leave blank to keep the current one)<input type="file" name="photo" accept="image/*" /></label>
+        <label data-i18n="owner_marketing_title_label">Hero headline<input type="text" name="hero_title" data-i18n-placeholder="w_hero_title" placeholder="Your family's history, kept safe, shared with pride." /></label>
+        <label data-i18n="owner_marketing_desc_label">Hero description<textarea name="hero_desc" rows="3" data-i18n-placeholder="w_hero_desc"></textarea></label>
+        <button type="submit" data-i18n="save">Save</button>
+      </form>
+      <div id="marketingContentFeedback" class="hint"></div>
+    </div>
+
     <div style="padding:16px;background:var(--card);border-radius:10px;box-shadow:var(--shadow)">
       <button id="owner-change-password-btn" class="secondary" data-i18n="ep_change_password_title">Change password</button>
       <button id="owner-logout" data-i18n="admin_logout_btn">Logout</button>
@@ -422,6 +435,35 @@
     }
     document.querySelectorAll('#analytics-period-tabs button').forEach(btn=>{
       btn.addEventListener('click', ()=> loadAnalytics(btn.dataset.period));
+    });
+
+    async function loadMarketingContent(){
+      try{
+        const data = await api('/platform/marketing-content');
+        if (data.hero_image_path) document.getElementById('marketingHeroPreview').src = data.hero_image_path;
+        const form = document.getElementById('marketingContentForm');
+        if (data.hero_title) form.hero_title.value = data.hero_title;
+        if (data.hero_desc) form.hero_desc.value = data.hero_desc;
+      }catch(e){}
+    }
+    loadMarketingContent();
+
+    const marketingContentForm = document.getElementById('marketingContentForm');
+    if (marketingContentForm) marketingContentForm.addEventListener('submit', async (e)=>{
+      e.preventDefault();
+      const feedback = document.getElementById('marketingContentFeedback');
+      feedback.textContent = t('loading') || 'Saving...';
+      const form = new FormData();
+      const fileInput = marketingContentForm.querySelector('[name="photo"]');
+      if (fileInput.files && fileInput.files[0]) form.append('photo', fileInput.files[0]);
+      form.append('hero_title', marketingContentForm.hero_title.value || '');
+      form.append('hero_desc', marketingContentForm.hero_desc.value || '');
+      try{
+        const res = await fetch('/api/platform/marketing-content', { method:'POST', credentials:'same-origin', body: form });
+        const j = await res.json();
+        if (j.ok){ feedback.textContent = t('owner_marketing_saved'); await loadMarketingContent(); marketingContentForm.photo.value = ''; }
+        else feedback.textContent = j.error || t('ep_error_generic');
+      }catch(err){ feedback.textContent = t('network_error'); }
     });
 
     checkMustChangePassword();
