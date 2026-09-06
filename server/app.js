@@ -46,7 +46,7 @@ app.use(tenantMiddleware);
 app.use('/api', routes);
 
 // The platform's own marketing page lives at the bare root — but a request to a specific
-// family's own root (e.g. /f/najambeta/, which tenantMiddleware already rewrote down to
+// family's own root (e.g. /f/nahadjambethe/, which tenantMiddleware already rewrote down to
 // req.url === '/' by this point) must still reach that family's login page (login.html)
 // instead. req.familyFromPrefix (set by tenantMiddleware) is what tells the two apart, since
 // by now req.url alone can't.

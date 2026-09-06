@@ -8,7 +8,7 @@ const SLUG_RE = /^[a-z0-9]+(-[a-z0-9]+)*$/;
 function isValidSlug(slug) { return typeof slug === 'string' && slug.length <= 60 && SLUG_RE.test(slug); }
 function schemaNameForSlug(slug) { return `family_${slug.replace(/-/g, '_')}`; }
 
-const DEFAULT_FAMILY = { id: 'najambeta', slug: 'najambeta', schema_name: 'public', name: 'Nah Adja Mbethe', status: 'active' };
+const DEFAULT_FAMILY = { id: 'najambeta', slug: 'nahadjambethe', schema_name: 'public', name: 'Nah Adja Mbethe', status: 'active' };
 
 async function lookupFamilyBySlug(slug) {
   if (slug === DEFAULT_FAMILY.slug) return DEFAULT_FAMILY;
@@ -49,7 +49,7 @@ async function tenantMiddleware(req, res, next) {
     // true only when the request actually carried a /f/:slug prefix — distinct from "resolved
     // to the default family because there was no prefix at all". server/app.js uses this to
     // serve the platform's marketing page at a bare "/", while still serving Na Ajanbeta's own
-    // login page at "/f/najambeta/" (which also rewrites down to req.url === '/' by this point,
+    // login page at "/f/nahadjambethe/" (which also rewrites down to req.url === '/' by this point,
     // and would otherwise be indistinguishable from the bare-root case).
     req.familyFromPrefix = !!match;
 

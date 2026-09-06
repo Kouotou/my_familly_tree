@@ -398,17 +398,29 @@ async function ensurePlatformSchema() {
         review_note TEXT
       );
     `);
+    // one-time rename: the family ID was originally 'najambeta' — existing production rows
+    // still say that. A no-op on every run after the first, and must run *before* the insert
+    // below so a fresh database (nothing to rename yet) still ends up with the right slug.
+    await client.query(`UPDATE public.families SET slug = 'nahadjambethe' WHERE slug = 'najambeta'`);
     // Na Ajanbeta is family #1, living in the pre-existing 'public' schema — inserted once,
     // idempotently, so every existing deployment's data is immediately addressable the same
     // way any newly-approved family's data is.
     await client.query(
       `INSERT INTO public.families (id, slug, schema_name, name, status, created_at, approved_at)
-       VALUES ('najambeta', 'najambeta', 'public', 'Nah Adja Mbethe', 'active', NOW()::text, NOW()::text)
+       VALUES ('najambeta', 'nahadjambethe', 'public', 'Nah Adja Mbethe', 'active', NOW()::text, NOW()::text)
        ON CONFLICT (slug) DO NOTHING`
     );
     // one-time role rename: the platform owner used to be called 'superadmin' — existing
     // production rows still say that. A no-op on every run after the first.
     await client.query(`UPDATE public.users SET role = 'platform_owner' WHERE role = 'superadmin'`);
+    // one-time default: preserve Na Ajanbeta's existing hardcoded login-page photo as its
+    // *explicit* setting, now that the login page's fallback (see server/routes.js
+    // GET /settings/hero-image and public/login.html) is a neutral placeholder for any family
+    // that hasn't set their own yet — without this, Na Ajanbeta would suddenly show that
+    // placeholder too, since it never went through the new "admin uploads a photo" flow.
+    await client.query(
+      `INSERT INTO public.settings (key, value) VALUES ('hero_image_path', '/family-photo.jpg') ON CONFLICT (key) DO NOTHING`
+    );
     console.log('[db] platform schema ready (public.families, public.platform_requests)');
     await notifyExistingAdminsOfFamilyLinkOnce(client);
   } finally {
@@ -420,24 +432,26 @@ async function ensurePlatformSchema() {
 // credential reset (their existing username/password keep working unchanged), just pointing
 // them at the same `/f/<slug>/admin-login` link a newly-approved family's admin gets. Gated on
 // a settings flag in Na Ajanbeta's own (public) schema so it only ever sends once, however many
-// times the app cold-starts.
+// times the app cold-starts. Keyed 'v2' since the slug itself changed after the first notice
+// already went out (najambeta -> nahadjambethe) — this resends once with the corrected link,
+// rather than silently leaving admins with a now-broken bookmark from the first notice.
 async function notifyExistingAdminsOfFamilyLinkOnce(client) {
-  const flag = await client.query(`SELECT value FROM public.settings WHERE key = 'najambeta_link_notice_sent'`);
+  const flag = await client.query(`SELECT value FROM public.settings WHERE key = 'nahadjambethe_link_notice_sent_v2'`);
   if (flag.rows[0]) return;
   const admins = await client.query(
     `SELECT username, email FROM public.users WHERE role IN ('admin','platform_owner') AND email IS NOT NULL AND email != ''`
   );
   const base = process.env.PUBLIC_BASE_URL || '';
-  const link = `${base}/f/najambeta/admin-login`;
+  const link = `${base}/f/nahadjambethe/admin-login`;
   for (const a of admins.rows) {
     await sendEmail({
       to: a.email,
-      subject: '[Nah Adja Mbethe] Your admin login now has a dedicated link',
-      html: `<p>Hello ${a.username},</p><p>The platform now supports multiple families, each with its own dedicated web address. Yours is:</p><p><a href="${link}">${link}</a></p><p>Nothing else changes — your existing username and password keep working exactly as before. Bookmark this link going forward.</p>`,
+      subject: '[Nah Adja Mbethe] Your family\'s address has changed slightly',
+      html: `<p>Hello ${a.username},</p><p>Your family's dedicated web address is now:</p><p><a href="${link}">${link}</a></p><p>If you'd already bookmarked the previous "/f/najambeta/" link, please update it to this one instead. Nothing else changes — your existing username and password keep working exactly as before.</p>`,
     }).catch(() => {});
   }
   await client.query(
-    `INSERT INTO public.settings (key, value) VALUES ('najambeta_link_notice_sent', 'true') ON CONFLICT (key) DO UPDATE SET value = excluded.value`
+    `INSERT INTO public.settings (key, value) VALUES ('nahadjambethe_link_notice_sent_v2', 'true') ON CONFLICT (key) DO UPDATE SET value = excluded.value`
   );
 }
 

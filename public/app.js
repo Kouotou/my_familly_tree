@@ -38,12 +38,41 @@ function familyPrefix(){
     .catch(()=>{});
 })();
 
+// Every page load records itself onto an app-controlled trail in sessionStorage, and the back
+// button pops it — deliberately not relying on window.history.length/back(), which behaves
+// inconsistently across mobile browsers and in-app webviews (e.g. a link opened from WhatsApp/
+// Messenger, a very likely way this app gets shared) and isn't reliably "1" on a fresh tab's
+// very first page in every browser. This always resolves to wherever this visitor actually
+// came from within the app, regardless of which family's pages that was — never hardcoded to
+// any one family.
+const NAV_TRAIL_KEY = 'ft_nav_trail';
+(function recordNavTrail(){
+  try{
+    const trail = JSON.parse(sessionStorage.getItem(NAV_TRAIL_KEY) || '[]');
+    const here = location.pathname + location.search;
+    if (trail[trail.length - 1] !== here){
+      trail.push(here);
+      if (trail.length > 30) trail.shift();
+      sessionStorage.setItem(NAV_TRAIL_KEY, JSON.stringify(trail));
+    }
+  }catch(e){}
+})();
+
 (function initPageBackButton(){
   const btn = document.getElementById('page-back-btn');
   if (!btn) return;
   btn.addEventListener('click', ()=>{
-    if (window.history.length > 1) window.history.back();
-    else window.location.href = familyPrefix() + '/';
+    try{
+      const trail = JSON.parse(sessionStorage.getItem(NAV_TRAIL_KEY) || '[]');
+      trail.pop(); // this page
+      const previous = trail.pop();
+      if (previous){
+        sessionStorage.setItem(NAV_TRAIL_KEY, JSON.stringify(trail));
+        window.location.href = previous;
+        return;
+      }
+    }catch(e){}
+    window.location.href = familyPrefix() + '/';
   });
 })();
 

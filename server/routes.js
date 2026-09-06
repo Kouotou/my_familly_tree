@@ -1381,7 +1381,7 @@ router.get('/platform/families', wrap(async (req,res)=>{
 
 router.post('/platform/families/:id/suspend', wrap(async (req,res)=>{
   if (!requirePlatformOwner(req,res)) return;
-  await db.prepare("UPDATE public.families SET status = 'suspended' WHERE id = ? AND slug != 'najambeta'").run(req.params.id);
+  await db.prepare("UPDATE public.families SET status = 'suspended' WHERE id = ? AND slug != 'nahadjambethe'").run(req.params.id);
   res.json({ ok:true });
 }));
 

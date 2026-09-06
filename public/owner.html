@@ -318,7 +318,7 @@
           const row = document.createElement('div'); row.className = 'request-item';
           const statusKey = 'owner_family_status_' + f.status;
           row.innerHTML = `<strong>${f.name}</strong> <span style="color:var(--muted)">(${f.slug}) — ${f.owner_username||''} ${f.owner_email?('/ '+f.owner_email):''}</span> <span class="status-pill">${t(statusKey) || f.status}</span>`;
-          if (f.slug !== 'najambeta'){
+          if (f.slug !== 'nahadjambethe'){
             const actions = document.createElement('div'); actions.style.marginTop='8px';
             if (f.status === 'active'){
               const suspendBtn = document.createElement('button'); suspendBtn.className='secondary'; suspendBtn.textContent = t('owner_family_suspend_btn');
