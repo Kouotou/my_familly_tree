@@ -246,7 +246,7 @@
   async function drawOnCanvas(ctx, width, height, isDark, pageKey){
     pageKey = pageKey || 'tree';
     if (!SUBSETS[pageKey]) return;
-    const ink = isDark ? '#eef1f7' : '#3c2c1c';
+    const ink = isDark ? '#f1e6cc' : '#2b1b10';
     const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" `
       + `viewBox="0 0 ${width} ${height}" style="color:${ink}">` + innerMarkup(pageKey, width, height) + `</svg>`;
     const blob = new Blob([svg], { type: 'image/svg+xml;charset=utf-8' });

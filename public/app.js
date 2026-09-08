@@ -1411,19 +1411,19 @@ function assignRelativeX(node, leftEdge, gap, anchorId, nodeW){
 function getTreePalette(){
   const dark = document.body.classList.contains('dark');
   return dark ? {
-    cardBg: '#1e2531', cardBg2: '#232b3a', cardBorder: '#333c4d',
-    meBg: '#3a2f1c', meBorder: '#e0a458', rootBorder: '#f2bd76',
-    text: '#eef1f7', muted: '#93a0b5', spouseBar: '#e0a458', siblingDash: '#7f8aa0', connector: '#414c60',
-    infoBoxFill: 'rgba(224,164,88,0.16)', infoBoxStroke: '#e0a458', infoDot: '#f2bd76',
-    orphanLabel: '#7f8aa0', cardShadow: 'rgba(0,0,0,0.45)',
-    deceasedBg: '#4a2229', deceasedBorder: '#8f3a3a'
+    cardBg: '#1e2a38', cardBg2: '#243343', cardBorder: '#334354',
+    meBg: '#3a3220', meBorder: '#d4af5a', rootBorder: '#e2703c',
+    text: '#f1e6cc', muted: '#98a4b3', spouseBar: '#d4af5a', siblingDash: '#5c6b7a', connector: '#334354',
+    infoBoxFill: 'rgba(226,112,60,0.18)', infoBoxStroke: '#e2703c', infoDot: '#f2934f',
+    orphanLabel: '#7c8b9a', cardShadow: 'rgba(0,0,0,0.45)',
+    deceasedBg: '#2a2620', deceasedBorder: '#6b6055'
   } : {
-    cardBg: '#fffaf2', cardBg2: '#ffffff', cardBorder: '#e6d6ba',
-    meBg: '#fbead0', meBorder: '#c3924f', rootBorder: '#7a4a20',
-    text: '#3c2c1c', muted: '#8a7860', spouseBar: '#c3924f', siblingDash: '#a8927a', connector: '#c3ac86',
-    infoBoxFill: 'rgba(169,104,63,0.1)', infoBoxStroke: '#c3924f', infoDot: '#8a4f28',
-    orphanLabel: '#a49070', cardShadow: 'rgba(90,62,33,0.12)',
-    deceasedBg: '#fbe4e4', deceasedBorder: '#c96a6a'
+    cardBg: '#f7f0dd', cardBg2: '#fffdf6', cardBorder: '#c9ad75',
+    meBg: '#f1e0b8', meBorder: '#8a6e2e', rootBorder: '#9c3b23',
+    text: '#2b1b10', muted: '#6b5738', spouseBar: '#8a6e2e', siblingDash: '#b79b6b', connector: '#c9ad75',
+    infoBoxFill: 'rgba(156,59,35,0.12)', infoBoxStroke: '#9c3b23', infoDot: '#6e2417',
+    orphanLabel: '#8a7355', cardShadow: 'rgba(43,27,16,0.16)',
+    deceasedBg: '#ece5df', deceasedBorder: '#8a7a6e'
   };
 }
 
@@ -1525,7 +1525,7 @@ function renderTreeSVG(svg, tree, centerId, rootId){
     label.setAttribute('text-anchor','middle');
     label.setAttribute('font-size','13');
     label.setAttribute('fill', palette.orphanLabel);
-    label.setAttribute('font-family', "'Iowan Old Style','Palatino Linotype',Georgia,serif");
+    label.setAttribute('font-family', "'Zilla Slab',Georgia,serif");
     label.textContent = t('tree_other_profiles');
     g.appendChild(label);
   }
@@ -1723,7 +1723,7 @@ function renderTreeSVG(svg, tree, centerId, rootId){
       text.setAttribute('font-size', idx === 0 ? '13' : '12');
       text.setAttribute('font-weight', idx === 0 ? '700' : '500');
       text.setAttribute('fill', palette.text);
-      text.setAttribute('font-family', "'Iowan Old Style','Palatino Linotype',Georgia,serif");
+      text.setAttribute('font-family', "'Zilla Slab',Georgia,serif");
       text.textContent = line;
       group.appendChild(text);
     });
@@ -2024,7 +2024,7 @@ async function renderTreeToCanvas(includeCulturalBg){
   const ctx = canvas.getContext('2d');
   ctx.scale(scale, scale);
   const isDark = document.body.classList.contains('dark');
-  ctx.fillStyle = isDark ? '#1c2330' : '#fffaf2';
+  ctx.fillStyle = isDark ? '#1e2a38' : '#f7f0dd';
   ctx.fillRect(0,0,width,height);
 
   if (includeCulturalBg && window.CulturalBackground){
@@ -2032,16 +2032,17 @@ async function renderTreeToCanvas(includeCulturalBg){
     catch(e){ /* export still works without the decorative background */ }
   }
 
+  const familyName = window.CURRENT_FAMILY_NAME;
   const title = currentLang() === 'fr'
-    ? 'Arbre généalogique de la famille Nah Adja Mbethe'
-    : 'Family Tree of the Nah Adja Mbethe Family';
-  ctx.fillStyle = isDark ? '#eef1f7' : '#3c2c1c';
+    ? (familyName ? `Arbre généalogique de la famille ${familyName}` : 'Arbre généalogique')
+    : (familyName ? `Family Tree of the ${familyName} Family` : 'Family Tree');
+  ctx.fillStyle = isDark ? '#f1e6cc' : '#2b1b10';
   ctx.textAlign = 'center';
   ctx.textBaseline = 'alphabetic';
   let fontSize = 30;
   const maxTextWidth = width - 80;
   do{
-    ctx.font = `bold ${fontSize}px 'Iowan Old Style','Palatino Linotype',Georgia,serif`;
+    ctx.font = `bold ${fontSize}px 'Zilla Slab',Georgia,serif`;
     fontSize -= 1;
   } while (ctx.measureText(title).width > maxTextWidth && fontSize > 12);
   const titleY = titleAreaHeight/2 + 10;
