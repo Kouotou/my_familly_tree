@@ -1,8 +1,9 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" translate="no">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <meta name="google" content="notranslate" />
   <title>Owner Platform</title>
   <link rel="stylesheet" href="/styles.css">
 </head>
@@ -21,6 +22,9 @@
   <main style="max-width:900px;margin:24px auto;padding:12px">
     <div id="mustChangeNotice" class="hidden" style="padding:14px;background:var(--card);border:1px solid var(--accent-2);border-radius:10px;margin-bottom:16px">
       <strong data-i18n="must_change_password_notice">You must set a new password before continuing.</strong>
+    </div>
+    <div id="noOwnerEmailNotice" class="hidden" style="padding:14px;background:var(--card);border:1px solid var(--accent-2);border-radius:10px;margin-bottom:16px">
+      <strong data-i18n="owner_no_email_notice">You have not set a notification email yet — you will not receive any email for new family requests, deletion requests, or admin lockouts until you set one below.</strong>
     </div>
 
     <div style="padding:16px;background:var(--card);border-radius:10px;box-shadow:var(--shadow);margin-bottom:20px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px">
@@ -168,6 +172,7 @@
           document.getElementById('owner-change-password-modal').style.display = 'flex';
         }
         if (me.user && me.user.email) document.getElementById('owner-email-input').value = me.user.email;
+        else document.getElementById('noOwnerEmailNotice').classList.remove('hidden');
         // older sessions (from before this field existed) won't carry a username until the
         // next login — leave the field blank rather than showing something wrong
         if (me.user && me.user.username) document.getElementById('owner-username-input').value = me.user.username;
@@ -190,6 +195,7 @@
       feedback.textContent = '';
       const res = await api('/owner/email', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ email: document.getElementById('owner-email-input').value }) });
       feedback.textContent = res.ok ? t('owner_save_email_done') : (res.error || t('ep_error_generic'));
+      if (res.ok) document.getElementById('noOwnerEmailNotice').classList.add('hidden');
     });
 
     async function populateAdminFamilySelect(){

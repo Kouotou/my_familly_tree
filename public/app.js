@@ -38,6 +38,20 @@ function familyPrefix(){
     .catch(()=>{});
 })();
 
+// The header brand text (`[data-i18n="brand"]`/`admin_brand`, not `owner_brand` — the owner
+// dashboard is platform-wide, not any one family's) must show *this* family's own name, not a
+// fixed default — a family that just registered should never see another family's name at the
+// top of its own pages. Fetched once per load, same public/tenant-scoped pattern as the hero
+// photo above, then applied via applyI18n() (defined later in this file) so it's combined with
+// the right language and survives every future language toggle too, not just the first render.
+window.CURRENT_FAMILY_NAME = null;
+(function initBrandName(){
+  fetch(familyPrefix()+'/api/family/info', { credentials:'same-origin' })
+    .then(r=> r.ok ? r.json() : null)
+    .then(data=> { if (data && data.name){ window.CURRENT_FAMILY_NAME = data.name; if (typeof applyI18n === 'function') applyI18n(); } })
+    .catch(()=>{});
+})();
+
 // Every page load records itself onto an app-controlled trail in sessionStorage, and the back
 // button pops it — deliberately not relying on window.history.length/back(), which behaves
 // inconsistently across mobile browsers and in-app webviews (e.g. a link opened from WhatsApp/
@@ -2153,8 +2167,9 @@ if (themeToggle){
 // or data-i18n-placeholder (input placeholder); every JS-built string calls t(key). ---
 const I18N = {
   en: {
-    brand: 'Famille Nah Adja Mbethe',
-    admin_brand: 'Famille Nah Adja Mbethe — Admin',
+    brand: 'Family Tree',
+    admin_brand: 'Family Tree — Admin',
+    admin_brand_suffix: 'Admin',
     male: 'Male', female: 'Female', other: 'Other',
     save: 'Save', cancel: 'Cancel', close: 'Close', back: 'Back',
     network_error: 'Network error.',
@@ -2300,6 +2315,7 @@ const I18N = {
     owner_login_failed: 'Invalid owner credentials',
     owner_brand: 'Famille Nah Adja Mbethe — Owner',
     must_change_password_notice: 'You must set a new password before continuing.',
+    owner_no_email_notice: 'You have not set a notification email yet — you will not receive any email for new family requests, deletion requests, or admin lockouts until you set one below.',
     owner_admin_dashboard_heading: 'Family requests & the tree',
     owner_admin_dashboard_desc: 'Approve/reject requests, manage the root profile, and everything else an administrator can do.',
     owner_go_to_admin_btn: 'Go to Admin Dashboard →',
@@ -2617,8 +2633,9 @@ const I18N = {
     notif_empty: 'Nothing new yet.',
   },
   fr: {
-    brand: 'Famille Nah Adja Mbethe',
-    admin_brand: 'Famille Nah Adja Mbethe — Administration',
+    brand: 'Arbre Généalogique',
+    admin_brand: 'Arbre Généalogique — Administration',
+    admin_brand_suffix: 'Administration',
     male: 'Homme', female: 'Femme', other: 'Autre',
     save: 'Enregistrer', cancel: 'Annuler', close: 'Fermer', back: 'Retour',
     network_error: 'Erreur réseau.',
@@ -2764,6 +2781,7 @@ const I18N = {
     owner_login_failed: 'Identifiants propriétaire invalides',
     owner_brand: 'Famille Nah Adja Mbethe — Propriétaire',
     must_change_password_notice: 'Vous devez définir un nouveau mot de passe avant de continuer.',
+    owner_no_email_notice: "Vous n'avez pas encore défini d'adresse e-mail de notification — vous ne recevrez aucun e-mail pour les nouvelles demandes de famille, les demandes de suppression ou les verrouillages d'administrateur tant que vous n'en aurez pas défini une ci-dessous.",
     owner_admin_dashboard_heading: "Demandes familiales et l'arbre",
     owner_admin_dashboard_desc: "Approuver/rejeter les demandes, gérer le profil racine, et tout ce qu'un administrateur peut faire.",
     owner_go_to_admin_btn: "Aller au tableau de bord administrateur →",
@@ -3119,6 +3137,8 @@ function applyI18n(){
   const dict = I18N[currentLang()] || I18N.en;
   document.querySelectorAll('[data-i18n]').forEach(el=>{
     const key = el.getAttribute('data-i18n');
+    if (key === 'brand' && window.CURRENT_FAMILY_NAME){ applyI18nKey(el, window.CURRENT_FAMILY_NAME); return; }
+    if (key === 'admin_brand' && window.CURRENT_FAMILY_NAME){ applyI18nKey(el, `${window.CURRENT_FAMILY_NAME} — ${t('admin_brand_suffix')}`); return; }
     if (dict[key] !== undefined || I18N.en[key] !== undefined) applyI18nKey(el, t(key));
   });
   document.querySelectorAll('[data-i18n-placeholder]').forEach(el=>{

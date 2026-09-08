@@ -1414,6 +1414,8 @@ router.post('/families/request', express.json(), wrap(async (req,res)=>{
             `<strong>${familyName}</strong> (ID : ${slug}) a demandé la création d'une nouvelle famille, administrateur(trice) : ${adminUsername} (${adminEmail}).`)}</p><p><a href="${link}">${emailT(lang,'Review and respond','Examiner et répondre')}</a></p>`,
         });
       }
+    } else {
+      console.warn('[notify] no platform_owner has a notification email on file — skipped new-family-request email for', slug);
     }
   }catch(e){ console.error('[notify] failed', e && e.message || e); }
 }));
@@ -1441,6 +1443,8 @@ router.post('/families/deletion-request', express.json(), wrap(async (req,res)=>
             `<strong>${req.session.user.username}</strong>, un(e) administrateur(trice) de <strong>${req.family.name}</strong> (ID : ${req.family.slug}), a demandé la suppression de cette famille.`)}</p>`,
         });
       }
+    } else {
+      console.warn('[notify] no platform_owner has a notification email on file — skipped deletion-request email for', req.family.slug);
     }
   }catch(e){ console.error('[notify] failed', e && e.message || e); }
 }));
@@ -1765,6 +1769,14 @@ router.post('/admin/settings/hero-image', upload.single('photo'), wrap(async (re
 router.get('/settings/hero-image', wrap(async (req,res)=>{
   const url = await getSetting('hero_image_path');
   res.json({ url: url || null });
+}));
+
+// public: this family's own display name, for the header brand text (see initBrandName() in
+// app.js) — tenant-scoped the same way as everything above via req.family (set by the
+// tenant-resolution middleware from the request's /f/<slug> prefix), so a newly created family
+// sees its own name in its header rather than whatever family happens to be the default.
+router.get('/family/info', wrap(async (req,res)=>{
+  res.json({ name: req.family.name });
 }));
 
 // public: the current root profile, so the tree page knows where to anchor the layout
