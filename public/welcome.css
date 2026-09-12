@@ -9,24 +9,22 @@
 }
 .w-hero-text{ flex:1 1 420px; min-width:280px }
 .w-eyebrow{
-	display:flex; align-items:center; gap:10px; margin:0 0 16px;
-	color:var(--accent-strong); font-weight:700; font-size:12.5px; letter-spacing:0.14em; text-transform:uppercase;
+	display:inline-block; margin:0 0 12px; padding:6px 14px; border-radius:999px;
+	background:var(--accent-soft); color:var(--accent-strong); font-weight:700; font-size:13px; letter-spacing:0.3px;
 }
-.w-eyebrow::before{ content:''; display:block; width:26px; height:2px; background:var(--accent) }
 .w-hero-text h2{
-	font-family:var(--font-display); font-weight:600; font-size:44px; line-height:1.12; margin:0 0 18px; color:var(--text);
-	text-wrap:balance; letter-spacing:-0.01em;
+	font-family:var(--font-display); font-size:40px; line-height:1.15; margin:0 0 18px; color:var(--text);
 }
-.w-hero-desc{ color:var(--muted); font-size:16.5px; line-height:1.65; max-width:520px; margin:0 0 28px }
+.w-hero-desc{ color:var(--muted); font-size:16px; line-height:1.6; max-width:520px; margin:0 0 26px }
 .w-hero-actions{ display:flex; gap:14px; flex-wrap:wrap; align-items:center }
 .w-btn-primary{
-	display:inline-block; padding:13px 26px; border-radius:var(--rounded); text-decoration:none;
-	background:var(--accent); color:var(--btn-text); font-weight:700; font-size:15px;
-	border:var(--btn-border); box-shadow:var(--btn-shadow); transition:transform 150ms ease, box-shadow 150ms ease;
+	display:inline-block; padding:13px 24px; border-radius:999px; text-decoration:none;
+	background:linear-gradient(120deg,var(--accent),var(--accent-strong)); color:#fff8ee; font-weight:700; font-size:15px;
+	box-shadow:0 10px 22px var(--accent-soft); transition:transform 150ms ease, box-shadow 150ms ease;
 }
-.w-btn-primary:hover{ transform:translate(-2px,-2px); box-shadow:var(--btn-shadow-hover) }
+.w-btn-primary:hover{ transform:translateY(-2px); box-shadow:0 14px 28px var(--accent-soft) }
 .w-btn-ghost{
-	display:inline-block; padding:12px 22px; border-radius:var(--rounded); text-decoration:none;
+	display:inline-block; padding:12px 20px; border-radius:999px; text-decoration:none;
 	color:var(--accent-strong); font-weight:700; font-size:15px; border:1.5px solid var(--border);
 	transition:border-color 150ms ease, background 150ms ease;
 }
@@ -52,27 +50,19 @@
 }
 #w-family-jump-form button{ margin-top:0; padding:10px 20px; font-size:14px }
 
-/* --- About / Mission / Vision — styled as three ledger entries (a left accent spine,
-   like a record card's binding edge) rather than a generic centered icon-card grid. --- */
+/* --- About / Mission / Vision --- */
 .w-about{ display:grid; grid-template-columns:repeat(3, 1fr); gap:20px; padding:24px 0 56px }
 .w-about-card{
-	background:var(--card); border:1px solid var(--border); border-radius:var(--rounded);
-	box-shadow:var(--shadow-sm); padding:24px 24px 24px 22px; position:relative; overflow:hidden;
+	background:var(--card); border:1px solid var(--border); border-radius:var(--rounded-lg);
+	box-shadow:var(--shadow-sm); padding:26px; position:relative;
 }
-.w-about-card::before{
-	content:''; position:absolute; top:0; left:0; bottom:0; width:4px; background:var(--accent);
-}
-.w-about-icon{
-	display:inline-flex; align-items:center; justify-content:center; width:38px; height:38px;
-	border-radius:50%; border:1.5px solid var(--accent); color:var(--accent); background:var(--accent-soft);
-	margin-bottom:14px;
-}
-.w-about-card h3{ margin:0 0 10px; font-family:var(--font-display); font-weight:600; font-size:20px }
+.w-about-icon{ font-size:28px; display:block; margin-bottom:10px }
+.w-about-card h3{ margin:0 0 10px; font-family:var(--font-display); font-size:20px }
 .w-about-card p{ margin:0; color:var(--muted); font-size:14.5px; line-height:1.6 }
 
 /* --- How it works --- */
 .w-how{ padding:16px 0 56px }
-.w-how h2{ font-family:var(--font-display); font-weight:600; font-size:30px; margin:0 0 6px; text-align:center }
+.w-how h2{ font-family:var(--font-display); font-size:30px; margin:0 0 6px; text-align:center }
 .w-how-sub{ color:var(--muted); text-align:center; margin:0 0 26px }
 .w-how-tabs{ justify-content:center; margin-bottom:24px }
 .w-how-panel{
@@ -80,25 +70,10 @@
 }
 .w-how-item{
 	background:var(--card); border:1px solid var(--border); border-radius:var(--rounded);
-	box-shadow:var(--shadow-sm); padding:20px 20px 20px 18px; position:relative; overflow:hidden;
+	box-shadow:var(--shadow-sm); padding:20px;
 }
-.w-how-item::before{
-	content:''; position:absolute; top:0; left:0; bottom:0; width:4px; background:var(--accent-2);
-}
-.w-how-item h4{ margin:0 0 8px; font-family:var(--font-display); font-weight:600; font-size:16px; color:var(--accent-strong) }
+.w-how-item h4{ margin:0 0 8px; font-size:15.5px; color:var(--accent-strong) }
 .w-how-item p{ margin:0; color:var(--muted); font-size:14px; line-height:1.55 }
-
-/* --- Woven divider: a narrow criss-cross weave between sections, standing in for both
-   a plain hairline rule and the soft drop-shadow card edge every template uses. Built
-   from the theme's own tokens (two repeating diagonal gradients, not a raster image) so
-   it re-colors with the theme automatically, light or dark. --- */
-.w-divider{
-	height:12px; margin:8px 0 40px; border-radius:3px; opacity:0.8;
-	background:
-		repeating-linear-gradient(45deg, var(--accent) 0 4px, transparent 4px 9px),
-		repeating-linear-gradient(-45deg, var(--accent-2) 0 4px, transparent 4px 9px),
-		var(--border);
-}
 
 /* --- Closing CTA --- */
 .w-closing{
@@ -106,9 +81,9 @@
 	background:linear-gradient(120deg, var(--topbar-grad-1), var(--topbar-grad-2));
 	box-shadow:var(--shadow);
 }
-.w-closing h2{ font-family:var(--font-display); font-weight:600; color:var(--topbar-text); margin:0 0 8px; font-size:26px }
+.w-closing h2{ font-family:var(--font-display); color:var(--topbar-text); margin:0 0 8px; font-size:26px }
 .w-closing p{ color:var(--topbar-text); opacity:0.85; margin:0 0 20px }
-.w-closing .w-btn-primary{ background:#f2e4c4; color:#1b2432; border-color:#1b2432; box-shadow:3px 3px 0 rgba(0,0,0,0.35) }
+.w-closing .w-btn-primary{ background:#fff8ee; color:var(--accent-strong); box-shadow:0 10px 22px rgba(0,0,0,0.2) }
 
 @media (max-width:720px){
 	.w-hero{ padding:32px 0 24px; gap:28px }
