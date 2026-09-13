@@ -986,7 +986,13 @@ setupParentMatcher('mother');
   };
   form.addEventListener('input', refresh);
   form.addEventListener('change', refresh);
-  refresh();
+  // t()/I18N (used by refresh(), via reasonFor()/nameFor()) are declared later in this same
+  // script, so calling refresh() synchronously here — before that declaration has run —
+  // would throw a TDZ ReferenceError and, worse, abort the rest of this script from ever
+  // running at all (an uncaught error during a script's own top-level execution stops
+  // everything after it in that file, not just this IIFE). Deferred a tick so it runs after
+  // the whole file — I18N included — has finished loading.
+  setTimeout(refresh, 0);
 })();
 
 // "Are you an heir?" — only meaningful once a father/mother has been matched to an existing
