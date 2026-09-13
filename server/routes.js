@@ -175,7 +175,7 @@ async function notifyAdmins(req, { buildContent, highlightParam, highlightId }){
     for (const [lang, emails] of Object.entries(groups)){
       const { subject, bodyHtml } = buildContent(lang);
       const reviewLink = emailT(lang, 'Review and respond', 'Examiner et répondre');
-      await sendEmail({ to: emails, subject: `[${req.family.name}] ${subject}`, html: `${bodyHtml}<p><a href="${link}">${reviewLink}</a></p>` });
+      await sendEmail({ to: emails, subject: `[${req.family.name}] ${subject}`, html: `${bodyHtml}<p><a href="${link}">${reviewLink}</a></p>`, fromName: req.family.name });
     }
   }catch(e){ console.error('[notify] failed', e && e.message || e); }
 }
@@ -193,7 +193,7 @@ async function notifyMembers(req, { buildContent, link }){
     for (const [lang, emails] of Object.entries(groups)){
       const { subject, bodyHtml } = buildContent(lang);
       const viewLink = emailT(lang, 'View it', 'Voir');
-      await sendEmail({ to: emails, subject: `[${req.family.name}] ${subject}`, html: `${bodyHtml}<p><a href="${fullLink}">${viewLink}</a></p>` });
+      await sendEmail({ to: emails, subject: `[${req.family.name}] ${subject}`, html: `${bodyHtml}<p><a href="${fullLink}">${viewLink}</a></p>`, fromName: req.family.name });
     }
   }catch(e){ console.error('[notify] failed', e && e.message || e); }
 }
@@ -322,6 +322,7 @@ router.post('/auth/admin-password-reset-request', express.json(), wrap(async (re
           html: `<p>${emailT(lang,
             `<strong>${username}</strong> is locked out and has requested a password reset.`,
             `<strong>${username}</strong> est bloqué(e) et a demandé une réinitialisation de mot de passe.`)}</p><p><a href="${link}">${emailT(lang,'Review and resolve','Examiner et résoudre')}</a></p>`,
+          fromName: req.family.name,
         }).catch(()=>{});
       }
     }
@@ -1216,6 +1217,7 @@ async function resetAdminPasswordAndNotify(dbLike, userId, familyName){
       to: user.email,
       subject: emailT(lang, `Your administrator password has been reset${familyName ? ` (${familyName})` : ''}`, `Votre mot de passe administrateur a été réinitialisé${familyName ? ` (${familyName})` : ''}`),
       html: `<p>${emailT(lang, 'Your password has been reset by the platform owner.', 'Votre mot de passe a été réinitialisé par le propriétaire de la plateforme.')}</p>${credentialBlockHtml(user.username, tempPassword, lang)}<p>${emailT(lang, "You'll be asked to set a new password when you next log in.", 'Il vous sera demandé de définir un nouveau mot de passe lors de votre prochaine connexion.')}</p>`,
+      fromName: familyName || undefined,
     }).catch(()=>{});
   }
 }
@@ -1267,6 +1269,7 @@ router.post('/platform/admins/create', express.json(), wrap(async (req,res)=>{
     to: email,
     subject: emailT(lang, `You have been added as an administrator for ${family.name}`, `Vous avez été ajouté(e) comme administrateur(trice) pour ${family.name}`),
     html: `<p>${emailT(lang, `You've been added as an administrator for <strong>${family.name}</strong>.`, `Vous avez été ajouté(e) comme administrateur(trice) pour <strong>${family.name}</strong>.`)}</p>${credentialBlockHtml(username, tempPassword, lang)}<p>${emailT(lang, "You'll be asked to set a new password the first time you log in.", 'Il vous sera demandé de définir un nouveau mot de passe lors de votre première connexion.')}</p><p><a href="${link}">${link}</a></p>`,
+    fromName: family.name,
   }).catch(()=>{});
   res.json({ ok:true, id });
 }));
@@ -1473,6 +1476,7 @@ router.post('/families/deletion-request', express.json(), wrap(async (req,res)=>
           html: `<p>${emailT(lang,
             `<strong>${req.session.user.username}</strong>, an admin of <strong>${req.family.name}</strong> (ID: ${req.family.slug}), has requested this family be deleted.`,
             `<strong>${req.session.user.username}</strong>, un(e) administrateur(trice) de <strong>${req.family.name}</strong> (ID : ${req.family.slug}), a demandé la suppression de cette famille.`)}</p>`,
+          fromName: req.family.name,
         });
       }
     } else {
@@ -2068,6 +2072,7 @@ router.post('/archive', upload.array('files', 10), wrap(async (req,res)=>{
           html: `<p>${emailT(lang,
             `<strong>${posterName}</strong> posted a ${typeLabel} to the archive.`,
             `<strong>${posterName}</strong> a publié un(e) ${typeLabel} dans les archives.`)}</p><p><a href="${link}">${emailT(lang,'Review and respond','Examiner et répondre')}</a></p>`,
+          fromName: req.family.name,
         });
       }
     }
@@ -2259,6 +2264,7 @@ router.post('/events', express.json(), wrap(async (req,res)=>{
           html: `<p>${emailT(lang,
             `<strong>${posterName}</strong> proposed a new event: <strong>${title}</strong>.`,
             `<strong>${posterName}</strong> a proposé un nouvel événement : <strong>${title}</strong>.`)}</p><p><a href="${link}">${emailT(lang,'Review and respond','Examiner et répondre')}</a></p>`,
+          fromName: req.family.name,
         });
       }
     }
@@ -2458,6 +2464,7 @@ async function processEventRemindersForFamily(req, family){
               `<strong>${ev.title}</strong> is coming up in ${thresholdLabel} — ${new Date(ev.event_at).toLocaleString()}${ev.location ? ` at ${ev.location}` : ''}.`,
               `<strong>${ev.title}</strong> arrive dans ${thresholdLabel} — le ${new Date(ev.event_at).toLocaleString()}${ev.location ? ` à ${ev.location}` : ''}.`)}</p>`
               + `<p><a href="${req.protocol}://${req.get('host')}/f/${family.slug}/archives.html?tab=events&highlight=${ev.id}">${emailT(lang,'View details','Voir les détails')}</a></p>`,
+            fromName: family.name,
           });
           sent++;
         }catch(e){ console.error('[cron] reminder email failed', e && e.message || e); }

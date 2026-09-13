@@ -14,6 +14,14 @@ const nodemailer = require('nodemailer');
 const GMAIL_USER = process.env.GMAIL_USER;
 const GMAIL_APP_PASSWORD = process.env.GMAIL_APP_PASSWORD;
 
+// The display name on the "From" line — platform brand by default, but every call site that's
+// actually about one specific family's own activity (a post, a request, an approval inside
+// their own space) passes that family's own name instead via `fromName`, so members feel the
+// email as personal to their own family rather than as generic platform mail. Only genuinely
+// platform-level mail (a brand-new family's own creation request/approval, before or outside
+// of it having its own identity here yet) uses this default.
+const PLATFORM_BRAND = 'Africa Family Trees';
+
 let transporter = null;
 function getTransporter(){
   if (!GMAIL_USER || !GMAIL_APP_PASSWORD) return null;
@@ -44,7 +52,7 @@ function withTimeout(promise, ms){
   });
 }
 
-async function sendEmail({ to, subject, html }) {
+async function sendEmail({ to, subject, html, fromName }) {
   const recipients = (Array.isArray(to) ? to : [to]).filter(Boolean);
   if (!recipients.length) return { skipped: true, reason: 'no recipients' };
   const t = getTransporter();
@@ -53,7 +61,7 @@ async function sendEmail({ to, subject, html }) {
     return { skipped: true, reason: 'no credentials' };
   }
   const result = await withTimeout(
-    t.sendMail({ from: `Nah Adja Mbethe Family Tree <${GMAIL_USER}>`, to: recipients.join(', '), subject, html })
+    t.sendMail({ from: `${fromName || PLATFORM_BRAND} <${GMAIL_USER}>`, to: recipients.join(', '), subject, html })
       .then(info => ({ ok: true, info })),
     SEND_TIMEOUT_MS
   );
@@ -69,4 +77,4 @@ async function sendEmail({ to, subject, html }) {
   return { ok: false };
 }
 
-module.exports = { sendEmail };
+module.exports = { sendEmail, PLATFORM_BRAND };
