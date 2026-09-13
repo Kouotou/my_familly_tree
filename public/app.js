@@ -928,16 +928,62 @@ setupParentMatcher('mother');
 // the father/mother photos in the "new person" sub-forms)
 ['reg-photo', 'father_photo', 'mother_photo'].forEach(id => attachPhotoCropper(document.getElementById(id)));
 
-// submit stays grayed out until every required field (username, password, full name,
-// father's and mother's name — the native `required` attributes already on those inputs)
-// is filled *and* both consent checkboxes are ticked. Uses the form's own native validity
-// rather than re-listing which fields matter a second time in JS, so this can't drift out of
-// sync with whichever fields actually carry `required` in the markup.
+// Submit stays grayed out until every required field (username, password, full name,
+// birth date, father's and mother's name, both consent checkboxes) is filled — and the
+// optional email, if given, actually looks like one. This used to just disable the button
+// on the form's own native validity with no explanation, which meant a single mistyped
+// field (an invalid email, a date the browser didn't parse) left someone unable to submit
+// with no visible reason why — a disabled button never triggers the browser's own "please
+// fill this out" bubble, since it can't be clicked at all. Now it lists exactly what's
+// still wrong in plain language instead, refreshed live as the form changes. Finds invalid
+// fields via :invalid rather than re-listing which ones matter a second time in JS, so a
+// future required field added to the markup can't silently go uncovered.
 (function setupSubmitGate(){
   const form = document.getElementById('register-form');
   const submitBtn = document.getElementById('reg-submit-btn');
-  if (!form || !submitBtn) return;
-  const refresh = ()=>{ submitBtn.disabled = !form.checkValidity(); };
+  const checklist = document.getElementById('reg-submit-checklist');
+  if (!form || !submitBtn || !checklist) return;
+
+  // short, checklist-friendly name for a field — falls back to its own <label> text (with
+  // the "*" required-marker and any parenthetical stripped) for anything not listed here,
+  // so a field added later still gets a reasonable remark instead of none at all.
+  const FIELD_NAME_KEYS = {
+    'reg-username': 'reg_field_username',
+    'reg-password': 'reg_field_password',
+    'reg-fullname': 'reg_field_fullname',
+    'reg-birthdate': 'reg_field_birthdate',
+    'father_name': 'reg_field_father_name',
+    'mother_name': 'reg_field_mother_name',
+    'reg-email': 'reg_field_email',
+    'reg-consent-accurate': 'reg_field_consent_accurate',
+    'reg-consent-wait': 'reg_field_consent_wait',
+  };
+  function nameFor(el){
+    const key = FIELD_NAME_KEYS[el.id];
+    if (key) return t(key);
+    const label = el.closest('label') || (el.id && form.querySelector(`label[for="${el.id}"]`));
+    return label ? label.textContent.replace(/\*/g, '').replace(/\(.*?\)/g, '').trim() : (el.name || el.id || '');
+  }
+  function reasonFor(el){
+    const name = nameFor(el);
+    if (el.validity.valueMissing) return t(el.type === 'checkbox' ? 'reg_check_required' : 'reg_fill_required', { name });
+    if (el.validity.typeMismatch || el.validity.patternMismatch) return t('reg_fix_format', { name });
+    return t('reg_fix_field', { name });
+  }
+
+  const refresh = ()=>{
+    // display:none-barred fields are already excluded from :invalid by the browser itself
+    // (an unmatched parent's hidden "new person" sub-fields carry no `required` anyway) —
+    // this activeElement/offsetParent check is just a defensive backstop for any embedded
+    // webview that's looser about that than a normal browser.
+    const invalid = Array.from(form.querySelectorAll(':invalid'))
+      .filter(el => el.offsetParent !== null || el === document.activeElement);
+    submitBtn.disabled = invalid.length > 0;
+    if (!invalid.length){ checklist.classList.add('hidden'); checklist.innerHTML = ''; return; }
+    checklist.classList.remove('hidden');
+    checklist.innerHTML = `<strong style="color:var(--accent-strong)">${t('reg_submit_checklist_heading')}</strong><ul style="margin:4px 0 0;padding-left:20px;color:var(--text)">`
+      + invalid.map(el => `<li>${reasonFor(el)}</li>`).join('') + `</ul>`;
+  };
   form.addEventListener('input', refresh);
   form.addEventListener('change', refresh);
   refresh();
@@ -2295,6 +2341,20 @@ const I18N = {
     reg_submit_btn: 'Submit registration (pending admin approval)',
     reg_back_link: 'Back to login',
     reg_submitting: 'Submitting...',
+    reg_submit_checklist_heading: "Before you can submit, please:",
+    reg_fill_required: 'Fill in: {name}.',
+    reg_check_required: 'Check the box: {name}.',
+    reg_fix_format: '"{name}" doesn’t look valid — please check it.',
+    reg_fix_field: 'Fix: {name}.',
+    reg_field_username: 'Username',
+    reg_field_password: 'Password',
+    reg_field_fullname: 'Your full name',
+    reg_field_birthdate: 'Your birth date',
+    reg_field_father_name: "Father's full name",
+    reg_field_mother_name: "Mother's full name",
+    reg_field_email: 'Email address',
+    reg_field_consent_accurate: 'the confirmation that your information is accurate',
+    reg_field_consent_wait: "the confirmation that you'll wait for admin approval",
     reg_submitted_ok: 'Registration submitted and pending admin approval.',
     reg_error_generic: 'Something went wrong. Please try again.',
     parent_search_btn: 'Search',
@@ -2785,6 +2845,20 @@ const I18N = {
     reg_submit_btn: "Soumettre l'inscription (en attente d'approbation)",
     reg_back_link: 'Retour à la connexion',
     reg_submitting: 'Envoi en cours...',
+    reg_submit_checklist_heading: 'Avant de pouvoir soumettre, veuillez :',
+    reg_fill_required: 'Remplir : {name}.',
+    reg_check_required: 'Cocher la case : {name}.',
+    reg_fix_format: '« {name} » ne semble pas valide — veuillez vérifier.',
+    reg_fix_field: 'Corriger : {name}.',
+    reg_field_username: "Nom d'utilisateur",
+    reg_field_password: 'Mot de passe',
+    reg_field_fullname: 'Votre nom complet',
+    reg_field_birthdate: 'Votre date de naissance',
+    reg_field_father_name: 'Le nom complet du père',
+    reg_field_mother_name: 'Le nom complet de la mère',
+    reg_field_email: 'Adresse email',
+    reg_field_consent_accurate: 'la confirmation que vos informations sont exactes',
+    reg_field_consent_wait: "la confirmation que vous attendrez l'approbation de l'administrateur",
     reg_submitted_ok: "Inscription soumise et en attente d'approbation par l'administrateur.",
     reg_error_generic: "Une erreur s'est produite. Veuillez réessayer.",
     parent_search_btn: 'Rechercher',
