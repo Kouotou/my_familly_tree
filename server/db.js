@@ -351,6 +351,11 @@ async function ensureSchema(schemaIdent) {
       ALTER TABLE archive ADD COLUMN IF NOT EXISTS reviewed_by TEXT;
       ALTER TABLE archive ADD COLUMN IF NOT EXISTS reviewed_at TEXT;
       ALTER TABLE archive ADD COLUMN IF NOT EXISTS event_type TEXT;
+      -- total bytes of the file(s) behind this post (sum of all photos in a multi-photo
+      -- post, or the one audio file) — null for video posts (a YouTube link costs us no
+      -- storage) and for any post created before this column existed. Powers the owner's
+      -- per-family storage-usage view (GET /platform/families/:id/stats in routes.js).
+      ALTER TABLE archive ADD COLUMN IF NOT EXISTS file_size BIGINT;
       ALTER TABLE requests ADD COLUMN IF NOT EXISTS resolved_person_id TEXT;
       ALTER TABLE users ADD COLUMN IF NOT EXISTS email TEXT;
       ALTER TABLE users ADD COLUMN IF NOT EXISTS must_change_password BOOLEAN DEFAULT false;

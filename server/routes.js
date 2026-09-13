@@ -1362,6 +1362,25 @@ router.post('/owner/password-reset-requests/:id/resolve', express.json(), wrap(a
   res.json({ ok:true });
 }));
 
+// dismiss a pending reset request without touching the admin's password — for when the
+// owner already handled it out of band (e.g. reset the password directly from the
+// Administrators list above) and the request is just stale clutter at this point.
+router.post('/owner/password-reset-requests/:id/reject', express.json(), wrap(async (req,res)=>{
+  if (!requirePlatformOwner(req,res)) return;
+  const familySlug = (req.body && req.body.family_slug) || '';
+  const family = await db.prepare('SELECT * FROM public.families WHERE slug = ?').get(familySlug);
+  if (!family) return res.status(404).json({ error: 'Family not found.' });
+  let found = false;
+  await db.withTenant(family.schema_name, async () => {
+    const reqRow = await db.prepare("SELECT id FROM requests WHERE id = ? AND status = 'pending'").get(req.params.id);
+    if (!reqRow) return;
+    found = true;
+    await db.prepare('UPDATE requests SET status = ?, reviewed_by = ?, reviewed_at = ? WHERE id = ?').run('rejected', req.session.user.id, now(), req.params.id);
+  });
+  if (!found) return res.status(404).json({ error: 'not found' });
+  res.json({ ok:true });
+}));
+
 // --- platform-level: anyone can request a new family, the platform owner approves/rejects
 // from owner.html's "Families" tab. These routes deliberately touch only `public.families` and
 // `public.platform_requests` (both explicitly schema-qualified, never relying on whatever
@@ -1532,6 +1551,67 @@ router.get('/platform/families', wrap(async (req,res)=>{
   if (!requirePlatformOwner(req,res)) return;
   const rows = await db.prepare('SELECT * FROM public.families ORDER BY created_at DESC').all();
   res.json(rows);
+}));
+
+// a single family's own details, for the owner to review without ever stepping inside that
+// family's private space (no member names, no tree content, no archive contents — just
+// counts and the one thing an admin might actually call in to ask about: their own username
+// and this family's own ID/slug). `families.owner_username` only ever reflects who was named
+// at creation time and goes stale the moment admins are added/removed via /platform/admins,
+// so this re-reads the tenant's own `users` table live instead of trusting that column.
+router.get('/platform/families/:id/stats', wrap(async (req,res)=>{
+  if (!requirePlatformOwner(req,res)) return;
+  const family = await db.prepare('SELECT * FROM public.families WHERE id = ?').get(req.params.id);
+  if (!family) return res.status(404).json({ error: 'Family not found.' });
+
+  const stats = await db.withTenant(family.schema_name, async () => {
+    const admins = await db.prepare(
+      "SELECT username, email, created_at, must_change_password FROM users WHERE role = 'admin' ORDER BY created_at ASC"
+    ).all();
+    const people = await db.prepare(`
+      SELECT
+        COUNT(*) FILTER (WHERE approval_status = 'approved')::int AS approved,
+        COUNT(*) FILTER (WHERE approval_status = 'pending')::int AS pending,
+        COUNT(*) FILTER (WHERE approval_status = 'approved' AND gender = 'male')::int AS male,
+        COUNT(*) FILTER (WHERE approval_status = 'approved' AND gender = 'female')::int AS female,
+        COUNT(*) FILTER (WHERE approval_status = 'approved' AND (gender IS NULL OR gender NOT IN ('male','female')))::int AS other,
+        COUNT(*) FILTER (WHERE approval_status = 'approved' AND death_date IS NOT NULL AND death_date <> '')::int AS deceased
+      FROM people
+    `).get();
+    const members = await db.prepare(`
+      SELECT
+        COUNT(*) FILTER (WHERE must_change_password = false)::int AS active,
+        COUNT(*) FILTER (WHERE must_change_password = true)::int AS pending
+      FROM users WHERE role = 'member'
+    `).get();
+    const mediaRows = await db.prepare(
+      "SELECT type, COUNT(*)::int AS count, COALESCE(SUM(file_size),0)::bigint AS bytes FROM archive GROUP BY type"
+    ).all();
+    const lastActivity = await db.prepare('SELECT MAX(created_at) AS last FROM archive').get();
+    return { admins, people, members, mediaRows, lastActivity: lastActivity ? lastActivity.last : null };
+  });
+
+  const media = { photo: { count: 0, bytes: 0 }, audio: { count: 0, bytes: 0 }, video: { count: 0, bytes: 0 } };
+  let totalBytes = 0;
+  stats.mediaRows.forEach(r => {
+    if (media[r.type]) { media[r.type] = { count: r.count, bytes: Number(r.bytes) }; totalBytes += Number(r.bytes); }
+  });
+
+  const createdAt = family.created_at ? new Date(family.created_at) : null;
+  const daysSinceCreated = createdAt ? Math.max(0, Math.floor((Date.now() - createdAt.getTime()) / 86400000)) : null;
+
+  res.json({
+    family: {
+      id: family.id, name: family.name, slug: family.slug, status: family.status,
+      created_at: family.created_at, approved_at: family.approved_at, days_since_created: daysSinceCreated,
+    },
+    admins: stats.admins,
+    people: stats.people,
+    members: stats.members,
+    media,
+    total_bytes: totalBytes,
+    last_activity: stats.lastActivity,
+  });
 }));
 
 router.post('/platform/families/:id/suspend', wrap(async (req,res)=>{
@@ -1936,24 +2016,28 @@ router.post('/archive', upload.array('files', 10), wrap(async (req,res)=>{
   const type = body.type;
   if (!['photo','audio','video'].includes(type)) return res.status(400).json({ error: 'invalid type' });
 
-  let filePath = null, url = null;
+  let filePath = null, url = null, fileSize = null;
   if (type === 'video'){
     if (!body.url) return res.status(400).json({ error: 'A YouTube link is required.' });
     if (!extractYouTubeId(body.url)) return res.status(400).json({ error: "That doesn't look like a valid YouTube link." });
     url = body.url;
   } else if (type === 'audio'){
-    // already uploaded directly to Blob by the browser — see POST /archive/upload-token
+    // already uploaded directly to Blob by the browser — see POST /archive/upload-token.
+    // The browser already knows the File object's size before upload, so it's simplest for
+    // it to just report that back here rather than the server re-fetching the blob to ask.
     if (!body.file_url) return res.status(400).json({ error: 'An audio file is required.' });
     filePath = body.file_url;
+    fileSize = Number.isFinite(Number(body.file_size)) ? Number(body.file_size) : null;
   } else {
     if (!req.files || !req.files.length) return res.status(400).json({ error: 'At least one photo is required.' });
     const urls = await Promise.all(req.files.map(f => uploadPhoto(f, 'archive')));
     filePath = JSON.stringify(urls);
+    fileSize = req.files.reduce((sum, f) => sum + f.size, 0);
   }
 
   const id = uuidv4();
-  await db.prepare('INSERT INTO archive (id, title, url, description, file_path, type, person_id, created_by, created_at, approval_status, event_type) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
-    .run(id, null, url, body.description || null, filePath, type, req.session.user.person_id, req.session.user.id, now(), 'pending', body.event_type || null);
+  await db.prepare('INSERT INTO archive (id, title, url, description, file_path, type, person_id, created_by, created_at, approval_status, event_type, file_size) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
+    .run(id, null, url, body.description || null, filePath, type, req.session.user.person_id, req.session.user.id, now(), 'pending', body.event_type || null, fileSize);
   res.json({ ok:true, id });
   const poster = await db.prepare('SELECT full_name FROM people WHERE id = ?').get(req.session.user.person_id);
   try{
@@ -1990,23 +2074,27 @@ router.post('/archive/:id/edit', upload.array('files', 10), wrap(async (req,res)
   if (row.person_id !== req.session.user.person_id) return res.status(403).json({ error: 'forbidden' });
 
   const body = req.body || {};
-  let filePath = row.file_path, url = row.url;
+  let filePath = row.file_path, url = row.url, fileSize = row.file_size;
   if (row.type === 'video'){
     if (body.url) {
       if (!extractYouTubeId(body.url)) return res.status(400).json({ error: "That doesn't look like a valid YouTube link." });
       url = body.url;
     }
   } else if (row.type === 'audio'){
-    if (body.file_url) filePath = body.file_url;
+    if (body.file_url) {
+      filePath = body.file_url;
+      fileSize = Number.isFinite(Number(body.file_size)) ? Number(body.file_size) : null;
+    }
   } else if (row.type === 'photo'){
     if (req.files && req.files.length){
       const urls = await Promise.all(req.files.map(f => uploadPhoto(f, 'archive')));
       filePath = JSON.stringify(urls);
+      fileSize = req.files.reduce((sum, f) => sum + f.size, 0);
     }
   }
 
-  await db.prepare("UPDATE archive SET description = ?, url = ?, file_path = ?, event_type = ?, approval_status = 'pending', reviewed_by = NULL, reviewed_at = NULL WHERE id = ?")
-    .run(body.description || null, url, filePath, body.event_type || row.event_type || null, id);
+  await db.prepare("UPDATE archive SET description = ?, url = ?, file_path = ?, event_type = ?, file_size = ?, approval_status = 'pending', reviewed_by = NULL, reviewed_at = NULL WHERE id = ?")
+    .run(body.description || null, url, filePath, body.event_type || row.event_type || null, fileSize, id);
   res.json({ ok:true });
 }));
 

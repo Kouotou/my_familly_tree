@@ -509,7 +509,7 @@
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               credentials: 'same-origin',
-              body: JSON.stringify(editingItem ? { description, event_type: eventType, file_url: fileUrl || undefined } : { type, description, event_type: eventType, file_url: fileUrl }),
+              body: JSON.stringify(editingItem ? { description, event_type: eventType, file_url: fileUrl || undefined, file_size: f ? f.size : undefined } : { type, description, event_type: eventType, file_url: fileUrl, file_size: f ? f.size : undefined }),
             });
             const j = await res.json();
             if (j.ok){ track('archive_post'); feedback.textContent = t('np_submitted_ok'); setTimeout(()=>{ modal.style.display='none'; loadTab(currentTab); }, 1400); }

@@ -145,6 +145,15 @@
         </div>
       </div>
     </div>
+
+    <!-- family detail: everything an owner might need without ever entering the family's
+         own private space (no member names, no tree/archive contents — counts only) -->
+    <div id="family-detail-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.45);align-items:center;justify-content:center;z-index:75;padding:20px">
+      <div style="background:var(--card);padding:22px;border-radius:12px;max-width:560px;width:100%;max-height:88vh;overflow:auto;box-shadow:var(--shadow);position:relative">
+        <button id="family-detail-close" aria-label="Close" style="position:absolute;top:14px;right:14px;margin:0">&times;</button>
+        <div id="family-detail-body"><div class="hint" data-i18n="loading">Loading...</div></div>
+      </div>
+    </div>
   </main>
   <script>
     document.addEventListener('DOMContentLoaded', ()=>{
@@ -266,14 +275,25 @@
         rows.forEach(r=>{
           const row = document.createElement('div'); row.className = 'request-item'; row.dataset.requestId = r.id;
           row.innerHTML = `<strong>${r.payload.username}</strong> <span style="color:var(--muted)">${r.family_name} (${r.family_slug}) — ${new Date(r.created_at).toLocaleString()}</span>`;
-          const btn = document.createElement('button'); btn.style.marginTop='8px'; btn.textContent = t('owner_resolve_reset_btn');
+          const actions = document.createElement('div'); actions.style.marginTop='8px';
+          const btn = document.createElement('button'); btn.textContent = t('owner_resolve_reset_btn');
           btn.addEventListener('click', async ()=>{
             if (!await showConfirm(t('owner_resolve_reset_confirm', {name: r.payload.username}))) return;
             const res = await api('/owner/password-reset-requests/' + r.id + '/resolve', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ family_slug: r.family_slug }) });
             if (res.ok) { alert(t('owner_reset_password_done')); await loadResetRequests(); }
             else alert(t('alert_error_prefix', {msg: JSON.stringify(res)}));
           });
-          row.appendChild(btn);
+          // for when the owner already handled this (e.g. reset the password directly from
+          // the Administrators list above) and just wants the stale request off this list
+          const rejectBtn = document.createElement('button'); rejectBtn.className='secondary'; rejectBtn.style.marginLeft='8px'; rejectBtn.textContent = t('owner_reject_reset_btn');
+          rejectBtn.addEventListener('click', async ()=>{
+            if (!await showConfirm(t('owner_reject_reset_confirm', {name: r.payload.username}))) return;
+            const res = await api('/owner/password-reset-requests/' + r.id + '/reject', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ family_slug: r.family_slug }) });
+            if (res.ok) await loadResetRequests();
+            else alert(t('alert_error_prefix', {msg: JSON.stringify(res)}));
+          });
+          actions.appendChild(btn); actions.appendChild(rejectBtn);
+          row.appendChild(actions);
           list.appendChild(row);
         });
       }catch(e){ list.innerHTML = t('error_loading'); }
@@ -337,13 +357,17 @@
         list.innerHTML = '';
         rows.forEach(f=>{
           const row = document.createElement('div'); row.className = 'request-item';
+          row.style.cursor = 'pointer';
+          row.title = t('owner_family_view_details_hint');
           const statusKey = 'owner_family_status_' + f.status;
           row.innerHTML = `<strong>${f.name}</strong> <span style="color:var(--muted)">(${f.slug}) — ${f.owner_username||''} ${f.owner_email?('/ '+f.owner_email):''}</span> <span class="status-pill">${t(statusKey) || f.status}</span>`;
+          row.addEventListener('click', ()=> openFamilyDetail(f));
           if (f.slug !== 'nahadjambethe'){
             const actions = document.createElement('div'); actions.style.marginTop='8px';
             if (f.status === 'active'){
               const suspendBtn = document.createElement('button'); suspendBtn.className='secondary'; suspendBtn.textContent = t('owner_family_suspend_btn');
-              suspendBtn.addEventListener('click', async ()=>{
+              suspendBtn.addEventListener('click', async (e)=>{
+                e.stopPropagation();
                 if (!await showConfirm(t('owner_family_suspend_confirm', {name: f.name}))) return;
                 const res = await api('/platform/families/' + f.id + '/suspend', { method:'POST' });
                 if (res.ok) await loadAllFamilies(); else alert(t('alert_error_prefix', {msg: res.error || JSON.stringify(res)}));
@@ -351,18 +375,93 @@
               actions.appendChild(suspendBtn);
             } else if (f.status === 'suspended'){
               const reactivateBtn = document.createElement('button'); reactivateBtn.textContent = t('owner_family_reactivate_btn');
-              reactivateBtn.addEventListener('click', async ()=>{
+              reactivateBtn.addEventListener('click', async (e)=>{
+                e.stopPropagation();
                 if (!await showConfirm(t('owner_family_reactivate_confirm', {name: f.name}))) return;
                 const res = await api('/platform/families/' + f.id + '/reactivate', { method:'POST' });
                 if (res.ok) await loadAllFamilies(); else alert(t('alert_error_prefix', {msg: res.error || JSON.stringify(res)}));
               });
               actions.appendChild(reactivateBtn);
             }
+            actions.addEventListener('click', (e)=> e.stopPropagation());
             row.appendChild(actions);
           }
           list.appendChild(row);
         });
       }catch(e){ list.innerHTML = t('error_loading'); }
+    }
+
+    // bytes -> a human count, one decimal past the first two significant digits (matches
+    // how every OS/cloud-storage picker already formats sizes, so it reads as familiar)
+    function formatBytes(n){
+      if (!n || n <= 0) return '0 MB';
+      const units = ['B','KB','MB','GB','TB'];
+      let i = 0; let v = n;
+      while (v >= 1024 && i < units.length - 1) { v /= 1024; i++; }
+      return `${v.toFixed(v >= 10 || i === 0 ? 0 : 1)} ${units[i]}`;
+    }
+
+    const familyDetailModal = document.getElementById('family-detail-modal');
+    const familyDetailBody = document.getElementById('family-detail-body');
+    document.getElementById('family-detail-close').addEventListener('click', ()=> familyDetailModal.style.display = 'none');
+    familyDetailModal.addEventListener('click', (e)=>{ if (e.target === familyDetailModal) familyDetailModal.style.display = 'none'; });
+
+    async function openFamilyDetail(f){
+      familyDetailModal.style.display = 'flex';
+      familyDetailBody.innerHTML = `<div class="hint">${t('loading') || 'Loading...'}</div>`;
+      try{
+        const s = await api('/platform/families/' + f.id + '/stats');
+        if (s.error){ familyDetailBody.innerHTML = `<div class="hint">${s.error}</div>`; return; }
+
+        const adminsHtml = s.admins.length
+          ? s.admins.map(a=> `<div style="padding:8px 0;border-bottom:1px solid var(--border)">
+              <strong>${a.username}</strong> <span style="color:var(--muted)">${a.email||''}</span>
+              ${a.must_change_password
+                ? `<span class="status-pill status-pill-pending">${t('owner_admin_status_pending')}</span>`
+                : `<span class="status-pill status-pill-active">${t('owner_admin_status_active')}</span>`}
+            </div>`).join('')
+          : `<div class="hint">${t('owner_no_admins')}</div>`;
+
+        const createdStr = s.family.created_at ? new Date(s.family.created_at).toLocaleDateString() : '—';
+        const lastActiveStr = s.last_activity ? new Date(s.last_activity).toLocaleDateString() : t('owner_family_no_activity');
+
+        const statChip = (value, label) => `<div class="ss-stat-chip"><strong>${value}</strong><span>${label}</span></div>`;
+
+        familyDetailBody.innerHTML = `
+          <h3 style="margin-top:0;margin-bottom:2px;font-family:var(--font-display)">${s.family.name}</h3>
+          <p class="hint" style="margin-top:0">${t('owner_family_id_label')}: <strong>${s.family.slug}</strong> &middot; ${t(('owner_family_status_' + s.family.status)) || s.family.status}</p>
+
+          <h4 style="margin-bottom:8px">${t('owner_family_admins_heading')}</h4>
+          ${adminsHtml}
+
+          <h4 style="margin-bottom:8px;margin-top:18px">${t('owner_family_overview_heading')}</h4>
+          <div class="ss-stats-summary">
+            ${statChip(createdStr, t('owner_family_created_on'))}
+            ${statChip(s.family.days_since_created != null ? s.family.days_since_created : '—', t('owner_family_days_on_platform'))}
+            ${statChip(lastActiveStr, t('owner_family_last_activity'))}
+          </div>
+
+          <h4 style="margin-bottom:8px;margin-top:18px">${t('owner_family_members_heading')}</h4>
+          <div class="ss-stats-summary">
+            ${statChip(s.people.approved, t('owner_family_profiles_total'))}
+            ${statChip(s.people.male, t('owner_family_profiles_male'))}
+            ${statChip(s.people.female, t('owner_family_profiles_female'))}
+            ${statChip(s.people.deceased, t('owner_family_profiles_deceased'))}
+            ${statChip(s.members.active, t('owner_family_accounts_active'))}
+            ${statChip(s.members.pending, t('owner_family_accounts_pending'))}
+            ${statChip(s.people.pending, t('owner_family_profiles_pending_review'))}
+          </div>
+
+          <h4 style="margin-bottom:8px;margin-top:18px">${t('owner_family_storage_heading')}</h4>
+          <div class="ss-stats-summary">
+            ${statChip(s.media.photo.count, t('owner_family_photos_count'))}
+            ${statChip(s.media.audio.count, t('owner_family_audio_count'))}
+            ${statChip(s.media.video.count, t('owner_family_videos_count'))}
+            ${statChip(formatBytes(s.total_bytes), t('owner_family_storage_used'))}
+          </div>
+          <p class="hint">${t('owner_family_storage_note')}</p>
+        `;
+      }catch(e){ familyDetailBody.innerHTML = t('error_loading'); }
     }
 
     // highlight a specific pending reset request when arriving from an email deep link
