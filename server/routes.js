@@ -523,10 +523,10 @@ router.post('/auth/register', upload.fields([
 
   const id = uuidv4();
   await db.prepare('INSERT INTO requests (id, type, payload, status, created_by, created_at) VALUES (?, ?, ?, ?, ?, ?)').run(id, 'create_person', JSON.stringify(payload), 'pending', 'self-register', now());
-  res.json({ ok:true, id });
-  // respond first, notify after — but still inside this same async handler (not truly
-  // detached) since a Vercel serverless invocation can be torn down the moment the response
-  // is sent, which would silently kill a fire-and-forget promise before it ever sends
+  // notify before responding — a Vercel serverless invocation isn't guaranteed to stay alive
+  // for work still pending after the response has already gone out, which was silently
+  // losing notifications with no error anywhere to point at (see server/email.js). Failure
+  // here still never fails the registration itself: notifyAdmins() swallows its own errors.
   await notifyAdmins(req, {
     buildContent: (lang)=> ({
       subject: emailT(lang, 'New account request', 'Nouvelle demande de compte'),
@@ -536,6 +536,7 @@ router.post('/auth/register', upload.fields([
     }),
     highlightParam: 'highlight', highlightId: id,
   });
+  res.json({ ok:true, id });
 }));
 
 // shared by the listing and counts endpoints below: for the Approved tab, exclude any row
@@ -929,7 +930,7 @@ router.post('/member/profile/update', upload.single('photo'), wrap(async (req,re
   const payload = await buildUpdatePersonPayload(current, body, req.file, heirOf, req.session.user.email);
   const id = uuidv4();
   await db.prepare('INSERT INTO requests (id, type, payload, status, created_by, created_at) VALUES (?, ?, ?, ?, ?, ?)').run(id, 'update_person', JSON.stringify(payload), 'pending', req.session.user.id, now());
-  res.json({ ok:true, id });
+  // notify before responding — see the comment on notifyAdmins()/server/email.js for why
   await notifyAdmins(req, {
     buildContent: (lang)=> ({
       subject: emailT(lang, 'Profile update request', 'Demande de modification de profil'),
@@ -939,6 +940,7 @@ router.post('/member/profile/update', upload.single('photo'), wrap(async (req,re
     }),
     highlightParam: 'highlight', highlightId: id,
   });
+  res.json({ ok:true, id });
 }));
 
 // the platform owner editing someone else's profile directly from the tree — still goes
@@ -955,7 +957,7 @@ router.post('/owner/people/:id/request-update', upload.single('photo'), wrap(asy
 
   const id = uuidv4();
   await db.prepare('INSERT INTO requests (id, type, payload, status, created_by, created_at) VALUES (?, ?, ?, ?, ?, ?)').run(id, 'update_person', JSON.stringify(payload), 'pending', req.session.user.id, now());
-  res.json({ ok:true, id });
+  // notify before responding — see the comment on notifyAdmins()/server/email.js for why
   await notifyAdmins(req, {
     buildContent: (lang)=> ({
       subject: emailT(lang, 'Profile update request (from the platform owner)', 'Demande de modification de profil (du propriétaire de la plateforme)'),
@@ -965,6 +967,7 @@ router.post('/owner/people/:id/request-update', upload.single('photo'), wrap(asy
     }),
     highlightParam: 'highlight', highlightId: id,
   });
+  res.json({ ok:true, id });
 }));
 
 // change one's own password immediately — a security setting, not tree data, so it
@@ -1034,7 +1037,7 @@ router.post('/member/relatives/add', upload.single('photo'), wrap(async (req,res
 
   const id = uuidv4();
   await db.prepare('INSERT INTO requests (id, type, payload, status, created_by, created_at) VALUES (?, ?, ?, ?, ?, ?)').run(id, 'add_relative', JSON.stringify(payload), 'pending', req.session.user.id, now());
-  res.json({ ok:true, id });
+  // notify before responding — see the comment on notifyAdmins()/server/email.js for why
   await notifyAdmins(req, {
     buildContent: (lang)=> {
       const relationLabel = emailT(lang, payload.relation, { spouse: 'conjoint(e)', child: 'enfant', sibling: 'frère/sœur' }[payload.relation] || payload.relation);
@@ -1047,6 +1050,7 @@ router.post('/member/relatives/add', upload.single('photo'), wrap(async (req,res
     },
     highlightParam: 'highlight', highlightId: id,
   });
+  res.json({ ok:true, id });
 }));
 
 // admin: reject request
@@ -1417,8 +1421,15 @@ router.post('/families/request', express.json(), wrap(async (req,res)=>{
   const payload = { type: 'create_family', family_name: familyName, slug, admin_username: adminUsername, admin_email: adminEmail, preferred_language: requesterLang };
   await db.prepare('INSERT INTO public.platform_requests (id, type, payload, status, created_at) VALUES (?, ?, ?, ?, ?)')
     .run(id, 'create_family', JSON.stringify(payload), 'pending', now());
-  res.json({ ok:true, id });
 
+  // Notify before responding, not after: a Vercel serverless invocation is only guaranteed
+  // to stay alive until the response is sent, so work still pending after res.json() — even
+  // inside the same async function, even properly awaited — was silently losing every one of
+  // these notifications with nothing in the logs to point at, since the request the platform
+  // owner most needs to see (a brand new family asking to join) is also the rarest kind, with
+  // no other traffic around it that might otherwise keep the function warm long enough to
+  // finish. A slow/failing send is still never allowed to fail this request — every path here
+  // is caught and logged, and the requester still gets their "ok" once it's done either way.
   try{
     const owners = await db.prepare("SELECT email, preferred_language FROM public.users WHERE role = 'platform_owner' AND email IS NOT NULL AND email != ''").all();
     if (owners.length){
@@ -1437,6 +1448,8 @@ router.post('/families/request', express.json(), wrap(async (req,res)=>{
       console.warn('[notify] no platform_owner has a notification email on file — skipped new-family-request email for', slug);
     }
   }catch(e){ console.error('[notify] failed', e && e.message || e); }
+
+  res.json({ ok:true, id });
 }));
 
 // family-admin-initiated: ask the platform owner to delete this family. Uses req.family (set
@@ -1448,7 +1461,7 @@ router.post('/families/deletion-request', express.json(), wrap(async (req,res)=>
   const payload = { type: 'delete_family', slug: req.family.slug, family_name: req.family.name, requested_by: req.session.user.username };
   await db.prepare('INSERT INTO public.platform_requests (id, type, payload, status, created_at) VALUES (?, ?, ?, ?, ?)')
     .run(id, 'delete_family', JSON.stringify(payload), 'pending', now());
-  res.json({ ok:true, id });
+  // notify before responding — see the comment on POST /families/request above for why
   try{
     const owners = await db.prepare("SELECT email, preferred_language FROM public.users WHERE role = 'platform_owner' AND email IS NOT NULL AND email != ''").all();
     if (owners.length){
@@ -1466,6 +1479,7 @@ router.post('/families/deletion-request', express.json(), wrap(async (req,res)=>
       console.warn('[notify] no platform_owner has a notification email on file — skipped deletion-request email for', req.family.slug);
     }
   }catch(e){ console.error('[notify] failed', e && e.message || e); }
+  res.json({ ok:true, id });
 }));
 
 router.get('/platform/families/requests', wrap(async (req,res)=>{
@@ -2038,7 +2052,7 @@ router.post('/archive', upload.array('files', 10), wrap(async (req,res)=>{
   const id = uuidv4();
   await db.prepare('INSERT INTO archive (id, title, url, description, file_path, type, person_id, created_by, created_at, approval_status, event_type, file_size) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
     .run(id, null, url, body.description || null, filePath, type, req.session.user.person_id, req.session.user.id, now(), 'pending', body.event_type || null, fileSize);
-  res.json({ ok:true, id });
+  // notify before responding — see the comment on POST /families/request above for why
   const poster = await db.prepare('SELECT full_name FROM people WHERE id = ?').get(req.session.user.person_id);
   try{
     const recipients = await getAdminRecipients();
@@ -2058,6 +2072,7 @@ router.post('/archive', upload.array('files', 10), wrap(async (req,res)=>{
       }
     }
   }catch(e){ console.error('[notify] failed', e && e.message || e); }
+  res.json({ ok:true, id });
 }));
 
 // owner-only: edit an existing post's caption/event type (and, for photo/audio, optionally
@@ -2176,8 +2191,8 @@ router.post('/admin/archive/:id/approve', wrap(async (req,res)=>{
   const row = await db.prepare('SELECT * FROM archive WHERE id = ?').get(req.params.id);
   if (!row) return res.status(404).json({ error: 'not found' });
   await db.prepare("UPDATE archive SET approval_status = 'approved', reviewed_by = ?, reviewed_at = ? WHERE id = ?").run(req.session.user.id, now(), req.params.id);
-  res.json({ ok:true });
   const poster = row.person_id ? await db.prepare('SELECT full_name FROM people WHERE id = ?').get(row.person_id) : null;
+  // notify before responding — see the comment on notifyAdmins()/server/email.js for why
   await notifyMembers(req, {
     buildContent: (lang)=> {
       const typeLabel = emailT(lang, row.type, { photo: 'photo', audio: 'audio', video: 'vidéo' }[row.type] || row.type);
@@ -2191,6 +2206,7 @@ router.post('/admin/archive/:id/approve', wrap(async (req,res)=>{
     },
     link: `/archives.html?tab=${row.type}&highlight=${row.id}`,
   });
+  res.json({ ok:true });
 }));
 
 router.post('/admin/archive/:id/reject', wrap(async (req,res)=>{
@@ -2227,8 +2243,8 @@ router.post('/events', express.json(), wrap(async (req,res)=>{
   const id = uuidv4();
   await db.prepare('INSERT INTO events (id, title, location, event_at, description, person_id, created_by, created_at, approval_status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)')
     .run(id, title, body.location || null, eventAt, body.description || null, req.session.user.person_id, req.session.user.id, now(), 'pending');
-  res.json({ ok:true, id });
 
+  // notify before responding — see the comment on POST /families/request above for why
   const poster = await db.prepare('SELECT full_name FROM people WHERE id = ?').get(req.session.user.person_id);
   try{
     const recipients = await getAdminRecipients();
@@ -2247,6 +2263,7 @@ router.post('/events', express.json(), wrap(async (req,res)=>{
       }
     }
   }catch(e){ console.error('[notify] failed', e && e.message || e); }
+  res.json({ ok:true, id });
 }));
 
 // the creator or any admin/owner can edit — re-submits for approval, same as editing an
@@ -2319,7 +2336,7 @@ router.post('/admin/events/:id/approve', wrap(async (req,res)=>{
   const row = await db.prepare('SELECT * FROM events WHERE id = ?').get(req.params.id);
   if (!row) return res.status(404).json({ error: 'not found' });
   await db.prepare("UPDATE events SET approval_status = 'approved', reviewed_by = ?, reviewed_at = ? WHERE id = ?").run(req.session.user.id, now(), req.params.id);
-  res.json({ ok:true });
+  // notify before responding — see the comment on notifyAdmins()/server/email.js for why
   await notifyMembers(req, {
     buildContent: (lang)=> ({
       subject: emailT(lang, `New event: ${row.title}`, `Nouvel événement : ${row.title}`),
@@ -2329,6 +2346,7 @@ router.post('/admin/events/:id/approve', wrap(async (req,res)=>{
     }),
     link: `/archives.html?tab=events&highlight=${row.id}`,
   });
+  res.json({ ok:true });
 }));
 
 router.post('/admin/events/:id/reject', wrap(async (req,res)=>{
