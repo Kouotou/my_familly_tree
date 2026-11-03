@@ -377,16 +377,44 @@ router.post('/auth/logout',(req,res)=>{ req.session.destroy(()=>res.json({ok:tru
 router.post('/auth/request-password-reset', express.json(), wrap(async (req,res)=>{
   const username = ((req.body && req.body.username) || '').trim();
   if (!username) return res.status(400).json({ error: 'Username is required.' });
-  const user = await db.prepare('SELECT id, person_id FROM users WHERE username = ?').get(username);
-  if (user) {
-    let fullName = username;
+  // same lookup as login itself, so a username that would log in also finds its account here
+  const user = await findUserForLogin(username);
+  if (user && user.role === 'member') {
+    let fullName = user.username;
     if (user.person_id) {
       const person = await db.prepare('SELECT full_name FROM people WHERE id = ?').get(user.person_id);
       if (person) fullName = person.full_name;
     }
-    const payload = { type: 'password_reset', username, person_id: user.person_id || null, full_name: fullName };
-    await db.prepare('INSERT INTO requests (id, type, payload, status, created_by, created_at) VALUES (?, ?, ?, ?, ?, ?)')
-      .run(uuidv4(), 'password_reset', JSON.stringify(payload), 'pending', 'self-service', now());
+    // one open request per member — clicking "forgot password" again shouldn't pile up
+    // duplicates in the admin's queue, but it does re-send the email (the admin may simply
+    // have missed the first one)
+    const open = await db.prepare("SELECT id, payload FROM requests WHERE type = 'password_reset' AND status = 'pending'").all();
+    const existing = open.find(r => { try { return JSON.parse(r.payload).user_id === user.id || JSON.parse(r.payload).username === user.username; } catch(e){ return false; } });
+    let requestId = existing ? existing.id : null;
+    if (!requestId){
+      requestId = uuidv4();
+      const payload = { type: 'password_reset', username: user.username, user_id: user.id, person_id: user.person_id || null, full_name: fullName };
+      await db.prepare('INSERT INTO requests (id, type, payload, status, created_by, created_at) VALUES (?, ?, ?, ?, ?, ?)')
+        .run(requestId, 'password_reset', JSON.stringify(payload), 'pending', 'self-service', now());
+    }
+    // this used to stop at the INSERT — nothing told the family's admins, so a locked-out
+    // member waited on a request nobody knew existed
+    const recipients = await getAdminRecipients();
+    if (!recipients.length) console.warn(`[notify] family=${req.family.slug} has no admin with a notification email — password reset request for ${user.username} not emailed`);
+    await notifyAdmins(req, {
+      buildContent: (lang) => ({
+        subject: emailT(lang, `${fullName} forgot their password`, `${fullName} a oublié son mot de passe`),
+        bodyHtml: `<p>${emailT(lang,
+          `<strong>${fullName}</strong> (username <code>${user.username}</code>) cannot log in and asked for a new password.`,
+          `<strong>${fullName}</strong> (nom d'utilisateur <code>${user.username}</code>) ne peut plus se connecter et demande un nouveau mot de passe.`)}</p>`
+          + `<p>${emailT(lang,
+          'Open the request, click "Set new password", choose a temporary password and save. If they have an email on file it is sent to them automatically; otherwise give it to them yourself. They can change it afterwards from their profile.',
+          'Ouvrez la demande, cliquez sur « Définir un nouveau mot de passe », choisissez un mot de passe temporaire et enregistrez. S\'il a un e-mail enregistré, il lui est envoyé automatiquement ; sinon, communiquez-le-lui vous-même. Il pourra le modifier ensuite depuis son profil.')}</p>`,
+      }),
+      highlightParam: 'highlight', highlightId: requestId,
+    });
+  } else if (!user) {
+    console.warn(`[password-reset] family=${req.family.slug} — no account for the username entered`);
   }
   res.json({ ok: true });
 }));
@@ -737,6 +765,37 @@ async function setPasswordForPerson(dbLike, personId, password){
     return;
   }
   await dbLike.prepare('INSERT INTO users (id, username, password_hash, role, person_id, created_at) VALUES (?, ?, ?, ?, ?, ?)').run(uuidv4(), username, hash, 'member', personId, now());
+}
+
+// after an admin has set a member's password: close that member's open "forgot password"
+// request(s) — the password is answered, so they shouldn't linger in the queue — and, when the
+// member has an email on file, send them the new password with a note that they can change it.
+// Runs after the password itself is saved, and never fails the admin's action.
+async function afterMemberPasswordSet(req, personId, password){
+  try{
+    const user = await db.prepare('SELECT id, username, email, preferred_language FROM users WHERE person_id = ?').get(personId);
+    if (!user) return;
+    const open = await db.prepare("SELECT id, payload FROM requests WHERE type = 'password_reset' AND status = 'pending'").all();
+    for (const r of open){
+      let p = {}; try { p = JSON.parse(r.payload) || {}; } catch(e){}
+      if (p.person_id === personId || p.user_id === user.id || (p.username && String(p.username).trim().toLowerCase() === String(user.username).trim().toLowerCase())){
+        await db.prepare('UPDATE requests SET status = ?, reviewed_by = ?, reviewed_at = ?, resolved_person_id = ? WHERE id = ?').run('approved', req.session.user.id, now(), personId, r.id);
+      }
+    }
+    if (user.email){
+      const lang = user.preferred_language;
+      const link = familyUrl(req, '/login.html');
+      await sendEmail({
+        to: user.email,
+        subject: emailT(lang, `[${req.family.name}] Your new password`, `[${req.family.name}] Votre nouveau mot de passe`),
+        html: `<p>${emailT(lang, 'An administrator of your family has set a new password for you.', 'Un administrateur de votre famille vous a défini un nouveau mot de passe.')}</p>`
+          + credentialBlockHtml(user.username, String(password).trim(), lang)
+          + `<p>${emailT(lang, 'Log in with it, then change it to one of your own from your profile ("Change password").', 'Connectez-vous avec, puis remplacez-le par le vôtre depuis votre profil (« Changer le mot de passe »).')}</p>`
+          + `<p><a href="${link}">${link}</a></p>`,
+        fromName: req.family.name,
+      }).catch(()=>{});
+    }
+  }catch(e){ console.error('[password-reset] follow-up failed', e && e.message || e); }
 }
 
 async function createLoginForPerson(dbLike, personId, username, password, email, preferredLanguage){
@@ -1242,6 +1301,7 @@ router.post('/admin/people/:id/update', express.json(), wrap(async (req,res)=>{
       }
       if (Array.isArray(p.relations)) await applyParentEdits(tx, id, p.relations, req.session.user.id);
     });
+    if (p.new_password) await afterMemberPasswordSet(req, id, p.new_password);
     res.json({ ok:true });
   }catch(err){ console.error('Update person error', err && err.stack || err); res.status(500).json({ error: String(err && err.message ? err.message : err) }); }
 }));
@@ -2067,6 +2127,7 @@ router.post('/admin/people/:id/update-multipart', upload.single('photo'), wrap(a
       }
       if (Array.isArray(relations)) await applyParentEdits(tx, id, relations, req.session.user.id);
     });
+    if (body.new_password) await afterMemberPasswordSet(req, id, body.new_password);
     res.json({ ok:true });
   }catch(err){ console.error('Update person multipart error', err && err.stack || err); res.status(500).json({ error: String(err && err.message ? err.message : err) }); }
 }));
