@@ -12,7 +12,7 @@
   <header class="topbar">
     <div class="topbar-left">
       <button type="button" id="page-back-btn" class="page-back-btn" aria-label="Back">‹</button>
-      <h1 id="brand" data-i18n="brand">Famille Nah Adja Mbethe</h1>
+      <h1 id="brand" data-i18n="brand">Family Tree</h1>
     </div>
     <div class="toggles">
       <button id="lang-toggle">FR/EN</button>
@@ -490,7 +490,7 @@
         const type = typeSelect.value;
         const description = document.getElementById('np-caption').value;
         const eventType = document.getElementById('np-event-type').value || null;
-        const endpoint = editingItem ? ('/api/archive/' + editingItem.id + '/edit') : '/api/archive';
+        const endpoint = familyPrefix() + (editingItem ? ('/api/archive/' + editingItem.id + '/edit') : '/api/archive');
         try{
           if (type === 'audio'){
             const f = document.getElementById('np-audio-file').files[0];
@@ -501,7 +501,7 @@
               // the file bytes — see the module script above
               const blob = await window.__blobUpload(f.name, f, {
                 access: 'public',
-                handleUploadUrl: '/api/archive/upload-token',
+                handleUploadUrl: familyPrefix() + '/api/archive/upload-token',
               });
               fileUrl = blob.url;
             }
@@ -578,7 +578,7 @@
           event_at: document.getElementById('ne-datetime').value ? new Date(document.getElementById('ne-datetime').value).toISOString() : '',
           description: document.getElementById('ne-description').value.trim(),
         };
-        const endpoint = editingEvent ? ('/api/events/' + editingEvent.id + '/edit') : '/api/events';
+        const endpoint = familyPrefix() + (editingEvent ? ('/api/events/' + editingEvent.id + '/edit') : '/api/events');
         try{
           const res = await fetch(endpoint, { method:'POST', headers:{'Content-Type':'application/json'}, credentials:'same-origin', body: JSON.stringify(payload) });
           const j = await res.json();

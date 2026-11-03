@@ -18,6 +18,29 @@ function familyPrefix(){
 // Na Ajanbeta's. A handful are deliberately platform-level instead (the owner's own pages, and
 // the landing page's "create a new family" link) — those are marked `data-platform-link` in
 // their HTML and skipped here. A no-op wherever there's no prefix to begin with.
+// A family page opened *without* a /f/<slug> prefix (an old bookmark, or an email link sent
+// before every email link carried its family) would silently open the platform owner's own
+// family — e.g. another family's admin clicking "Review" and landing in the wrong admin space.
+// Vercel serves these .html files straight from disk, so the server never gets a chance to
+// redirect them; do it here instead, to the family this browser last used (remembered on
+// every prefixed page load below), or to the default family when there's none — the same
+// family an unprefixed URL always meant, just made explicit in the address bar.
+const DEFAULT_FAMILY_SLUG = 'nahadjambethe';
+const LAST_FAMILY_KEY = 'ft_last_family';
+(function routeUnprefixedFamilyPages(){
+  const prefix = familyPrefix();
+  if (prefix){
+    try{ localStorage.setItem(LAST_FAMILY_KEY, prefix.slice(3)); }catch(e){}
+    return;
+  }
+  const FAMILY_PAGES = ['/login.html','/register.html','/tree.html','/admin.html','/archives.html','/feedback.html','/admin-login.html'];
+  if (!FAMILY_PAGES.includes(location.pathname)) return;
+  let slug = null;
+  try{ slug = localStorage.getItem(LAST_FAMILY_KEY); }catch(e){}
+  if (!slug || !/^[a-z0-9]+(-[a-z0-9]+)*$/.test(slug)) slug = DEFAULT_FAMILY_SLUG;
+  location.replace('/f/' + slug + location.pathname + location.search + location.hash);
+})();
+
 (function fixFamilyRelativeLinks(){
   const prefix = familyPrefix();
   if (!prefix) return;
@@ -604,7 +627,7 @@ async function submitEditProfile(e){
     const heirIds = Array.from(modal.querySelectorAll('#ep-heir-candidates-area input[name="ep_heir_of"]:checked')).map(cb=>cb.value);
     if (heirIds.length) data.append('heir_of', JSON.stringify(heirIds));
   }
-  const endpoint = ownerTargetId ? ('/api/owner/people/' + ownerTargetId + '/request-update') : '/api/member/profile/update';
+  const endpoint = familyPrefix() + (ownerTargetId ? ('/api/owner/people/' + ownerTargetId + '/request-update') : '/api/member/profile/update');
   try{
     const res = await fetch(endpoint, { method:'POST', body:data, credentials:'same-origin' });
     const j = await res.json();
@@ -1206,7 +1229,7 @@ function countdownString(targetIso){
       } else {
         dropdown.innerHTML = '';
         j.items.forEach(item=>{
-          const a = document.createElement('a'); a.className = 'notif-item'; a.href = item.link;
+          const a = document.createElement('a'); a.className = 'notif-item'; a.href = familyPrefix() + item.link;
           const titleEl = document.createElement('span'); titleEl.className = 'notif-item-title';
           titleEl.textContent = item.title ? item.title.slice(0,60) : kindLabel(item.kind);
           const meta = document.createElement('span'); meta.className = 'notif-item-meta';
@@ -2084,9 +2107,7 @@ async function renderTreeToCanvas(includeCulturalBg){
     catch(e){ /* export still works without the decorative background */ }
   }
 
-  const title = currentLang() === 'fr'
-    ? 'Arbre généalogique de la famille Nah Adja Mbethe'
-    : 'Family Tree of the Nah Adja Mbethe Family';
+  const title = treeTitleFor(await currentFamilyName());
   ctx.fillStyle = isDark ? '#eef1f7' : '#3c2c1c';
   ctx.textAlign = 'center';
   ctx.textBaseline = 'alphabetic';
@@ -2111,6 +2132,32 @@ async function renderTreeToCanvas(includeCulturalBg){
   return canvas;
 }
 
+// the exported tree is titled and named after *this* family (from /api/family/info, which is
+// already scoped to the /f/<slug> family the page belongs to) — never a fixed family name
+async function currentFamilyName(){
+  if (window.CURRENT_FAMILY_NAME) return window.CURRENT_FAMILY_NAME;
+  try{
+    const res = await fetch(familyPrefix()+'/api/family/info', { credentials:'same-origin' });
+    const data = res.ok ? await res.json() : null;
+    if (data && data.name){ window.CURRENT_FAMILY_NAME = data.name; return data.name; }
+  }catch(e){}
+  return null;
+}
+
+function treeTitleFor(name){
+  const fr = currentLang() === 'fr';
+  if (!name) return fr ? 'Arbre généalogique' : 'Family Tree';
+  // a name that already says "Famille X" / "X Family" shouldn't read "the Famille X Family"
+  if (/famil/i.test(name)) return fr ? `Arbre généalogique — ${name}` : `Family Tree — ${name}`;
+  return fr ? `Arbre généalogique de la famille ${name}` : `Family Tree of the ${name} Family`;
+}
+
+function treeFileName(ext){
+  const name = (window.CURRENT_FAMILY_NAME || '').normalize('NFD').replace(/[̀-ͯ]/g, '')
+    .toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+  return `${name ? name + '-' : ''}family-tree.${ext}`;
+}
+
 function triggerDownload(blob, filename){
   const a = document.createElement('a');
   a.href = URL.createObjectURL(blob);
@@ -2126,7 +2173,7 @@ function wantsCulturalBgExport(){
 async function downloadTreeImage(){
   try{
     const canvas = await renderTreeToCanvas(wantsCulturalBgExport());
-    canvas.toBlob(blob=> triggerDownload(blob, 'family-tree.png'), 'image/png');
+    canvas.toBlob(blob=> triggerDownload(blob, treeFileName('png')), 'image/png');
   }catch(e){ alert(t('tree_export_error')); }
 }
 
@@ -2177,7 +2224,7 @@ async function downloadTreePdf(){
     const canvas = await renderTreeToCanvas(wantsCulturalBgExport());
     const jpegBytes = dataURLToUint8Array(canvas.toDataURL('image/jpeg', 0.92));
     const pdfBlob = buildSinglePageImagePdf(jpegBytes, canvas.width, canvas.height);
-    triggerDownload(pdfBlob, 'family-tree.pdf');
+    triggerDownload(pdfBlob, treeFileName('pdf'));
   }catch(e){ alert(t('tree_export_error')); }
 }
 
@@ -2379,7 +2426,7 @@ const I18N = {
     owner_login_link: "Owner's Login",
     owner_login_title: 'Platform Owner Login',
     owner_login_failed: 'Invalid owner credentials',
-    owner_brand: 'Famille Nah Adja Mbethe — Owner',
+    owner_brand: 'Africa Family Trees — Owner',
     must_change_password_notice: 'You must set a new password before continuing.',
     owner_no_email_notice: 'You have not set a notification email yet — you will not receive any email for new family requests, deletion requests, or admin lockouts until you set one below.',
     owner_admin_dashboard_heading: 'Family requests & the tree',
@@ -2438,6 +2485,7 @@ const I18N = {
     owner_no_family_requests: 'No pending family requests.',
     owner_family_request_approve_btn: 'Approve',
     owner_family_request_approve_confirm: 'Approve "{name}"? This creates their family and emails the admin a temporary password.',
+    owner_family_delete_request_confirm: 'Approve the deletion of "{name}"? The family and ALL of its data and stored files will be permanently erased. This cannot be undone.',
     owner_family_request_approve_done: 'Approved — the admin has been emailed their login link and temporary password.',
     owner_family_request_reject_btn: 'Reject',
     owner_family_request_reject_confirm: 'Reject the request for "{name}"?',
@@ -2449,6 +2497,13 @@ const I18N = {
     owner_family_suspend_confirm: 'Suspend "{name}"? Its members will not be able to log in until reactivated.',
     owner_family_reactivate_btn: 'Reactivate',
     owner_family_reactivate_confirm: 'Reactivate "{name}"?',
+    owner_family_clear_btn: 'Clear data',
+    owner_family_clear_prompt: 'CLEAR ALL DATA of "{name}"?\n\nEvery member account, profile, tree link, photo, audio, video, event, request and message will be permanently erased. The family itself and its admin accounts are kept, so its admins can start again from an empty tree.\n\nThis cannot be undone. Type the family ID ({slug}) to confirm:',
+    owner_family_clear_done: 'All data of "{name}" has been cleared ({n} stored file(s) removed).',
+    owner_family_delete_btn: 'Delete family',
+    owner_family_delete_prompt: 'PERMANENTLY DELETE "{name}"?\n\nThe family, every account in it (admins included), and all of its data and stored files will be erased, and its family ID will become free for reuse.\n\nThis cannot be undone. Type the family ID ({slug}) to confirm:',
+    owner_family_delete_done: '"{name}" has been permanently deleted ({n} stored file(s) removed).',
+    owner_family_confirm_mismatch: 'The family ID you typed does not match — nothing was changed.',
     owner_family_view_details_hint: 'Click to view this family’s details',
     owner_family_id_label: 'Family ID',
     owner_family_admins_heading: 'Administrator(s)',
@@ -2470,7 +2525,32 @@ const I18N = {
     owner_family_audio_count: 'Audio clips posted',
     owner_family_videos_count: 'Videos linked',
     owner_family_storage_used: 'Storage used',
-    owner_family_storage_note: 'Video posts link to YouTube and use no platform storage. Storage totals only cover uploads made after this feature was added.',
+    owner_family_storage_note: 'Video posts link to YouTube and use no platform storage, so they add nothing to the total.',
+    owner_family_storage_measuring: '{n} older file(s) are still being measured — reopen this window in a moment for the complete total.',
+    owner_family_profile_photos: 'Profile photos',
+    owner_family_view_btn: 'View details',
+    owner_family_admins_label: 'Admin',
+    owner_family_login_heading: "How this family's admin logs in",
+    owner_family_login_hint: "If an admin forgot how to get in, they need this Family ID (not the family's display name) and their own username below. The password is never shown here — use \"Reset password\" in the Administrators section if they need a new one.",
+    owner_family_admin_login_link: 'Admin login link',
+    owner_family_admin_username: 'Username',
+    owner_family_admin_name: 'Name in the tree',
+    owner_family_admin_not_linked: 'not linked to a profile',
+    owner_family_admin_email: 'Email',
+    owner_family_admin_since: 'Admin since',
+    owner_copy_btn: 'Copy',
+    owner_copied: 'Copied',
+    owner_family_activity_heading: 'Activity',
+    owner_family_last_login: 'Last login (anyone)',
+    owner_family_last_admin_login: 'Last admin login',
+    owner_family_logins_30d: 'Logins, last 30 days',
+    owner_family_active_people_30d: 'Active members, last 30 days',
+    owner_family_last_upload: 'Last upload',
+    owner_family_never: 'Never',
+    owner_family_profiles_living: 'Living',
+    owner_family_profiles_unknown_gender: 'Gender not set',
+    owner_family_accounts_total: 'Member accounts',
+    owner_family_media_total: 'Total storage used',
     owner_marketing_heading: 'Marketing site content',
     owner_marketing_desc: "Change the photo and headline shown on the platform's public landing page (the bare root domain) — no code deploy needed.",
     owner_marketing_photo_label: 'Hero photo (optional — leave blank to keep the current one)',
@@ -2883,7 +2963,7 @@ const I18N = {
     owner_login_link: 'Connexion propriétaire',
     owner_login_title: 'Connexion du propriétaire',
     owner_login_failed: 'Identifiants propriétaire invalides',
-    owner_brand: 'Famille Nah Adja Mbethe — Propriétaire',
+    owner_brand: 'Africa Family Trees — Propriétaire',
     must_change_password_notice: 'Vous devez définir un nouveau mot de passe avant de continuer.',
     owner_no_email_notice: "Vous n'avez pas encore défini d'adresse e-mail de notification — vous ne recevrez aucun e-mail pour les nouvelles demandes de famille, les demandes de suppression ou les verrouillages d'administrateur tant que vous n'en aurez pas défini une ci-dessous.",
     owner_admin_dashboard_heading: "Demandes familiales et l'arbre",
@@ -2942,6 +3022,7 @@ const I18N = {
     owner_no_family_requests: 'Aucune demande de famille en attente.',
     owner_family_request_approve_btn: 'Approuver',
     owner_family_request_approve_confirm: 'Approuver « {name} » ? Cela crée leur famille et envoie à l\'administrateur un mot de passe temporaire par email.',
+    owner_family_delete_request_confirm: 'Approuver la suppression de « {name} » ? La famille et TOUTES ses données et fichiers stockés seront définitivement effacés. Cette action est irréversible.',
     owner_family_request_approve_done: "Approuvé — l'administrateur a reçu par email son lien de connexion et son mot de passe temporaire.",
     owner_family_request_reject_btn: 'Rejeter',
     owner_family_request_reject_confirm: 'Rejeter la demande pour « {name} » ?',
@@ -2953,6 +3034,13 @@ const I18N = {
     owner_family_suspend_confirm: 'Suspendre « {name} » ? Ses membres ne pourront plus se connecter jusqu\'à la réactivation.',
     owner_family_reactivate_btn: 'Réactiver',
     owner_family_reactivate_confirm: 'Réactiver « {name} » ?',
+    owner_family_clear_btn: 'Effacer les données',
+    owner_family_clear_prompt: "EFFACER TOUTES LES DONNÉES de « {name} » ?\n\nTous les comptes membres, profils, liens de l'arbre, photos, audios, vidéos, événements, demandes et messages seront définitivement effacés. La famille elle-même et ses comptes administrateurs sont conservés, pour que ses administrateurs puissent recommencer avec un arbre vide.\n\nCette action est irréversible. Tapez l'ID de la famille ({slug}) pour confirmer :",
+    owner_family_clear_done: 'Toutes les données de « {name} » ont été effacées ({n} fichier(s) stocké(s) supprimé(s)).',
+    owner_family_delete_btn: 'Supprimer la famille',
+    owner_family_delete_prompt: "SUPPRIMER DÉFINITIVEMENT « {name} » ?\n\nLa famille, tous ses comptes (administrateurs compris), ainsi que toutes ses données et fichiers stockés seront effacés, et son ID de famille redeviendra disponible.\n\nCette action est irréversible. Tapez l'ID de la famille ({slug}) pour confirmer :",
+    owner_family_delete_done: '« {name} » a été définitivement supprimée ({n} fichier(s) stocké(s) supprimé(s)).',
+    owner_family_confirm_mismatch: "L'ID de famille saisi ne correspond pas — rien n'a été modifié.",
     owner_family_view_details_hint: 'Cliquez pour voir les détails de cette famille',
     owner_family_id_label: 'ID de la famille',
     owner_family_admins_heading: 'Administrateur(s)',
@@ -2974,7 +3062,32 @@ const I18N = {
     owner_family_audio_count: 'Fichiers audio publiés',
     owner_family_videos_count: 'Vidéos liées',
     owner_family_storage_used: 'Stockage utilisé',
-    owner_family_storage_note: 'Les publications vidéo pointent vers YouTube et n\'utilisent aucun stockage de la plateforme. Les totaux de stockage ne couvrent que les envois effectués depuis l\'ajout de cette fonctionnalité.',
+    owner_family_storage_note: "Les publications vidéo pointent vers YouTube et n'utilisent aucun stockage de la plateforme : elles ne comptent pas dans le total.",
+    owner_family_storage_measuring: '{n} fichier(s) plus ancien(s) sont encore en cours de mesure — rouvrez cette fenêtre dans un instant pour le total complet.',
+    owner_family_profile_photos: 'Photos de profil',
+    owner_family_view_btn: 'Voir les détails',
+    owner_family_admins_label: 'Admin',
+    owner_family_login_heading: "Comment l'administrateur de cette famille se connecte",
+    owner_family_login_hint: "Si un administrateur ne sait plus comment entrer, il lui faut cet ID de la famille (pas le nom affiché de la famille) et son propre nom d'utilisateur ci-dessous. Le mot de passe n'est jamais affiché ici — utilisez « Réinitialiser le mot de passe » dans la section Administrateurs s'il en a besoin d'un nouveau.",
+    owner_family_admin_login_link: 'Lien de connexion administrateur',
+    owner_family_admin_username: "Nom d'utilisateur",
+    owner_family_admin_name: "Nom dans l'arbre",
+    owner_family_admin_not_linked: 'non lié à un profil',
+    owner_family_admin_email: 'E-mail',
+    owner_family_admin_since: 'Administrateur depuis',
+    owner_copy_btn: 'Copier',
+    owner_copied: 'Copié',
+    owner_family_activity_heading: 'Activité',
+    owner_family_last_login: 'Dernière connexion (tous)',
+    owner_family_last_admin_login: "Dernière connexion d'un admin",
+    owner_family_logins_30d: 'Connexions, 30 derniers jours',
+    owner_family_active_people_30d: 'Membres actifs, 30 derniers jours',
+    owner_family_last_upload: 'Dernier envoi',
+    owner_family_never: 'Jamais',
+    owner_family_profiles_living: 'Vivants',
+    owner_family_profiles_unknown_gender: 'Genre non renseigné',
+    owner_family_accounts_total: 'Comptes membres',
+    owner_family_media_total: 'Stockage total utilisé',
     owner_marketing_heading: 'Contenu du site vitrine',
     owner_marketing_desc: "Modifiez la photo et le titre affichés sur la page d'accueil publique de la plateforme (le domaine racine) — sans déploiement de code.",
     owner_marketing_photo_label: 'Photo principale (facultatif — laissez vide pour garder la photo actuelle)',

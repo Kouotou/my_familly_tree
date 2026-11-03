@@ -216,6 +216,9 @@ button.secondary{
 	box-shadow:none;
 }
 button.secondary:hover{ background:var(--accent-soft); }
+/* irreversible actions (e.g. the owner deleting a family) — deliberately not the accent color */
+button.danger{ background:#b3261e;color:#fff;box-shadow:none; }
+button.danger:hover{ filter:brightness(1.1); }
 button:disabled{ filter:blur(0.4px) grayscale(0.5); opacity:0.5; cursor:not-allowed; box-shadow:none; transform:none !important; }
 button:disabled:hover{ transform:none; filter:blur(0.4px) grayscale(0.5); }
 

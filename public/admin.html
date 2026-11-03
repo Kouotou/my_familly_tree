@@ -13,7 +13,7 @@
     <div class="topbar-left">
       <button type="button" id="page-back-btn" class="page-back-btn" aria-label="Back">‹</button>
       <button id="hamburger-btn" class="hamburger-btn" aria-label="Menu"><span></span><span></span><span></span></button>
-      <h1 id="admin-brand" data-i18n="admin_brand">Famille Nah Adja Mbethe — Admin</h1>
+      <h1 id="admin-brand" data-i18n="admin_brand">Family Tree — Admin</h1>
     </div>
     <div class="toggles">
       <button id="lang-toggle">FR/EN</button>
@@ -906,7 +906,7 @@
         if (relationsLoaded) form.append('relations', JSON.stringify(rels));
         const personId = f.personId && f.personId.value ? f.personId.value : null;
         if (!personId && f.dataset.heirOf) form.append('heir_of', f.dataset.heirOf);
-        const endpoint = personId ? ('/api/admin/people/' + personId + '/update-multipart') : ('/api/admin/requests/' + id + '/edit-approve-multipart');
+        const endpoint = familyPrefix() + (personId ? ('/api/admin/people/' + personId + '/update-multipart') : ('/api/admin/requests/' + id + '/edit-approve-multipart'));
         const res = await fetch(endpoint, { method:'POST', credentials:'same-origin', body: form });
         const j = await res.json();
         if (j.ok){ alert(personId ? t('alert_person_updated') : t('alert_approved_with_edits')); document.getElementById('edit-modal').style.display='none'; await loadRequests(currentStatus); await loadRoot(); }

@@ -162,6 +162,7 @@ db.transaction = async function transaction(fn) {
 // answer) since this is just a normal async function call, not a middleware `next()`.
 db.withTenant = async function withTenant(schemaName, fn) {
   const schemaIdent = quoteSchemaIdent(schemaName);
+  await ensureTenantMigrated(schemaName);
   const client = await connectWithRetry();
   try {
     await client.query(`SET search_path TO ${schemaIdent}, public`);
@@ -176,6 +177,7 @@ db.withTenant = async function withTenant(schemaName, fn) {
 // see the comment there for why db.withTenant's await-then-release shape doesn't fit there).
 db.connectForTenant = async function connectForTenant(schemaName) {
   const schemaIdent = quoteSchemaIdent(schemaName);
+  await ensureTenantMigrated(schemaName);
   const client = await connectWithRetry();
   try {
     await client.query(`SET search_path TO ${schemaIdent}, public`);
@@ -185,6 +187,40 @@ db.connectForTenant = async function connectForTenant(schemaName) {
   }
   return { client, schemaIdent };
 };
+
+// db.ready only ever migrates the `public` schema (family #1) on cold start; every other
+// family's schema was set up exactly once, by createFamilySchema at approval time, and never
+// again — so any column added to ensureSchema() after a family was approved (archive.file_size,
+// users.preferred_language, ...) was simply missing for that family, breaking any query that
+// used it. Re-run the (fully idempotent) migration the first time each schema is touched in
+// this process instead — memoized per schema, so it costs one round of IF NOT EXISTS DDL per
+// family per cold start, not per request.
+//
+// This is also an isolation guarantee, not just a convenience: search_path is `<tenant>, public`
+// (see the top of this file), and `public` *is* the default family's own schema — so any table
+// missing from a tenant's schema would silently resolve to the default family's table instead,
+// reading and writing another family's data. A failed migration therefore fails the request
+// (and is forgotten, so the next request retries) rather than letting it run on a schema that
+// might still be missing a table.
+const tenantMigrations = new Map();
+function ensureTenantMigrated(schemaName) {
+  if (schemaName === 'public') return Promise.resolve();
+  if (!tenantMigrations.has(schemaName)) {
+    const p = (async () => {
+      const r = await pool.query('SELECT 1 FROM pg_namespace WHERE nspname = $1', [schemaName]);
+      // a schema that doesn't exist must never be used at all — search_path would fall through
+      // to `public` and every query would silently run against the default family's data
+      if (!r.rows.length) throw new Error(`family schema ${schemaName} does not exist`);
+      await ensureSchema(quoteSchemaIdent(schemaName));
+    })().catch(err => {
+      console.error('[db] tenant migration failed for', schemaName, err);
+      tenantMigrations.delete(schemaName);
+      throw err;
+    });
+    tenantMigrations.set(schemaName, p);
+  }
+  return tenantMigrations.get(schemaName);
+}
 
 db.runInTenantContext = function runInTenantContext(client, schemaIdent, next) {
   requestContext.run({ client, schemaIdent }, next);
@@ -345,6 +381,16 @@ async function ensureSchema(schemaIdent) {
         created_at TEXT
       );
 
+      -- measured size of a stored file, keyed by its URL — used by the owner's storage view
+      -- for files whose size was never recorded at upload time (profile photos, and archive
+      -- posts older than archive.file_size). Keyed by URL so replacing a photo naturally
+      -- gets a fresh measurement instead of a stale one.
+      CREATE TABLE IF NOT EXISTS blob_sizes (
+        url TEXT PRIMARY KEY,
+        bytes BIGINT,
+        measured_at TEXT
+      );
+
       ALTER TABLE archive ADD COLUMN IF NOT EXISTS type TEXT DEFAULT 'photo';
       ALTER TABLE archive ADD COLUMN IF NOT EXISTS file_path TEXT;
       ALTER TABLE archive ADD COLUMN IF NOT EXISTS person_id TEXT;
@@ -478,6 +524,16 @@ db.createFamilySchema = async function createFamilySchema(schemaName) {
     client.release();
   }
   await ensureSchema(schemaIdent);
+};
+
+// permanently removes a family's whole schema (every table, every row) — the owner's "Delete
+// family" action. Refuses `public` outright: that schema *is* the default family's own data
+// and also holds every platform-wide table.
+db.dropFamilySchema = async function dropFamilySchema(schemaName) {
+  if (!schemaName || schemaName === 'public') throw new Error('refusing to drop the public schema');
+  const schemaIdent = quoteSchemaIdent(schemaName);
+  await pool.query(`DROP SCHEMA IF EXISTS ${schemaIdent} CASCADE`);
+  tenantMigrations.delete(schemaName);
 };
 
 // Belt-and-suspenders on top of removing the advisory lock above: every request awaits

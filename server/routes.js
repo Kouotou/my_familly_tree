@@ -5,7 +5,7 @@ const { v4: uuidv4 } = require('uuid');
 const bcrypt = require('bcryptjs');
 const multer = require('multer');
 const path = require('path');
-const { put } = require('@vercel/blob');
+const { put, del } = require('@vercel/blob');
 const { handleUpload } = require('@vercel/blob/client');
 const { sendEmail } = require('./email');
 const { isValidSlug, schemaNameForSlug, lookupFamilyBySlug } = require('./tenant');
@@ -166,11 +166,21 @@ function changeSummaryToHtml(changes, lang){
 // break the request that triggered it, so every failure is swallowed after logging. `buildContent`
 // is `(lang) => ({ subject, bodyHtml })` so each language group of recipients gets its own
 // localized email rather than everyone getting whatever language happened to be passed in.
+// absolute link to a page *inside the requesting family's own space* — always carries the
+// /f/<slug> prefix. A bare `/admin.html` link resolves to the default family (server/tenant.js
+// DEFAULT_FAMILY), so every other family's admins clicking "Review" in an email used to land
+// in the platform owner's family instead of their own. Every email link to a family page
+// must go through this.
+function familyUrl(req, pagePath){
+  const base = process.env.PUBLIC_BASE_URL || `${req.protocol}://${req.get('host')}`;
+  return `${base}/f/${req.family.slug}${pagePath.startsWith('/') ? '' : '/'}${pagePath}`;
+}
+
 async function notifyAdmins(req, { buildContent, highlightParam, highlightId }){
   try{
     const recipients = await getAdminRecipients();
     if (!recipients.length) return;
-    const link = `${req.protocol}://${req.get('host')}/admin.html?${highlightParam}=${encodeURIComponent(highlightId)}`;
+    const link = familyUrl(req, `/admin.html?${highlightParam}=${encodeURIComponent(highlightId)}`);
     const groups = groupEmailsByLang(recipients);
     for (const [lang, emails] of Object.entries(groups)){
       const { subject, bodyHtml } = buildContent(lang);
@@ -188,7 +198,7 @@ async function notifyMembers(req, { buildContent, link }){
   try{
     const recipients = await getMemberRecipients();
     if (!recipients.length) return;
-    const fullLink = `${req.protocol}://${req.get('host')}${link}`;
+    const fullLink = familyUrl(req, link);
     const groups = groupEmailsByLang(recipients);
     for (const [lang, emails] of Object.entries(groups)){
       const { subject, bodyHtml } = buildContent(lang);
@@ -1207,9 +1217,19 @@ function credentialBlockHtml(username, tempPassword, lang){
   return `<div style="border:1px solid #ddd;border-radius:8px;padding:14px;margin:12px 0">${row(emailT(lang,'Username','Nom d\'utilisateur'), username)}${row(emailT(lang,'Temporary password','Mot de passe temporaire'), tempPassword)}</div><p style="color:#666;font-size:13px">${emailT(lang, 'Copy and paste these rather than typing them by hand — easy to mistype otherwise.', 'Copiez-collez ces informations plutôt que de les retaper — il est facile de faire une erreur sinon.')}</p>`;
 }
 
-async function resetAdminPasswordAndNotify(dbLike, userId, familyName){
+async function resetAdminPasswordAndNotify(dbLike, userId, familyName, reviewerId){
   const tempPassword = generateTempPassword();
   await dbLike.prepare('UPDATE users SET password_hash = ?, must_change_password = ? WHERE id = ?').run(bcrypt.hashSync(tempPassword, 10), true, userId);
+  // a fresh password answers every reset request this admin still has open, however the owner
+  // got here (from the request itself, or straight from the Administrators list) — otherwise
+  // they linger in the owner's queue looking unhandled long after the password was changed
+  const open = await dbLike.prepare("SELECT id, payload FROM requests WHERE type = 'admin_password_reset' AND status = 'pending'").all();
+  for (const r of open){
+    let p = {}; try { p = JSON.parse(r.payload) || {}; } catch(e){}
+    if (p.user_id === userId){
+      await dbLike.prepare('UPDATE requests SET status = ?, reviewed_by = ?, reviewed_at = ? WHERE id = ?').run('approved', reviewerId || null, now(), r.id);
+    }
+  }
   const user = await dbLike.prepare('SELECT username, email, preferred_language FROM users WHERE id = ?').get(userId);
   if (user && user.email){
     const lang = user.preferred_language;
@@ -1284,7 +1304,7 @@ router.post('/platform/admins/:id/reset-password', express.json(), wrap(async (r
     const user = await db.prepare("SELECT id FROM users WHERE id = ? AND role = 'admin'").get(req.params.id);
     if (!user) return;
     found = true;
-    await resetAdminPasswordAndNotify(db, user.id, family.name);
+    await resetAdminPasswordAndNotify(db, user.id, family.name, req.session.user.id);
   });
   if (!found) return res.status(404).json({ error: 'not found' });
   res.json({ ok:true });
@@ -1360,7 +1380,7 @@ router.post('/owner/password-reset-requests/:id/resolve', express.json(), wrap(a
     const user = await db.prepare("SELECT id FROM users WHERE id = ? AND role IN ('admin','platform_owner')").get(payload.user_id);
     if (!user) return;
     await db.transaction(async (tx) => {
-      await resetAdminPasswordAndNotify(tx, user.id, family.name);
+      await resetAdminPasswordAndNotify(tx, user.id, family.name, req.session.user.id);
       await tx.prepare('UPDATE requests SET status = ?, reviewed_by = ?, reviewed_at = ? WHERE id = ?').run('approved', req.session.user.id, now(), req.params.id);
     });
     resolved = true;
@@ -1545,7 +1565,8 @@ router.post('/platform/families/requests/:id/approve', wrap(async (req,res)=>{
     if (payload.type === 'create_family'){
       await processCreateFamily(payload, req.session.user.id, req);
     } else if (payload.type === 'delete_family'){
-      await db.prepare("UPDATE public.families SET status = 'deleted' WHERE slug = ?").run(payload.slug);
+      const target = await db.prepare('SELECT * FROM public.families WHERE slug = ?').get(payload.slug);
+      if (target) await deleteFamilyCompletely(target);
     }
     await db.prepare('UPDATE public.platform_requests SET status = ?, reviewed_by = ?, reviewed_at = ? WHERE id = ?').run('approved', req.session.user.id, now(), req.params.id);
     res.json({ ok:true });
@@ -1568,24 +1589,65 @@ router.post('/platform/families/requests/:id/reject', express.json(), wrap(async
 router.get('/platform/families', wrap(async (req,res)=>{
   if (!requirePlatformOwner(req,res)) return;
   const rows = await db.prepare('SELECT * FROM public.families ORDER BY created_at DESC').all();
+  // each family's *current* admin usernames, read live from its own schema — owner_username
+  // is only who was named at creation and goes stale as admins are added/removed
+  for (const f of rows){
+    if (f.status === 'pending' || !f.schema_name) continue;
+    try{
+      const admins = await db.withTenant(f.schema_name, () => db.prepare("SELECT username FROM users WHERE role = 'admin' ORDER BY created_at ASC").all());
+      f.admin_usernames = admins.map(a => a.username);
+    }catch(e){ /* one unreadable family must not hide the whole list */ }
+  }
   res.json(rows);
 }));
 
+// every stored-file URL behind one archive post (or one profile photo) — photo posts keep a
+// JSON array (multi-photo posts), audio posts and older photo posts keep one plain URL string.
+// Only absolute http(s) URLs count: anything else is a bundled default image, not storage.
+function storedFileUrls(filePath){
+  if (!filePath) return [];
+  let list = [filePath];
+  try { const parsed = JSON.parse(filePath); list = Array.isArray(parsed) ? parsed : [parsed]; } catch(e){}
+  return list.filter(u => typeof u === 'string' && /^https?:\/\//i.test(u));
+}
+
+// size of one stored file, asked of the storage host itself (a HEAD request — nothing is
+// downloaded). null when it can't be told (file gone, timed out, no Content-Length).
+async function measureRemoteFile(url){
+  try{
+    const r = await fetch(url, { method: 'HEAD', signal: AbortSignal.timeout(4000) });
+    // an HTML answer is a fallback/error page, not the stored file
+    if (!r.ok || /^text\/html/i.test(r.headers.get('content-type') || '')) return null;
+    const len = Number(r.headers.get('content-length'));
+    return Number.isFinite(len) && len >= 0 ? len : null;
+  }catch(e){ return null; }
+}
+
+// how many never-measured files one stats request measures before answering — keeps a single
+// click well inside the function timeout even for a family with years of uploads; the rest are
+// picked up on the next open (results are saved, so each file is only ever measured once).
+const MEASURE_BATCH = 60;
+
 // a single family's own details, for the owner to review without ever stepping inside that
 // family's private space (no member names, no tree content, no archive contents — just
-// counts and the one thing an admin might actually call in to ask about: their own username
-// and this family's own ID/slug). `families.owner_username` only ever reflects who was named
-// at creation time and goes stale the moment admins are added/removed via /platform/admins,
-// so this re-reads the tenant's own `users` table live instead of trusting that column.
+// counts, plus the admins' own identities, since "which username / which family ID do I log
+// in with?" is the main thing an admin calls the owner about). `families.owner_username` only
+// ever reflects who was named at creation time and goes stale the moment admins are added or
+// removed via /platform/admins, so this re-reads the tenant's own `users` table live instead.
 router.get('/platform/families/:id/stats', wrap(async (req,res)=>{
   if (!requirePlatformOwner(req,res)) return;
   const family = await db.prepare('SELECT * FROM public.families WHERE id = ?').get(req.params.id);
   if (!family) return res.status(404).json({ error: 'Family not found.' });
+  if (family.status === 'pending' || !family.schema_name) return res.status(400).json({ error: 'This family has not been approved yet.' });
+
+  const cutoff30 = new Date(Date.now() - 30*86400000).toISOString();
 
   const stats = await db.withTenant(family.schema_name, async () => {
-    const admins = await db.prepare(
-      "SELECT username, email, created_at, must_change_password FROM users WHERE role = 'admin' ORDER BY created_at ASC"
-    ).all();
+    const admins = await db.prepare(`
+      SELECT u.username, u.email, u.created_at, u.must_change_password, p.full_name
+      FROM users u LEFT JOIN people p ON p.id = u.person_id
+      WHERE u.role = 'admin' ORDER BY u.created_at ASC
+    `).all();
     const people = await db.prepare(`
       SELECT
         COUNT(*) FILTER (WHERE approval_status = 'approved')::int AS approved,
@@ -1598,37 +1660,87 @@ router.get('/platform/families/:id/stats', wrap(async (req,res)=>{
     `).get();
     const members = await db.prepare(`
       SELECT
+        COUNT(*)::int AS total,
         COUNT(*) FILTER (WHERE must_change_password = false)::int AS active,
         COUNT(*) FILTER (WHERE must_change_password = true)::int AS pending
       FROM users WHERE role = 'member'
     `).get();
-    const mediaRows = await db.prepare(
-      "SELECT type, COUNT(*)::int AS count, COALESCE(SUM(file_size),0)::bigint AS bytes FROM archive GROUP BY type"
-    ).all();
-    const lastActivity = await db.prepare('SELECT MAX(created_at) AS last FROM archive').get();
-    return { admins, people, members, mediaRows, lastActivity: lastActivity ? lastActivity.last : null };
+    const activity = await db.prepare(`
+      SELECT
+        MAX(created_at) FILTER (WHERE event_type = 'login') AS last_login,
+        MAX(created_at) FILTER (WHERE event_type = 'login' AND role = 'admin') AS last_admin_login,
+        COUNT(*) FILTER (WHERE event_type = 'login' AND created_at >= ?)::int AS logins_30d,
+        COUNT(DISTINCT person_id) FILTER (WHERE created_at >= ? AND person_id IS NOT NULL)::int AS active_people_30d
+      FROM analytics_events
+    `).get(cutoff30, cutoff30);
+    const lastUpload = await db.prepare('SELECT MAX(created_at) AS last FROM archive').get();
+
+    // --- storage: sizes recorded at upload time, plus measured-after-the-fact sizes for every
+    // post older than archive.file_size and for profile photos (which never recorded one)
+    const archiveRows = await db.prepare('SELECT id, type, file_path, file_size FROM archive').all();
+    const photoRows = await db.prepare("SELECT photo_path FROM people WHERE photo_path IS NOT NULL AND photo_path <> ''").all();
+    const known = new Map((await db.prepare('SELECT url, bytes FROM blob_sizes').all()).map(r => [r.url, r.bytes == null ? null : Number(r.bytes)]));
+
+    const wanted = new Set();
+    archiveRows.forEach(r => { if (r.file_size == null) storedFileUrls(r.file_path).forEach(u => { if (!known.has(u)) wanted.add(u); }); });
+    photoRows.forEach(r => storedFileUrls(r.photo_path).forEach(u => { if (!known.has(u)) wanted.add(u); }));
+    const batch = Array.from(wanted).slice(0, MEASURE_BATCH);
+    for (let i = 0; i < batch.length; i += 8){
+      const chunk = batch.slice(i, i + 8);
+      const sizes = await Promise.all(chunk.map(measureRemoteFile));
+      for (let j = 0; j < chunk.length; j++){
+        known.set(chunk[j], sizes[j]);
+        await db.prepare('INSERT INTO blob_sizes (url, bytes, measured_at) VALUES (?, ?, ?) ON CONFLICT (url) DO UPDATE SET bytes = excluded.bytes, measured_at = excluded.measured_at')
+          .run(chunk[j], sizes[j], now());
+      }
+    }
+
+    const media = { photo: { count: 0, bytes: 0 }, audio: { count: 0, bytes: 0 }, video: { count: 0, bytes: 0 } };
+    let unmeasured = 0;
+    for (const r of archiveRows){
+      const bucket = media[r.type] || null;
+      if (bucket) bucket.count++;
+      let bytes = r.file_size == null ? null : Number(r.file_size);
+      if (bytes == null){
+        const urls = storedFileUrls(r.file_path);
+        if (urls.length && urls.every(u => known.has(u))){
+          bytes = urls.reduce((sum, u) => sum + (known.get(u) || 0), 0);
+          // fill the post's own column in too, so it never needs measuring again
+          await db.prepare('UPDATE archive SET file_size = ? WHERE id = ? AND file_size IS NULL').run(bytes, r.id);
+        } else if (urls.length){
+          unmeasured++;
+        }
+      }
+      if (bucket && bytes) bucket.bytes += bytes;
+    }
+    const profilePhotos = { count: 0, bytes: 0 };
+    photoRows.forEach(r => storedFileUrls(r.photo_path).forEach(u => {
+      profilePhotos.count++;
+      if (known.has(u)) profilePhotos.bytes += known.get(u) || 0; else unmeasured++;
+    }));
+
+    return { admins, people, members, activity, lastUpload: lastUpload ? lastUpload.last : null, media, profilePhotos, unmeasured };
   });
 
-  const media = { photo: { count: 0, bytes: 0 }, audio: { count: 0, bytes: 0 }, video: { count: 0, bytes: 0 } };
-  let totalBytes = 0;
-  stats.mediaRows.forEach(r => {
-    if (media[r.type]) { media[r.type] = { count: r.count, bytes: Number(r.bytes) }; totalBytes += Number(r.bytes); }
-  });
-
+  const totalBytes = stats.media.photo.bytes + stats.media.audio.bytes + stats.media.video.bytes + stats.profilePhotos.bytes;
   const createdAt = family.created_at ? new Date(family.created_at) : null;
   const daysSinceCreated = createdAt ? Math.max(0, Math.floor((Date.now() - createdAt.getTime()) / 86400000)) : null;
+  const base = process.env.PUBLIC_BASE_URL || `${req.protocol}://${req.get('host')}`;
 
   res.json({
     family: {
       id: family.id, name: family.name, slug: family.slug, status: family.status,
       created_at: family.created_at, approved_at: family.approved_at, days_since_created: daysSinceCreated,
+      admin_login_url: `${base}/f/${family.slug}/admin-login`,
     },
     admins: stats.admins,
     people: stats.people,
     members: stats.members,
-    media,
+    activity: { ...stats.activity, last_upload: stats.lastUpload },
+    media: stats.media,
+    profile_photos: stats.profilePhotos,
     total_bytes: totalBytes,
-    last_activity: stats.lastActivity,
+    unmeasured_files: stats.unmeasured,
   });
 }));
 
@@ -1642,6 +1754,112 @@ router.post('/platform/families/:id/reactivate', wrap(async (req,res)=>{
   if (!requirePlatformOwner(req,res)) return;
   await db.prepare("UPDATE public.families SET status = 'active' WHERE id = ?").run(req.params.id);
   res.json({ ok:true });
+}));
+
+// --- owner: clear a family's data, or delete the family outright. Both are irreversible, so
+// both require the owner to type the family's ID back (`confirm_slug`) — a stray click on the
+// wrong row can't wipe a family. The default family (the owner's own, living in the `public`
+// schema alongside every platform-wide table) can never be cleared or deleted.
+const PROTECTED_FAMILY_SLUG = 'nahadjambethe';
+
+function isOwnBlobUrl(u){
+  try { return /\.blob\.vercel-storage\.com$/i.test(new URL(u).hostname); } catch(e){ return false; }
+}
+
+// every stored file this family owns — profile photos, archive files, settings images (e.g.
+// the login-page photo), and photos attached to still-pending requests. Runs inside the
+// family's own tenant context. Only our own Blob-store URLs are returned, never anything else.
+async function collectFamilyBlobUrls(){
+  const urls = new Set();
+  const add = (v) => storedFileUrls(v).forEach(u => urls.add(u));
+  (await db.prepare('SELECT photo_path FROM people').all()).forEach(r => add(r.photo_path));
+  (await db.prepare('SELECT file_path FROM archive').all()).forEach(r => add(r.file_path));
+  (await db.prepare('SELECT value FROM settings').all()).forEach(r => add(r.value));
+  (await db.prepare('SELECT payload FROM requests').all()).forEach(r => {
+    (String(r.payload || '').match(/https?:\/\/[^"'\s\\]+/g) || []).forEach(u => urls.add(u));
+  });
+  return Array.from(urls).filter(isOwnBlobUrl);
+}
+
+// best-effort: a file that fails to delete only costs storage, it never leaves data reachable
+// (nothing references it any more) — so this reports a count rather than failing the action
+async function deleteBlobFiles(urls){
+  let deleted = 0;
+  for (let i = 0; i < urls.length; i += 100){
+    const chunk = urls.slice(i, i + 100);
+    try { await del(chunk); deleted += chunk.length; }
+    catch(e){ console.error('[blob] delete failed', e && e.message || e); }
+  }
+  return deleted;
+}
+
+// log out everyone whose session belongs to this family — otherwise a session left over from
+// before the wipe (or, after a delete, a future family reusing the same ID) would still carry
+// that family's role
+async function purgeFamilySessions(slug){
+  try { await db.prepare("DELETE FROM public.session WHERE sess::jsonb -> 'user' ->> 'familySlug' = ?").run(slug); }
+  catch(e){ console.error('[session] purge failed for', slug, e && e.message || e); }
+}
+
+async function loadDestructibleFamily(req, res){
+  const family = await db.prepare('SELECT * FROM public.families WHERE id = ?').get(req.params.id);
+  if (!family){ res.status(404).json({ error: 'Family not found.' }); return null; }
+  if (family.slug === PROTECTED_FAMILY_SLUG || family.schema_name === 'public'){ res.status(403).json({ error: 'This family cannot be cleared or deleted.' }); return null; }
+  const typed = String((req.body && req.body.confirm_slug) || '').trim();
+  if (typed !== family.slug){ res.status(400).json({ error: 'The family ID you typed does not match.' }); return null; }
+  return family;
+}
+
+async function schemaExists(schemaName){
+  const r = await db.prepare('SELECT 1 AS ok FROM pg_namespace WHERE nspname = ?').get(schemaName);
+  return !!r;
+}
+
+// permanently removes the family: its whole schema, its stored files, its sessions and its
+// row in public.families (which frees its ID for reuse). Shared by the owner's direct "Delete"
+// action and by approving a family admin's own deletion request.
+async function deleteFamilyCompletely(family){
+  if (family.slug === PROTECTED_FAMILY_SLUG || family.schema_name === 'public') throw new Error('This family cannot be deleted.');
+  let urls = [];
+  if (family.schema_name && await schemaExists(family.schema_name)){
+    urls = await db.withTenant(family.schema_name, () => collectFamilyBlobUrls());
+    await db.dropFamilySchema(family.schema_name);
+  }
+  await db.prepare('DELETE FROM public.families WHERE id = ?').run(family.id);
+  await purgeFamilySessions(family.slug);
+  const filesDeleted = await deleteBlobFiles(urls);
+  return { files_found: urls.length, files_deleted: filesDeleted };
+}
+
+// wipe everything inside the family but keep the family itself and its admin accounts, so
+// its admins can log straight back in and start again from an empty tree
+router.post('/platform/families/:id/clear-data', express.json(), wrap(async (req,res)=>{
+  if (!requirePlatformOwner(req,res)) return;
+  const family = await loadDestructibleFamily(req, res);
+  if (!family) return;
+  if (!family.schema_name || !await schemaExists(family.schema_name)) return res.status(400).json({ error: 'This family has no data to clear.' });
+  const urls = await db.withTenant(family.schema_name, async () => {
+    const found = await collectFamilyBlobUrls();
+    await db.transaction(async (tx) => {
+      for (const table of ['archive_likes','archive_comments','archive','events','feedback_messages','relationships','requests','analytics_events','blob_sizes','settings','people']){
+        await tx.prepare(`DELETE FROM ${table}`).run();
+      }
+      await tx.prepare("DELETE FROM users WHERE role <> 'admin'").run();
+      await tx.prepare('UPDATE users SET person_id = NULL').run();
+    });
+    return found;
+  });
+  await purgeFamilySessions(family.slug);
+  const filesDeleted = await deleteBlobFiles(urls);
+  res.json({ ok:true, files_found: urls.length, files_deleted: filesDeleted });
+}));
+
+router.post('/platform/families/:id/delete', express.json(), wrap(async (req,res)=>{
+  if (!requirePlatformOwner(req,res)) return;
+  const family = await loadDestructibleFamily(req, res);
+  if (!family) return;
+  const result = await deleteFamilyCompletely(family);
+  res.json({ ok:true, ...result });
 }));
 
 // --- marketing site content (welcome.html) — platform owner only. Stored in public.settings
@@ -2061,7 +2279,7 @@ router.post('/archive', upload.array('files', 10), wrap(async (req,res)=>{
   try{
     const recipients = await getAdminRecipients();
     if (recipients.length){
-      const link = `${req.protocol}://${req.get('host')}/admin.html?archiveHighlight=${encodeURIComponent(id)}`;
+      const link = familyUrl(req, `/admin.html?archiveHighlight=${encodeURIComponent(id)}`);
       const groups = groupEmailsByLang(recipients);
       for (const [lang, emails] of Object.entries(groups)){
         const typeLabel = emailT(lang, type, { photo: 'photo', audio: 'audio', video: 'vidéo' }[type] || type);
@@ -2254,7 +2472,7 @@ router.post('/events', express.json(), wrap(async (req,res)=>{
   try{
     const recipients = await getAdminRecipients();
     if (recipients.length){
-      const link = `${req.protocol}://${req.get('host')}/admin.html?eventHighlight=${encodeURIComponent(id)}`;
+      const link = familyUrl(req, `/admin.html?eventHighlight=${encodeURIComponent(id)}`);
       const groups = groupEmailsByLang(recipients);
       for (const [lang, emails] of Object.entries(groups)){
         const posterName = poster ? poster.full_name : emailT(lang, 'Someone', 'Quelqu\'un');
