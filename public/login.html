@@ -35,7 +35,7 @@
           <p id="landing-desc" style="color:var(--muted)" data-i18n="landing_desc">Find your place in the family tree — log in with your username and password.</p>
           <form id="login-form">
             <label id="label-login-username" data-i18n="login_username_label">Username
-              <input id="loginUsername" type="text" autocomplete="username" data-i18n-placeholder="login_username_placeholder" placeholder="e.g. jdoe" />
+              <input id="loginUsername" type="text" autocomplete="username" autocapitalize="none" autocorrect="off" spellcheck="false" data-i18n-placeholder="login_username_placeholder" placeholder="e.g. jdoe" />
             </label>
             <label id="label-login-password" data-i18n="login_password_label">Password
               <input id="loginPassword" type="password" autocomplete="current-password" />
@@ -54,7 +54,7 @@
           </p>
           <form id="forgot-password-form" class="hidden" style="margin-top:12px">
             <label data-i18n="forgot_password_username_label">Username
-              <input id="fp-username" type="text" autocomplete="username" required />
+              <input id="fp-username" type="text" autocomplete="username" autocapitalize="none" autocorrect="off" spellcheck="false" required />
             </label>
             <button type="submit" data-i18n="forgot_password_submit_btn">Request password reset</button>
             <p id="forgot-password-feedback" class="hint"></p>

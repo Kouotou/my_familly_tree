@@ -235,11 +235,15 @@ function requireLoggedIn(req,res){
 }
 
 async function isUsernameTaken(username){
+  // compared ignoring case and surrounding spaces — login matches that loosely too (see
+  // findUserForLogin), so two accounts differing only by case must never be allowed to exist
+  username = String(username).trim();
   if (!username) return false;
-  if (await db.prepare('SELECT id FROM people WHERE username = ?').get(username)) return true;
-  if (await db.prepare('SELECT id FROM users WHERE username = ?').get(username)) return true;
+  if (await db.prepare('SELECT id FROM people WHERE LOWER(TRIM(username)) = LOWER(?)').get(username)) return true;
+  if (await db.prepare('SELECT id FROM users WHERE LOWER(TRIM(username)) = LOWER(?)').get(username)) return true;
   const pending = await db.prepare("SELECT payload FROM requests WHERE status = 'pending'").all();
-  return pending.some(r=>{ try{ return JSON.parse(r.payload).username === username; }catch(e){ return false; } });
+  const wanted = username.toLowerCase();
+  return pending.some(r=>{ try{ return String(JSON.parse(r.payload).username || '').trim().toLowerCase() === wanted; }catch(e){ return false; } });
 }
 
 // this person's father/mother, classified by gender among their recorded parents.
@@ -266,18 +270,42 @@ async function getSpouseIds(dbLike, personId){
 // Login by username + password — used for both members and admins. Username is each
 // person's unique login id (assigned at registration, or by an admin for accounts they
 // create directly).
+// finds the account for a typed username: exact match (ignoring stray surrounding spaces)
+// first; failing that, a case-insensitive match — phone keyboards routinely auto-capitalize
+// the first letter in one form but not another ("Jean" at registration, "jean" at login) —
+// but only when exactly one account matches that way, so it can never pick between two
+// accounts that differ only by case.
+async function findUserForLogin(username){
+  const exact = await db.prepare('SELECT * FROM users WHERE TRIM(username) = TRIM(?)').get(username);
+  if (exact) return exact;
+  const loose = await db.prepare('SELECT * FROM users WHERE LOWER(TRIM(username)) = LOWER(TRIM(?)) LIMIT 2').all(username);
+  return loose.length === 1 ? loose[0] : null;
+}
+
+// the password as stored may or may not include surrounding spaces (registration used to keep
+// them, login always stripped them — a phone keyboard's auto-inserted trailing space made
+// such accounts impossible to log into), so accept either form of what was typed
+function passwordMatches(rawPassword, hash){
+  if (!hash) return false;
+  const raw = String(rawPassword || '');
+  const trimmed = raw.trim();
+  // as typed; without surrounding spaces (how every password is stored from now on); and with
+  // the single trailing space a phone keyboard most often appended at registration
+  const candidates = Array.from(new Set([raw, trimmed, trimmed + ' ']));
+  return candidates.some(c => c && bcrypt.compareSync(c, hash));
+}
+
 async function handleLogin(req, res){
   const username = ((req.body && req.body.username) || '').trim();
-  const password = ((req.body && req.body.password) || '').trim();
-  if (!username || !password) return res.status(400).json({ error: 'username and password are required' });
-  // TRIM() on both sides of the match: a stray leading/trailing space typed or pasted into a
-  // username at creation time (there was no trimming there either, now fixed, but this covers
-  // any row that predates that fix) would otherwise silently make login impossible — the
-  // stored username looks identical to the eye but never matches what anyone actually types.
-  const user = await db.prepare('SELECT * FROM users WHERE TRIM(username) = TRIM(?)').get(username);
-  if (!user) return res.status(401).json({ error: 'invalid' });
-  const ok = bcrypt.compareSync(password, user.password_hash);
-  if (!ok) return res.status(401).json({ error: 'invalid' });
+  const rawPassword = (req.body && req.body.password) || '';
+  if (!username || !rawPassword.trim()) return res.status(400).json({ error: 'username and password are required' });
+  const user = await findUserForLogin(username);
+  if (!user || !passwordMatches(rawPassword, user.password_hash)){
+    // the most useful signal when someone reports "my password is correct but it won't let me
+    // in": was it the username that didn't resolve, or the password that didn't match?
+    console.warn(`[login] failed for family=${req.family && req.family.slug} — ${user ? 'password mismatch' : 'no such username'}`);
+    return res.status(401).json({ error: 'invalid' });
+  }
   // refreshed on every login from whatever language the device/browser is currently in (or
   // whatever the visitor last toggled to) — see currentLang()/familyPrefix() in public/app.js —
   // so outbound email always follows wherever this person is actually reading the app from,
@@ -296,10 +324,10 @@ router.post('/auth/admin-login', wrap(handleLogin));
 // be used as a second way into a plain admin account
 router.post('/auth/owner-login', express.json(), wrap(async (req,res)=>{
   const username = ((req.body && req.body.username) || '').trim();
-  const password = ((req.body && req.body.password) || '').trim();
-  if (!username || !password) return res.status(400).json({ error: 'username and password are required' });
-  const user = await db.prepare('SELECT * FROM users WHERE TRIM(username) = TRIM(?)').get(username);
-  if (!user || user.role !== 'platform_owner' || !bcrypt.compareSync(password, user.password_hash)) {
+  const rawPassword = (req.body && req.body.password) || '';
+  if (!username || !rawPassword.trim()) return res.status(400).json({ error: 'username and password are required' });
+  const user = await findUserForLogin(username);
+  if (!user || user.role !== 'platform_owner' || !passwordMatches(rawPassword, user.password_hash)) {
     return res.status(401).json({ error: 'invalid' });
   }
   const preferredLanguage = (req.body && req.body.preferred_language) === 'fr' ? 'fr' : 'en';
@@ -478,7 +506,7 @@ router.post('/auth/register', upload.fields([
 
   const payload = {
     type: 'create_person',
-    username: body.username || null,
+    username: body.username ? String(body.username).trim() : null,
     password: body.password || null,
     full_name: body.full_name,
     gender: body.gender,
@@ -671,9 +699,50 @@ async function linkSibling(dbLike, a,b){
   await ins.run(uuidv4(), b, a, 'sibling');
 }
 
+// "Approve with edits" rebuilds a registration request from the admin's edit form — but that
+// form never carries the registrant's own password (it's only ever held hashed-on-approval
+// inside the original request), nor their email/language, nor an already-uploaded photo. The
+// old code replaced the payload wholesale with `password: null`, so createLoginForPerson below
+// silently skipped creating any login at all: the member was approved into the tree, but every
+// login attempt afterwards answered "username or password incorrect". Start from the original
+// request instead and only overlay what the admin actually edited.
+function mergeEditedCreatePayload(original, edited){
+  const merged = Object.assign({}, original || {}, edited || {});
+  delete merged.new_password;
+  const newPassword = edited && edited.new_password ? String(edited.new_password) : '';
+  merged.password = newPassword || (original && original.password) || null;
+  if (!edited || !edited.photo_path) merged.photo_path = (original && original.photo_path) || null;
+  if (!edited || edited.relations === undefined) merged.relations = (original && original.relations) || [];
+  merged.email = (original && original.email) || merged.email || null;
+  merged.preferred_language = (original && original.preferred_language) || merged.preferred_language || null;
+  if (typeof merged.username === 'string') merged.username = merged.username.trim() || null;
+  return merged;
+}
+
+// sets (or, if it was never created, creates) the login for a person — the admin's "set new
+// password" used to be a bare UPDATE ... WHERE person_id, which for a member whose login was
+// never created (see mergeEditedCreatePayload above) matched no row and still reported
+// success, leaving them locked out with no way for the admin to fix it.
+async function setPasswordForPerson(dbLike, personId, password){
+  const hash = bcrypt.hashSync(String(password).trim(), 10);
+  const r = await dbLike.prepare('UPDATE users SET password_hash = ? WHERE person_id = ?').run(hash, personId);
+  if (r && r.changes) return;
+  const person = await dbLike.prepare('SELECT username FROM people WHERE id = ?').get(personId);
+  const username = person && person.username ? String(person.username).trim() : '';
+  if (!username) throw new Error('This person has no username yet — set a username first, then the password.');
+  const byName = await dbLike.prepare('SELECT id, person_id FROM users WHERE TRIM(username) = ?').get(username);
+  if (byName){
+    if (byName.person_id && byName.person_id !== personId) throw new Error('That username already belongs to another account.');
+    await dbLike.prepare('UPDATE users SET password_hash = ?, person_id = ? WHERE id = ?').run(hash, personId, byName.id);
+    return;
+  }
+  await dbLike.prepare('INSERT INTO users (id, username, password_hash, role, person_id, created_at) VALUES (?, ?, ?, ?, ?, ?)').run(uuidv4(), username, hash, 'member', personId, now());
+}
+
 async function createLoginForPerson(dbLike, personId, username, password, email, preferredLanguage){
+  username = typeof username === 'string' ? username.trim() : username;
   if (!username || !password) return;
-  const pwdHash = bcrypt.hashSync(password, 10);
+  const pwdHash = bcrypt.hashSync(String(password).trim(), 10);
   const lang = preferredLanguage === 'fr' ? 'fr' : 'en';
   await dbLike.prepare('INSERT INTO users (id, username, password_hash, role, person_id, email, preferred_language) VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT (username) DO NOTHING').run(uuidv4(), username, pwdHash, 'member', personId, email || null, lang);
   await dbLike.prepare('UPDATE users SET person_id = ?, email = ?, preferred_language = ? WHERE username = ?').run(personId, email || null, lang, username);
@@ -990,8 +1059,8 @@ router.post('/member/password', express.json(), wrap(async (req,res)=>{
   if (String(new_password).length < 4) return res.status(400).json({ error: 'New password is too short.' });
   const user = await db.prepare('SELECT * FROM users WHERE id = ?').get(req.session.user.id);
   if (!user) return res.status(404).json({ error: 'account not found' });
-  if (!bcrypt.compareSync(current_password, user.password_hash)) return res.status(401).json({ error: 'Current password is incorrect.' });
-  await db.prepare('UPDATE users SET password_hash = ?, must_change_password = ? WHERE id = ?').run(bcrypt.hashSync(new_password, 10), false, user.id);
+  if (!passwordMatches(current_password, user.password_hash)) return res.status(401).json({ error: 'Current password is incorrect.' });
+  await db.prepare('UPDATE users SET password_hash = ?, must_change_password = ? WHERE id = ?').run(bcrypt.hashSync(String(new_password).trim(), 10), false, user.id);
   req.session.user.mustChangePassword = false;
   res.json({ ok:true });
 }));
@@ -1036,7 +1105,7 @@ router.post('/member/relatives/add', upload.single('photo'), wrap(async (req,res
     payload.residence = body.residence || null;
     payload.phone = body.phone || null;
     payload.photo_path = req.file ? await uploadPhoto(req.file, 'photos') : null;
-    payload.username = body.username || null;
+    payload.username = body.username ? String(body.username).trim() : null;
     payload.password = body.password || null;
   }
 
@@ -1079,10 +1148,13 @@ router.post('/admin/requests/:id/reject', express.json(), wrap(async (req,res)=>
 router.post('/admin/requests/:id/edit-approve', express.json(), wrap(async (req,res)=>{
   if (!requireAdmin(req,res)) return;
   const id = req.params.id;
-  const newPayload = req.body && req.body.payload ? req.body.payload : null;
+  const editedPayload = req.body && req.body.payload ? req.body.payload : null;
   const reqRow = await db.prepare('SELECT * FROM requests WHERE id = ?').get(id);
   if (!reqRow) return res.status(404).json({error:'not found'});
-  if (!newPayload) return res.status(400).json({error:'missing payload'});
+  if (!editedPayload) return res.status(400).json({error:'missing payload'});
+  let originalPayload = {};
+  try{ originalPayload = JSON.parse(reqRow.payload) || {}; }catch(e){}
+  const newPayload = mergeEditedCreatePayload(originalPayload, editedPayload);
   try{
     await db.transaction(async (tx) => {
       await tx.prepare('UPDATE requests SET payload = ? WHERE id = ?').run(JSON.stringify(newPayload), id);
@@ -1107,10 +1179,10 @@ router.post('/admin/requests/:id/edit-approve-multipart', upload.single('photo')
   if (!reqRow) return res.status(404).json({error:'not found'});
 
   const body = req.body || {};
-  const payload = {
+  const edited = {
     type: body.type || 'create_person',
     username: body.username || null,
-    password: null,
+    new_password: body.new_password || null,
     full_name: body.full_name || null,
     gender: body.gender || null,
     birth_year: body.birth_year ? Number(body.birth_year) : null,
@@ -1120,18 +1192,20 @@ router.post('/admin/requests/:id/edit-approve-multipart', upload.single('photo')
     residence: body.residence || null,
     phone: body.phone || null,
     photo_path: null,
-    relations: []
   };
-  if (req.file) payload.photo_path = await uploadPhoto(req.file, 'photos');
+  if (req.file) edited.photo_path = await uploadPhoto(req.file, 'photos');
 
-  // relations: expected as JSON string in body.relations
+  // relations: expected as JSON string in body.relations (absent = keep the original's)
   if (body.relations){
-    try{ payload.relations = JSON.parse(body.relations); }catch(e){ payload.relations = []; }
+    try{ edited.relations = JSON.parse(body.relations); }catch(e){ edited.relations = []; }
   }
   // heritage claims from the original request — see the same field on /auth/register
   if (body.heir_of){
-    try{ const parsed = JSON.parse(body.heir_of); payload.heir_of = Array.isArray(parsed) ? parsed : []; }catch(e){ payload.heir_of = []; }
+    try{ const parsed = JSON.parse(body.heir_of); edited.heir_of = Array.isArray(parsed) ? parsed : []; }catch(e){ edited.heir_of = []; }
   }
+  let originalPayload = {};
+  try{ originalPayload = JSON.parse(reqRow.payload) || {}; }catch(e){}
+  const payload = mergeEditedCreatePayload(originalPayload, edited);
 
   try{
     await db.transaction(async (tx) => {
@@ -1164,7 +1238,7 @@ router.post('/admin/people/:id/update', express.json(), wrap(async (req,res)=>{
       if (p.username){ await tx.prepare('UPDATE users SET person_id = ? WHERE username = ?').run(id, p.username); }
       if (p.new_password){
         if (String(p.new_password).length < 4) throw new Error('New password is too short.');
-        await tx.prepare('UPDATE users SET password_hash = ? WHERE person_id = ?').run(bcrypt.hashSync(p.new_password, 10), id);
+        await setPasswordForPerson(tx, id, p.new_password);
       }
       if (Array.isArray(p.relations)) await applyParentEdits(tx, id, p.relations, req.session.user.id);
     });
@@ -1989,7 +2063,7 @@ router.post('/admin/people/:id/update-multipart', upload.single('photo'), wrap(a
       if (payload.username){ await tx.prepare('UPDATE users SET person_id = ? WHERE username = ?').run(id, payload.username); }
       if (body.new_password){
         if (String(body.new_password).length < 4) throw new Error('New password is too short.');
-        await tx.prepare('UPDATE users SET password_hash = ? WHERE person_id = ?').run(bcrypt.hashSync(body.new_password, 10), id);
+        await setPasswordForPerson(tx, id, body.new_password);
       }
       if (Array.isArray(relations)) await applyParentEdits(tx, id, relations, req.session.user.id);
     });
