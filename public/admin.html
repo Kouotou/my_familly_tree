@@ -249,19 +249,33 @@
       const actions = document.createElement('div'); actions.style.marginTop='10px';
       if (req.status === 'pending'){
         const approveBtn = document.createElement('button'); approveBtn.textContent=t('btn_approve'); approveBtn.addEventListener('click', async ()=>{ if (!await showConfirm(t('confirm_approve'))) return; try{ const res = await fetch(familyPrefix()+'/api/admin/requests/'+req.id+'/approve',{method:'POST', credentials:'same-origin'}); const ct = res.headers.get('content-type')||''; const body = ct.includes('application/json')? await res.json() : await res.text(); if (res.ok){ await loadRequests(currentStatus); } else { alert(t('alert_approve_failed',{msg: body && (body.error||body.message) ? (body.error||body.message) : JSON.stringify(body)})); } }catch(e){ alert(t('network_error')+' '+e.message); } });
-        actions.appendChild(approveBtn);
+        // a plain "Approve" on a password reset would close it without setting any password —
+        // that request is answered by "Set new password & approve" below instead
+        if (req.payload.type !== 'password_reset') actions.appendChild(approveBtn);
         // the edit-before-approve modal only understands the create_person shape
         if (!req.payload.type || req.payload.type === 'create_person' || req.payload.type === 'create'){
           const editBtn = document.createElement('button'); editBtn.textContent=t('btn_edit_approve'); editBtn.style.marginLeft='8px'; editBtn.addEventListener('click', ()=> openEditModal(req, peopleById));
           actions.appendChild(editBtn);
         }
         if (req.payload.type === 'password_reset'){
-          const setPwdBtn = document.createElement('button'); setPwdBtn.textContent = t('btn_set_new_password'); setPwdBtn.style.marginLeft='8px';
+          // one step, like the owner's handling of locked-out admins: choose (or accept the
+          // suggested) password, it's saved and the request approved, then the admin shares it
+          const setPwdBtn = document.createElement('button'); setPwdBtn.textContent = t('btn_set_password_approve');
           setPwdBtn.addEventListener('click', async ()=>{
-            const pid = await resolvePersonIdFromPayload(req);
-            if (!pid){ alert(t('alert_person_not_found')); return; }
-            const person = await api('/people/' + pid);
-            await openEditModalForPerson(person);
+            const who = req.payload.full_name || req.payload.username || '';
+            const typed = window.prompt(t('prompt_member_new_password', { name: who }), suggestTempPassword());
+            if (typed == null) return;
+            const pwd = typed.trim();
+            if (pwd.length < 4){ alert(t('alert_password_too_short')); return; }
+            setPwdBtn.disabled = true;
+            try{
+              const res = await api('/admin/requests/' + req.id + '/set-password', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ new_password: pwd }) });
+              if (res && res.ok){
+                alert(t(res.emailed ? 'alert_member_password_set_emailed' : 'alert_member_password_set', { name: who, username: res.username || req.payload.username || '', password: pwd }));
+                await loadRequests(currentStatus);
+              } else alert(t('alert_error_prefix', { msg: (res && res.error) || JSON.stringify(res) }));
+            }catch(e){ alert(t('network_error') + ' ' + e.message); }
+            setPwdBtn.disabled = false;
           });
           actions.appendChild(setPwdBtn);
         }
@@ -909,7 +923,7 @@
         const endpoint = familyPrefix() + (personId ? ('/api/admin/people/' + personId + '/update-multipart') : ('/api/admin/requests/' + id + '/edit-approve-multipart'));
         const res = await fetch(endpoint, { method:'POST', credentials:'same-origin', body: form });
         const j = await res.json();
-        if (j.ok){ alert(personId ? t('alert_person_updated') : t('alert_approved_with_edits')); document.getElementById('edit-modal').style.display='none'; await loadRequests(currentStatus); await loadRoot(); }
+        if (j.ok){ alert(f.new_password && f.new_password.value.trim() ? t('alert_person_password_updated', { username: (f.username && f.username.value.trim()) || '', password: f.new_password.value.trim() }) : (personId ? t('alert_person_updated') : t('alert_approved_with_edits'))); document.getElementById('edit-modal').style.display='none'; await loadRequests(currentStatus); await loadRoot(); }
         else alert(t('alert_error_prefix',{msg: JSON.stringify(j)}));
         return;
       }
@@ -937,7 +951,7 @@
         // no photo: send json update
         const res = await fetch(familyPrefix()+'/api/admin/people/' + personId + '/update', { method:'POST', headers:{'Content-Type':'application/json'}, credentials:'same-origin', body: JSON.stringify({ payload }) });
         const j = await res.json();
-        if (j.ok){ alert(t('alert_person_updated')); document.getElementById('edit-modal').style.display='none'; await loadRequests(currentStatus); await loadRoot(); }
+        if (j.ok){ alert(payload.new_password && String(payload.new_password).trim() ? t('alert_person_password_updated', { username: payload.username || '', password: String(payload.new_password).trim() }) : t('alert_person_updated')); document.getElementById('edit-modal').style.display='none'; await loadRequests(currentStatus); await loadRoot(); }
         else alert(t('alert_error_prefix',{msg: JSON.stringify(j)}));
         return;
       }
@@ -1105,6 +1119,8 @@
         <input type="hidden" name="photo_path" />
         <input type="hidden" name="relationsLoaded" />
         <label data-i18n="edit_field_username">Username (optional)<input name="username" /></label>
+        <label data-i18n="edit_field_new_password">New login password for this person (creates their login if they don't have one yet — leave blank to keep the current password)<input name="new_password" type="text" autocomplete="off" autocapitalize="none" spellcheck="false" /></label>
+        <button type="button" id="edit-suggest-password" class="secondary" style="margin-top:4px;padding:4px 12px;font-size:12px" data-i18n="edit_suggest_password_btn">Suggest a password</button>
         <label data-i18n="reg_fullname_label">Full name<input name="full_name" required /></label>
         <label data-i18n="reg_gender_label">Gender<select name="gender"><option value="male" data-i18n="male">Male</option><option value="female" data-i18n="female">Female</option><option value="other" data-i18n="other">Other</option></select></label>
         <label data-i18n="reg_birthdate_label">Birth date<input name="birth_date" type="date" /></label>
@@ -1114,7 +1130,6 @@
         <label data-i18n="reg_residence_label">Residence<input name="residence" /></label>
         <label data-i18n="reg_phone_label">Phone<input name="phone" /></label>
         <label data-i18n="edit_field_photo">Photo (replace)<input id="edit-photo" name="photo" type="file" accept="image/*" /></label>
-        <label data-i18n="edit_field_new_password">Set new password (only applies to an existing member account — leave blank to keep unchanged)<input name="new_password" type="password" autocomplete="new-password" /></label>
         <div id="relations-container" style="margin-top:8px">
           <strong data-i18n="edit_relations_heading">Relations</strong>
           <div id="relations-list"></div>
@@ -1127,5 +1142,13 @@
       </form>
     </div>
   </div>
+  <script>
+    // fills the edit form's password field with a readable temporary password (suggestTempPassword in app.js)
+    (function(){
+      const btn = document.getElementById('edit-suggest-password');
+      const form = document.getElementById('edit-form');
+      if (btn && form) btn.addEventListener('click', ()=>{ form.querySelector('[name="new_password"]').value = suggestTempPassword(); });
+    })();
+  </script>
 </body>
 </html>

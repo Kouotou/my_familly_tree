@@ -408,13 +408,42 @@ router.post('/auth/request-password-reset', express.json(), wrap(async (req,res)
           `<strong>${fullName}</strong> (username <code>${user.username}</code>) cannot log in and asked for a new password.`,
           `<strong>${fullName}</strong> (nom d'utilisateur <code>${user.username}</code>) ne peut plus se connecter et demande un nouveau mot de passe.`)}</p>`
           + `<p>${emailT(lang,
-          'Open the request, click "Set new password", choose a temporary password and save. If they have an email on file it is sent to them automatically; otherwise give it to them yourself. They can change it afterwards from their profile.',
-          'Ouvrez la demande, cliquez sur « Définir un nouveau mot de passe », choisissez un mot de passe temporaire et enregistrez. S\'il a un e-mail enregistré, il lui est envoyé automatiquement ; sinon, communiquez-le-lui vous-même. Il pourra le modifier ensuite depuis son profil.')}</p>`,
+          'Open the request, click "Set new password & approve" and choose a temporary password (one is suggested for you). If they have an email on file it is sent to them automatically; otherwise give it to them yourself. They can change it afterwards from their profile.',
+          'Ouvrez la demande, cliquez sur « Définir le mot de passe et approuver » et choisissez un mot de passe temporaire (un vous est proposé). S\'il a un e-mail enregistré, il lui est envoyé automatiquement ; sinon, communiquez-le-lui vous-même. Il pourra le modifier ensuite depuis son profil.')}</p>`,
       }),
       highlightParam: 'highlight', highlightId: requestId,
     });
   } else if (!user) {
-    console.warn(`[password-reset] family=${req.family.slug} — no account for the username entered`);
+    // no login row — but the person may well be in the tree under that username (approved
+    // through the old "Edit & approve" path that never created their login). Still route the
+    // request to the admin: setting a password for them creates the missing login.
+    const person = await db.prepare("SELECT id, username, full_name FROM people WHERE LOWER(TRIM(username)) = LOWER(TRIM(?)) AND approval_status = 'approved' LIMIT 2").all(username);
+    if (person.length === 1){
+      const p = person[0];
+      const open = await db.prepare("SELECT id, payload FROM requests WHERE type = 'password_reset' AND status = 'pending'").all();
+      const existing = open.find(r => { try { return JSON.parse(r.payload).person_id === p.id; } catch(e){ return false; } });
+      const requestId = existing ? existing.id : uuidv4();
+      if (!existing){
+        const payload = { type: 'password_reset', username: p.username, user_id: null, person_id: p.id, full_name: p.full_name, no_login_yet: true };
+        await db.prepare('INSERT INTO requests (id, type, payload, status, created_by, created_at) VALUES (?, ?, ?, ?, ?, ?)')
+          .run(requestId, 'password_reset', JSON.stringify(payload), 'pending', 'self-service', now());
+      }
+      console.warn(`[password-reset] family=${req.family.slug} — ${p.username} is in the tree but had no login; request sent to admins`);
+      await notifyAdmins(req, {
+        buildContent: (lang) => ({
+          subject: emailT(lang, `${p.full_name} cannot log in`, `${p.full_name} ne peut pas se connecter`),
+          bodyHtml: `<p>${emailT(lang,
+            `<strong>${p.full_name}</strong> (username <code>${p.username}</code>) cannot log in and asked for a new password. Their login was never created when they were approved — setting a password now creates it.`,
+            `<strong>${p.full_name}</strong> (nom d'utilisateur <code>${p.username}</code>) ne peut pas se connecter et demande un nouveau mot de passe. Son accès n'avait pas été créé lors de son approbation — définir un mot de passe maintenant le crée.`)}</p>`
+            + `<p>${emailT(lang, 'Open the request and click "Set new password & approve", then give the password to them.', 'Ouvrez la demande et cliquez sur « Définir le mot de passe et approuver », puis communiquez-le-lui.')}</p>`,
+        }),
+        highlightParam: 'highlight', highlightId: requestId,
+      });
+    } else {
+      console.warn(`[password-reset] family=${req.family.slug} — no account or person for the username entered`);
+    }
+  } else {
+    console.warn(`[password-reset] family=${req.family.slug} — ${user.username} is a ${user.role}, not a member; use the admin login page's reset instead`);
   }
   res.json({ ok: true });
 }));
@@ -1193,6 +1222,47 @@ router.post('/member/relatives/add', upload.single('photo'), wrap(async (req,res
 }));
 
 // admin: reject request
+// a member's "forgot password" request, answered in one step — the same shape as the owner's
+// handling of locked-out admins: the admin picks a new password, it's saved (creating the
+// login if the member never had one), the request is approved, and the admin passes the
+// password on to the member, who can change it later from their profile. Most members have
+// no email, so the admin sharing it in person/by phone is the normal path; an email is only
+// a bonus when one is on file (see afterMemberPasswordSet).
+router.post('/admin/requests/:id/set-password', express.json(), wrap(async (req,res)=>{
+  if (!requireAdmin(req,res)) return;
+  const newPassword = String((req.body && req.body.new_password) || '').trim();
+  if (newPassword.length < 4) return res.status(400).json({ error: 'The new password must be at least 4 characters.' });
+  const reqRow = await db.prepare("SELECT * FROM requests WHERE id = ? AND type = 'password_reset'").get(req.params.id);
+  if (!reqRow) return res.status(404).json({ error: 'Request not found.' });
+  let p = {}; try { p = JSON.parse(reqRow.payload) || {}; } catch(e){}
+
+  // resolve who this is: the person on the request, else through the login it names, else
+  // by username in the tree
+  let personId = p.person_id || null;
+  let user = p.user_id ? await db.prepare('SELECT id, person_id FROM users WHERE id = ?').get(p.user_id) : null;
+  if (!user && p.username) user = await findUserForLogin(p.username);
+  if (!personId && user && user.person_id) personId = user.person_id;
+  if (!personId && p.username){
+    const rows = await db.prepare('SELECT id FROM people WHERE LOWER(TRIM(username)) = LOWER(TRIM(?)) LIMIT 2').all(p.username);
+    if (rows.length === 1) personId = rows[0].id;
+  }
+  if (!personId && !user) return res.status(404).json({ error: 'Could not find this member in the tree any more.' });
+
+  await db.transaction(async (tx) => {
+    if (personId) await setPasswordForPerson(tx, personId, newPassword);
+    else await tx.prepare('UPDATE users SET password_hash = ? WHERE id = ?').run(bcrypt.hashSync(newPassword, 10), user.id);
+    await tx.prepare('UPDATE requests SET status = ?, reviewed_by = ?, reviewed_at = ?, resolved_person_id = ? WHERE id = ?').run('approved', req.session.user.id, now(), personId, reqRow.id);
+  });
+  let emailed = false;
+  if (personId){
+    const u = await db.prepare('SELECT email FROM users WHERE person_id = ?').get(personId);
+    emailed = !!(u && u.email);
+    await afterMemberPasswordSet(req, personId, newPassword);
+  }
+  const login = personId ? await db.prepare('SELECT username FROM users WHERE person_id = ?').get(personId) : null;
+  res.json({ ok: true, username: (login && login.username) || p.username || null, emailed });
+}));
+
 router.post('/admin/requests/:id/reject', express.json(), wrap(async (req,res)=>{
   if (!requireAdmin(req,res)) return;
   const id = req.params.id;

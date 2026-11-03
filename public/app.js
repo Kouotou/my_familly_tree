@@ -2158,6 +2158,18 @@ function treeFileName(ext){
   return `${name ? name + '-' : ''}family-tree.${ext}`;
 }
 
+// an easy-to-read-aloud temporary password for an admin to give a member in person or by
+// phone — no look-alike characters (0/O, 1/l/I), e.g. "kemu-4827"
+function suggestTempPassword(){
+  const letters = 'abcdefghjkmnpqrstuvwxyz', digits = '23456789';
+  const rnd = (n) => { try{ const a = new Uint32Array(1); crypto.getRandomValues(a); return a[0] % n; }catch(e){ return Math.floor(Math.random() * n); } };
+  let s = '';
+  for (let i = 0; i < 4; i++) s += letters[rnd(letters.length)];
+  s += '-';
+  for (let i = 0; i < 4; i++) s += digits[rnd(digits.length)];
+  return s;
+}
+
 function triggerDownload(blob, filename){
   const a = document.createElement('a');
   a.href = URL.createObjectURL(blob);
@@ -2622,6 +2634,13 @@ const I18N = {
     btn_approve: 'Approve', btn_edit_approve: 'Edit & Approve', btn_reject: 'Reject',
     btn_modify_account: 'Modify account', btn_delete_account: 'Delete account',
     btn_set_new_password: 'Set new password',
+    btn_set_password_approve: 'Set new password & approve',
+    prompt_member_new_password: 'New password for {name}.\n\nA password is suggested below — keep it or type your own (at least 4 characters). After saving, give it to them; they can change it later from their profile.',
+    alert_password_too_short: 'The password must be at least 4 characters.',
+    edit_suggest_password_btn: 'Suggest a password',
+    alert_member_password_set: 'Done. Give these to {name} so they can log in:\n\nUsername: {username}\nPassword: {password}\n\nThey can change the password afterwards from their profile ("Change password").',
+    alert_member_password_set_emailed: 'Done — it was also emailed to {name}. Their login:\n\nUsername: {username}\nPassword: {password}\n\nThey can change the password afterwards from their profile ("Change password").',
+    alert_person_password_updated: 'Saved. The new login for this person:\n\nUsername: {username}\nPassword: {password}\n\nGive it to them; they can change it later from their profile.',
     btn_delete_post: 'Delete post',
     confirm_approve: 'Approve this request?',
     confirm_reject: 'Reject this request?',
@@ -2638,7 +2657,7 @@ const I18N = {
     edit_modal_title_person: 'Modify account & relationships',
     edit_field_username: 'Username (optional)',
     edit_field_photo: 'Photo (replace)',
-    edit_field_new_password: 'Set new password (only applies to an existing member account — leave blank to keep unchanged)',
+    edit_field_new_password: "New login password for this person (creates their login if they don't have one yet — leave blank to keep the current password)",
     edit_relations_heading: 'Relations',
     edit_rel_father: 'Father', edit_rel_mother: 'Mother',
     edit_rel_name_placeholder: 'Full name', edit_rel_year_placeholder: 'Birth year',
@@ -3159,6 +3178,13 @@ const I18N = {
     btn_approve: 'Approuver', btn_edit_approve: 'Modifier et approuver', btn_reject: 'Rejeter',
     btn_modify_account: 'Modifier le compte', btn_delete_account: 'Supprimer le compte',
     btn_set_new_password: 'Définir un nouveau mot de passe',
+    btn_set_password_approve: 'Définir le mot de passe et approuver',
+    prompt_member_new_password: "Nouveau mot de passe pour {name}.\n\nUn mot de passe est proposé ci-dessous — gardez-le ou tapez le vôtre (au moins 4 caractères). Après l'enregistrement, communiquez-le-lui ; il pourra le modifier plus tard depuis son profil.",
+    alert_password_too_short: 'Le mot de passe doit contenir au moins 4 caractères.',
+    edit_suggest_password_btn: 'Proposer un mot de passe',
+    alert_member_password_set: "C'est fait. Donnez ces informations à {name} pour qu'il puisse se connecter :\n\nNom d'utilisateur : {username}\nMot de passe : {password}\n\nIl pourra modifier le mot de passe ensuite depuis son profil (« Changer le mot de passe »).",
+    alert_member_password_set_emailed: "C'est fait — un e-mail a aussi été envoyé à {name}. Ses identifiants :\n\nNom d'utilisateur : {username}\nMot de passe : {password}\n\nIl pourra modifier le mot de passe ensuite depuis son profil (« Changer le mot de passe »).",
+    alert_person_password_updated: "Enregistré. Les identifiants de cette personne :\n\nNom d'utilisateur : {username}\nMot de passe : {password}\n\nCommuniquez-les-lui ; elle pourra modifier le mot de passe plus tard depuis son profil.",
     btn_delete_post: 'Supprimer la publication',
     confirm_approve: 'Approuver cette demande ?',
     confirm_reject: 'Rejeter cette demande ?',
@@ -3175,7 +3201,7 @@ const I18N = {
     edit_modal_title_person: 'Modifier le compte et les relations',
     edit_field_username: "Nom d'utilisateur (optionnel)",
     edit_field_photo: 'Photo (remplacer)',
-    edit_field_new_password: "Définir un nouveau mot de passe (uniquement pour un compte membre existant — laisser vide pour ne pas changer)",
+    edit_field_new_password: "Nouveau mot de passe de connexion pour cette personne (crée son accès s'il n'en a pas encore — laissez vide pour garder le mot de passe actuel)",
     edit_relations_heading: 'Relations',
     edit_rel_father: 'Père', edit_rel_mother: 'Mère',
     edit_rel_name_placeholder: 'Nom complet', edit_rel_year_placeholder: 'Année de naissance',
