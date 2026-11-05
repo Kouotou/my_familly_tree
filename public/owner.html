@@ -405,7 +405,7 @@
                 btn.disabled = true;
                 const res = await api('/platform/families/' + f.id + path, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ confirm_slug: typed.trim() }) });
                 btn.disabled = false;
-                if (res && res.ok){ alert(t(doneKey, { name: f.name, n: res.files_deleted || 0 })); await loadAllFamilies(); }
+                if (res && res.ok){ alert(t(doneKey, { name: f.name, n: res.files_deleted || 0, admins: (res.kept_admins && res.kept_admins.length) ? res.kept_admins.join(', ') : '—' })); await loadAllFamilies(); }
                 else alert(t('alert_error_prefix', {msg: (res && res.error) || JSON.stringify(res)}));
               });
               actions.appendChild(btn);

@@ -76,6 +76,7 @@
         <button id="tab-pending" class="active" data-i18n="pending">Pending<span id="count-pending" class="notif-badge hidden">0</span></button>
         <button id="tab-approved" data-i18n="approved">Approved<span id="count-approved" class="notif-badge hidden">0</span></button>
         <button id="tab-rejected" data-i18n="rejected">Rejected<span id="count-rejected" class="notif-badge hidden">0</span></button>
+        <button id="tab-people" data-i18n="admin_tab_all_people">All people</button>
       </div>
     </div>
     <div style="margin-top:10px">
@@ -167,7 +168,8 @@
         password_reset: t('req_password_reset_title', { name: req.payload.full_name || req.payload.username || t('req_unknown_person') })
       };
       const title = titleMap[req.payload.type] || req.payload.full_name || t('req_new_person');
-      const ownerBadge = req.payload.owner_initiated ? ` <span class="status-pill status-pill-pending">${t('req_owner_initiated_badge')}</span>` : '';
+      const ownerBadge = (req.payload.owner_initiated ? ` <span class="status-pill status-pill-pending">${t('req_owner_initiated_badge')}</span>` : '')
+        + (req.payload.auto_created_parent ? ` <span class="status-pill">${t(req.payload.auto_created_parent === 'father' ? 'req_auto_father_badge' : 'req_auto_mother_badge', { name: req.payload.parent_of || '' })}</span>` : '');
       const meta = document.createElement('div'); meta.innerHTML = `<strong>${title}</strong>${ownerBadge}<div style="font-size:12px;color:var(--muted)">ID: ${req.id} — By: ${req.created_by} — ${new Date(req.created_at).toLocaleString()}</div>`;
       header.appendChild(meta);
       container.appendChild(header);
@@ -431,7 +433,7 @@
     });
 
     let currentStatus = 'pending';
-    function setActiveTab(s){ currentStatus = s; const tp = document.getElementById('tab-pending'); const ta = document.getElementById('tab-approved'); const tr = document.getElementById('tab-rejected'); if (tp) tp.classList.toggle('active', s==='pending'); if (ta) ta.classList.toggle('active', s==='approved'); if (tr) tr.classList.toggle('active', s==='rejected'); }
+    function setActiveTab(s){ currentStatus = s; const tp = document.getElementById('tab-pending'); const ta = document.getElementById('tab-approved'); const tr = document.getElementById('tab-rejected'); if (tp) tp.classList.toggle('active', s==='pending'); if (ta) ta.classList.toggle('active', s==='approved'); if (tr) tr.classList.toggle('active', s==='rejected'); const tpe = document.getElementById('tab-people'); if (tpe) tpe.classList.toggle('active', s==='people'); }
     // text a request is matched against by the search box — whichever name field its payload
     // shape actually carries, plus username, so a search matches regardless of request type
     function requestSearchText(req){
@@ -444,10 +446,61 @@
 
     // re-renders from the already-fetched data — the search box filters instantly as you
     // type without hitting the server again, since the full per-tab list is already in hand
+    let lastLoadedPeople = [];
+
+    // "All people" tab: every person in the tree — including fathers/mothers that were only
+    // ever typed in during someone else's registration, which have no request card of their
+    // own — each with Modify / Delete, and a warning when two share the same name
+    function renderPeopleDirectory(area, query){
+      const norm = s => (s||'').normalize('NFD').replace(/[̀-ͯ]/g,'').trim().toLowerCase().replace(/\s+/g,' ');
+      const nameCount = {};
+      lastLoadedPeople.forEach(p=> { const k = norm(p.full_name); nameCount[k] = (nameCount[k]||0) + 1; });
+      const list = query ? lastLoadedPeople.filter(p => [p.full_name, p.username, p.login_username, p.parents].filter(Boolean).join(' ').toLowerCase().includes(query)) : lastLoadedPeople;
+      area.innerHTML = '';
+      const head = document.createElement('div'); head.className = 'hint'; head.style.marginBottom = '8px';
+      head.textContent = t('admin_people_count', { n: list.length });
+      area.appendChild(head);
+      if (!list.length){ const none = document.createElement('div'); none.textContent = t('admin_no_search_results'); area.appendChild(none); return; }
+      list.forEach(p=>{
+        const card = document.createElement('div'); card.className = 'request-item';
+        const esc = s => String(s==null?'':s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+        const dup = nameCount[norm(p.full_name)] > 1 ? ` <span class="status-pill status-pill-pending">${t('admin_possible_duplicate')}</span>` : '';
+        const login = p.login_username ? `${t('req_field_username')}: <strong>${esc(p.login_username)}</strong>` : `<em>${t('admin_no_login')}</em>`;
+        const born = p.birth_date || p.birth_year || '';
+        const details = [
+          p.gender ? t(p.gender) : '',
+          born ? t('admin_born', { d: esc(born) }) : '',
+          p.death_date ? t('admin_deceased_on', { d: esc(p.death_date) }) : '',
+          p.parents ? t('admin_parents_line', { names: esc(p.parents) }) : '',
+          p.children_count ? t('admin_children_line', { n: p.children_count }) : '',
+        ].filter(Boolean).join(' · ');
+        card.innerHTML = `<strong>${esc(p.full_name)}</strong>${dup}<div style="font-size:13px;color:var(--muted);margin-top:4px">${details}</div><div style="font-size:13px;margin-top:4px">${login}</div>`;
+        const actions = document.createElement('div'); actions.style.marginTop = '8px';
+        const modifyBtn = document.createElement('button'); modifyBtn.textContent = t('btn_modify_account');
+        modifyBtn.addEventListener('click', async ()=>{ const person = await api('/people/' + p.id); await openEditModalForPerson(person); });
+        const deleteBtn = document.createElement('button'); deleteBtn.textContent = t('btn_delete_account'); deleteBtn.className = 'secondary'; deleteBtn.style.marginLeft = '8px';
+        deleteBtn.addEventListener('click', async ()=>{
+          try{
+            let relatives = { father:null, mother:null, spouses:[], children:[] };
+            try{ relatives = await api('/admin/people/' + p.id + '/relatives'); }catch(e){}
+            const alsoDelete = await confirmDeleteWithRelatives(relatives, p.full_name);
+            if (alsoDelete === null) return;
+            const res = await api('/admin/people/' + p.id + '/delete', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ also_delete: alsoDelete }) });
+            if (res && res.ok) await loadRequests('people');
+            else alert(t('alert_delete_failed', { msg: (res && res.error) || JSON.stringify(res) }));
+          }catch(e){ alert(t('network_error') + ' ' + e.message); }
+        });
+        actions.appendChild(modifyBtn); actions.appendChild(deleteBtn);
+        card.appendChild(actions);
+        area.appendChild(card);
+      });
+    }
+
     function renderRequestsList(status){
       const area = document.getElementById('requestsArea');
       const searchInput = document.getElementById('requests-search');
       const query = searchInput ? searchInput.value.trim().toLowerCase() : '';
+      if (status === 'people') return renderPeopleDirectory(area, query);
       const r = query ? lastLoadedRequests.filter(req => requestSearchText(req).includes(query)) : lastLoadedRequests;
       const peopleById = lastLoadedPeopleById;
       if (!r.length){
@@ -484,6 +537,14 @@
       status = status || currentStatus || 'pending';
       setActiveTab(status);
       const area = document.getElementById('requestsArea'); area.innerHTML='Loading...';
+      if (status === 'people'){
+        try{
+          const rows = await api('/admin/people-directory');
+          lastLoadedPeople = Array.isArray(rows) ? rows : [];
+          renderRequestsList('people');
+        }catch(e){ area.innerHTML=t('error_loading'); console.error(e); }
+        return;
+      }
       try{
         const [r, people] = await Promise.all([
           api('/admin/requests?status=' + encodeURIComponent(status)),
@@ -988,6 +1049,7 @@
     const tabPending = document.getElementById('tab-pending'); if (tabPending) tabPending.addEventListener('click', ()=> loadRequests('pending'));
     const tabApproved = document.getElementById('tab-approved'); if (tabApproved) tabApproved.addEventListener('click', ()=> loadRequests('approved'));
     const tabRejected = document.getElementById('tab-rejected'); if (tabRejected) tabRejected.addEventListener('click', ()=> loadRequests('rejected'));
+    const tabPeople = document.getElementById('tab-people'); if (tabPeople) tabPeople.addEventListener('click', ()=> loadRequests('people'));
     const logoutBtn = document.getElementById('admin-logout'); if (logoutBtn) logoutBtn.addEventListener('click', async ()=>{ await api('/auth/logout',{method:'POST'}); window.location.href=familyPrefix()+'/'; });
 
     // change my own password (works for admin accounts too, which have no linked profile)

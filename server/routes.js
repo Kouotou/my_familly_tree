@@ -886,6 +886,19 @@ async function applyParentEdits(dbLike, personId, relations, reviewerId){
   if (current.father && current.mother) await linkSpouse(dbLike, current.father, current.mother);
 }
 
+// A father/mother typed in by name during someone's registration becomes a brand-new person
+// in the tree — but used to have no request of its own, so it never appeared anywhere in the
+// admin's lists: a misspelled or wrong parent (e.g. the same mother entered twice under two
+// spellings) could not be modified or deleted by the admin at all. File an approved entry
+// for it, resolved to the new person, so it shows in the Approved tab with the same
+// "Modify account" / "Delete account" buttons as any registered member (and disappears from
+// there on its own once deleted — see APPROVED_STALE_FILTER_SQL).
+async function fileCreatedParentEntry(dbLike, parentId, record, which, childName, reviewerId){
+  const payload = Object.assign({ type: 'create_person' }, record, { auto_created_parent: which, parent_of: childName || null });
+  await dbLike.prepare('INSERT INTO requests (id, type, payload, status, created_by, created_at, reviewed_by, reviewed_at, resolved_person_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)')
+    .run(uuidv4(), 'create_person', JSON.stringify(payload), 'approved', childName ? `registration of ${childName}` : 'registration', now(), reviewerId, now(), parentId);
+}
+
 // helper to process create_person payload into the DB and return the created person id
 async function processCreatePerson(dbLike, payload, reviewerId){
   const personId = await createPersonRecord(dbLike, payload, reviewerId);
@@ -900,7 +913,9 @@ async function processCreatePerson(dbLike, payload, reviewerId){
       fatherId = father.relative_id;
       if (!fatherId){
         const frel = father.relative || {};
-        fatherId = await createPersonRecord(dbLike, { full_name: frel.full_name || 'Unknown', birth_year: frel.birth_year||null, birth_date: frel.birth_date||null, gender: 'male', occupation: frel.occupation||null, residence: frel.residence||null, phone: frel.phone||null, photo_path: frel.photo_path||null }, reviewerId);
+        const record = { full_name: frel.full_name || 'Unknown', birth_year: frel.birth_year||null, birth_date: frel.birth_date||null, gender: 'male', occupation: frel.occupation||null, residence: frel.residence||null, phone: frel.phone||null, photo_path: frel.photo_path||null };
+        fatherId = await createPersonRecord(dbLike, record, reviewerId);
+        await fileCreatedParentEntry(dbLike, fatherId, record, 'father', payload.full_name, reviewerId);
       }
       await linkParentChild(dbLike, personId, fatherId, father.from_family ? 'blood' : 'married-in');
     }
@@ -908,7 +923,9 @@ async function processCreatePerson(dbLike, payload, reviewerId){
       motherId = mother.relative_id;
       if (!motherId){
         const mrel = mother.relative || {};
-        motherId = await createPersonRecord(dbLike, { full_name: mrel.full_name || 'Unknown', birth_year: mrel.birth_year||null, birth_date: mrel.birth_date||null, gender: 'female', occupation: mrel.occupation||null, residence: mrel.residence||null, phone: mrel.phone||null, photo_path: mrel.photo_path||null }, reviewerId);
+        const record = { full_name: mrel.full_name || 'Unknown', birth_year: mrel.birth_year||null, birth_date: mrel.birth_date||null, gender: 'female', occupation: mrel.occupation||null, residence: mrel.residence||null, phone: mrel.phone||null, photo_path: mrel.photo_path||null };
+        motherId = await createPersonRecord(dbLike, record, reviewerId);
+        await fileCreatedParentEntry(dbLike, motherId, record, 'mother', payload.full_name, reviewerId);
       }
       await linkParentChild(dbLike, personId, motherId, mother.from_family ? 'blood' : 'married-in');
     }
@@ -2000,8 +2017,13 @@ async function deleteBlobFiles(urls){
 // log out everyone whose session belongs to this family — otherwise a session left over from
 // before the wipe (or, after a delete, a future family reusing the same ID) would still carry
 // that family's role
-async function purgeFamilySessions(slug){
-  try { await db.prepare("DELETE FROM public.session WHERE sess::jsonb -> 'user' ->> 'familySlug' = ?").run(slug); }
+async function purgeFamilySessions(slug, { keepAdmins = false } = {}){
+  try {
+    // clearing a family's data keeps its admins (they're about to rebuild it), so their
+    // sessions stay valid too — only the members whose accounts were just erased are logged out
+    const sql = "DELETE FROM public.session WHERE sess::jsonb -> 'user' ->> 'familySlug' = ?" + (keepAdmins ? " AND COALESCE(sess::jsonb -> 'user' ->> 'role', '') <> 'admin'" : '');
+    await db.prepare(sql).run(slug);
+  }
   catch(e){ console.error('[session] purge failed for', slug, e && e.message || e); }
 }
 
@@ -2051,11 +2073,13 @@ router.post('/platform/families/:id/clear-data', express.json(), wrap(async (req
       await tx.prepare("DELETE FROM users WHERE role <> 'admin'").run();
       await tx.prepare('UPDATE users SET person_id = NULL').run();
     });
-    return found;
+    // the admins (username + password unchanged) are what make a cleared family usable again
+    const kept = await db.prepare("SELECT username FROM users WHERE role = 'admin' ORDER BY created_at").all();
+    return { found, keptAdmins: kept.map(a => a.username) };
   });
-  await purgeFamilySessions(family.slug);
-  const filesDeleted = await deleteBlobFiles(urls);
-  res.json({ ok:true, files_found: urls.length, files_deleted: filesDeleted });
+  await purgeFamilySessions(family.slug, { keepAdmins: true });
+  const filesDeleted = await deleteBlobFiles(urls.found);
+  res.json({ ok:true, files_found: urls.found.length, files_deleted: filesDeleted, kept_admins: urls.keptAdmins });
 }));
 
 router.post('/platform/families/:id/delete', express.json(), wrap(async (req,res)=>{
@@ -2235,6 +2259,24 @@ router.post('/admin/people/:id/delete', express.json(), wrap(async (req,res)=>{
     });
     res.json({ ok:true });
   }catch(err){ console.error('Delete person error', err && err.stack || err); res.status(500).json({ error: String(err && err.message ? err.message : err) }); }
+}));
+
+// admin: every person in the family's tree, whether they registered themselves or were
+// created as someone's parent/relative — the admin's "All people" tab, so any of them can be
+// opened to modify or delete (not just the ones that happen to have a request card). Includes
+// whether each one has a login, and who their father/mother are, to tell namesakes apart.
+router.get('/admin/people-directory', wrap(async (req,res)=>{
+  if (!requireAdmin(req,res)) return;
+  const rows = await db.prepare(`
+    SELECT p.id, p.full_name, p.username, p.gender, p.birth_year, p.birth_date, p.death_date, p.photo_path, p.created_at,
+      u.username AS login_username,
+      (SELECT string_agg(q.full_name, ', ') FROM relationships r JOIN people q ON q.id = r.relative_id WHERE r.person_id = p.id AND r.type = 'parent') AS parents,
+      (SELECT COUNT(*)::int FROM relationships r WHERE r.person_id = p.id AND r.type = 'child') AS children_count
+    FROM people p LEFT JOIN users u ON u.person_id = p.id
+    WHERE p.approval_status = 'approved'
+    ORDER BY LOWER(p.full_name)
+  `).all();
+  res.json(rows);
 }));
 
 // admin: create a person directly (already approved) — used e.g. to create the root/founder profile
