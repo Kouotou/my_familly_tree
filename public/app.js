@@ -2255,6 +2255,9 @@ if (centerBtn){
 // Theme + language toggles: persist choices in localStorage
 function applyTheme(theme){
   if (theme === 'dark') document.body.classList.add('dark'); else document.body.classList.remove('dark');
+  // styles.css also follows the device's own dark mode unless <html data-theme="light"> is set —
+  // without this, a phone/PC in dark mode stayed dark whatever the toggle said
+  document.documentElement.setAttribute('data-theme', theme === 'dark' ? 'dark' : 'light');
 }
 
 // apply the saved theme on every page, whether or not it has a visible toggle button,
