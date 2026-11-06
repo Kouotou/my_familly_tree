@@ -7,7 +7,9 @@
   layer.className = 'w-bubbles';
   layer.setAttribute('aria-hidden', 'true');
 
-  const count = window.innerWidth < 720 ? 9 : 16;
+  // the public website gets the full drift; app pages (tree, admin, archives…) a lighter one
+  const site = document.body.classList.contains('w-site');
+  const count = window.innerWidth < 720 ? (site ? 9 : 5) : (site ? 16 : 10);
   for (let i = 0; i < count; i++){
     const size = Math.round(28 + Math.pow(Math.random(), 1.6) * 150); // mostly small, a few large
     const b = document.createElement('div');

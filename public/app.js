@@ -1486,18 +1486,18 @@ function assignRelativeX(node, leftEdge, gap, anchorId, nodeW){
 function getTreePalette(){
   const dark = document.body.classList.contains('dark');
   return dark ? {
-    cardBg: '#1e2531', cardBg2: '#232b3a', cardBorder: '#333c4d',
-    meBg: '#3a2f1c', meBorder: '#e0a458', rootBorder: '#f2bd76',
-    text: '#eef1f7', muted: '#93a0b5', spouseBar: '#e0a458', siblingDash: '#7f8aa0', connector: '#414c60',
-    infoBoxFill: 'rgba(224,164,88,0.16)', infoBoxStroke: '#e0a458', infoDot: '#f2bd76',
-    orphanLabel: '#7f8aa0', cardShadow: 'rgba(0,0,0,0.45)',
+    cardBg: '#1b1e25', cardBg2: '#22262e', cardBorder: '#2f343e',
+    meBg: '#2e2718', meBorder: '#d4b07a', rootBorder: '#e6c896',
+    text: '#f3efe7', muted: '#9a958c', spouseBar: '#d4b07a', siblingDash: '#7a766e', connector: '#4a4a48',
+    infoBoxFill: 'rgba(212,176,122,0.14)', infoBoxStroke: '#d4b07a', infoDot: '#e6c896',
+    orphanLabel: '#7a766e', cardShadow: 'rgba(0,0,0,0.45)',
     deceasedBg: '#4a2229', deceasedBorder: '#8f3a3a'
   } : {
-    cardBg: '#fffaf2', cardBg2: '#ffffff', cardBorder: '#e6d6ba',
-    meBg: '#fbead0', meBorder: '#c3924f', rootBorder: '#7a4a20',
-    text: '#3c2c1c', muted: '#8a7860', spouseBar: '#c3924f', siblingDash: '#a8927a', connector: '#c3ac86',
-    infoBoxFill: 'rgba(169,104,63,0.1)', infoBoxStroke: '#c3924f', infoDot: '#8a4f28',
-    orphanLabel: '#a49070', cardShadow: 'rgba(90,62,33,0.12)',
+    cardBg: '#ffffff', cardBg2: '#fcfbf8', cardBorder: '#e7e2d8',
+    meBg: '#f7efe1', meBorder: '#a8834a', rootBorder: '#7d5f30',
+    text: '#1f1d1a', muted: '#857f75', spouseBar: '#a8834a', siblingDash: '#b3ab9c', connector: '#cdbb94',
+    infoBoxFill: 'rgba(168,131,74,0.10)', infoBoxStroke: '#a8834a', infoDot: '#7d5f30',
+    orphanLabel: '#9a917f', cardShadow: 'rgba(40,32,20,0.10)',
     deceasedBg: '#fbe4e4', deceasedBorder: '#c96a6a'
   };
 }
@@ -2099,7 +2099,7 @@ async function renderTreeToCanvas(includeCulturalBg){
   const ctx = canvas.getContext('2d');
   ctx.scale(scale, scale);
   const isDark = document.body.classList.contains('dark');
-  ctx.fillStyle = isDark ? '#1c2330' : '#fffaf2';
+  ctx.fillStyle = isDark ? '#1b1e25' : '#ffffff';
   ctx.fillRect(0,0,width,height);
 
   if (includeCulturalBg && window.CulturalBackground){
@@ -2108,7 +2108,7 @@ async function renderTreeToCanvas(includeCulturalBg){
   }
 
   const title = treeTitleFor(await currentFamilyName());
-  ctx.fillStyle = isDark ? '#eef1f7' : '#3c2c1c';
+  ctx.fillStyle = isDark ? '#f3efe7' : '#1f1d1a';
   ctx.textAlign = 'center';
   ctx.textBaseline = 'alphabetic';
   let fontSize = 30;

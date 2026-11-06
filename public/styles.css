@@ -1,3 +1,4 @@
+@import url('https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,500;0,600;1,500&family=Inter:wght@400;500;600;700&display=swap');
 
 :root{
 	--bg: #f2e8d9;
@@ -663,3 +664,180 @@ body{ max-width:100% }
 	input[type="text"], input[type="number"], input[type="password"], input[type="date"], input[type="tel"],
 	input:not([type]), select, textarea{ font-size:16px }
 }
+
+/* =====================================================================================
+   Platform theme, 2026-11 — the same light, classic look as the public website on every
+   page: ivory/white surfaces, warm-gold accents, ink-black buttons, serif headings, thin
+   lines and soft shadows, with iridescent soap bubbles drifting behind (bubbles.js).
+   Appended last so it overrides the older warm-beige palette above without rewriting it.
+   ===================================================================================== */
+:root{
+	--bg: #fcfbf8;
+	--bg-grad-1: #fcfbf8;
+	--bg-grad-2: #f3efe7;
+	--card: #ffffff;
+	--card-alt: #f7f4ee;
+	--muted: #857f75;
+	--accent: #a8834a;
+	--accent-strong: #7d5f30;
+	--accent-soft: rgba(168,131,74,0.11);
+	--accent-2: #7d8a6a;
+	--text: #1f1d1a;
+	--border: #e7e2d8;
+	--ink: #1f1d1a;
+	--ink-text: #fcfbf8;
+	--topbar-grad-1: rgba(252,251,248,0.78);
+	--topbar-grad-2: rgba(252,251,248,0.78);
+	--topbar-text: #1f1d1a;
+	--topbar-btn-bg: transparent;
+	--topbar-btn-bg-hover: #ffffff;
+	--topbar-btn-border: #e7e2d8;
+	--rounded: 14px;
+	--rounded-lg: 20px;
+	--shadow: 0 24px 60px -30px rgba(40,32,20,0.25), 0 2px 6px rgba(40,32,20,0.04);
+	--shadow-sm: 0 10px 30px -20px rgba(40,32,20,0.22);
+	--font-display: 'Cormorant Garamond', 'Iowan Old Style', 'Palatino Linotype', Georgia, serif;
+	--font-body: 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;
+}
+:root[data-theme="dark"], body.dark{
+	--bg: #12141a;
+	--bg-grad-1: #14171e;
+	--bg-grad-2: #0b0c10;
+	--card: #1b1e25;
+	--card-alt: #22262e;
+	--muted: #9a958c;
+	--accent: #d4b07a;
+	--accent-strong: #e6c896;
+	--accent-soft: rgba(212,176,122,0.13);
+	--accent-2: #8fb08a;
+	--text: #f3efe7;
+	--border: #2d313a;
+	--ink: #f3efe7;
+	--ink-text: #12141a;
+	--topbar-grad-1: rgba(18,20,26,0.78);
+	--topbar-grad-2: rgba(18,20,26,0.78);
+	--topbar-text: #f3efe7;
+	--topbar-btn-bg: transparent;
+	--topbar-btn-bg-hover: #22262e;
+	--topbar-btn-border: #2d313a;
+	--shadow: 0 24px 60px -28px rgba(0,0,0,0.75);
+	--shadow-sm: 0 10px 30px -18px rgba(0,0,0,0.6);
+}
+body, body.dark{
+	background: radial-gradient(1200px 600px at 85% -10%, var(--card) 0%, transparent 60%),
+	            linear-gradient(180deg, var(--bg-grad-1) 0%, var(--bg-grad-2) 100%);
+	background-attachment: fixed;
+	color: var(--text);
+	font-family: var(--font-body);
+}
+
+/* header: quiet, light, see-through */
+.topbar{
+	background: var(--topbar-grad-1);
+	-webkit-backdrop-filter: saturate(140%) blur(14px);
+	backdrop-filter: saturate(140%) blur(14px);
+	border-bottom: 1px solid var(--border);
+	box-shadow: none;
+}
+.topbar h1{ font-family: var(--font-display); font-weight:600; letter-spacing:0.4px; text-shadow:none; color:var(--topbar-text) }
+.toggles button, #notif-bell-btn, .page-back-btn{
+	background: transparent; color: var(--text); border:1px solid var(--border); font-weight:500; letter-spacing:0.3px; box-shadow:none;
+}
+.toggles button:hover, #notif-bell-btn:hover, .page-back-btn:hover{ background: var(--card); transform:none }
+#notif-bell-badge{ border-color: var(--card) }
+
+/* headings in the serif face */
+h2, h3, .center-card h2, #landing h2{ font-family: var(--font-display); font-weight:600; letter-spacing:0.2px }
+
+/* buttons: ink-black pills, outlined secondary */
+button{
+	background: var(--ink); color: var(--ink-text); font-weight:500; letter-spacing:0.3px;
+	box-shadow: var(--shadow-sm);
+}
+button:hover{ filter:none; box-shadow: var(--shadow); }
+button.secondary{ background: transparent; color: var(--text); border:1px solid var(--border); box-shadow:none }
+button.secondary:hover{ background: var(--card); border-color: var(--accent) }
+button.danger{ background:#b3261e; color:#fff }
+.secondary-link{ color: var(--accent-strong) }
+
+/* tabs */
+.archive-tabs button, #tab-pending, #tab-approved, #tab-rejected, #tab-people{
+	background: transparent; color: var(--muted); border:1px solid transparent; box-shadow:none; font-weight:500;
+}
+.archive-tabs button:hover, #tab-pending:hover, #tab-approved:hover, #tab-rejected:hover, #tab-people:hover{ color: var(--text) }
+.archive-tabs button.active, #tab-pending.active, #tab-approved.active, #tab-rejected.active, #tab-people.active{
+	background: var(--card); color: var(--text); border-color: var(--border); box-shadow: var(--shadow-sm);
+}
+
+/* cards: white, hairline border, soft shadow; the old corner flourishes kept but quieter */
+.left-card, .center-card, .request-item, .archive-card, #tree-container, #profile-card{ border:1px solid var(--border) }
+.left-card::before, .center-card::before, .left-card::after, .center-card::after{ opacity:0.22 }
+#tree-container{ background: var(--card) }
+
+/* inputs */
+input[type="text"], input[type="number"], input[type="password"], input[type="date"], input[type="tel"],
+input[type="email"], input[type="search"], input:not([type]), select, textarea{
+	border:1px solid var(--border); background: var(--card); border-radius:12px;
+}
+input:focus, select:focus, textarea:focus{ border-color: var(--accent); box-shadow:0 0 0 4px var(--accent-soft) }
+
+/* events countdown strip */
+#public-events-widget{ background: var(--topbar-grad-1); color: var(--text); border-bottom:1px solid var(--border) }
+.public-event-row{ background: var(--card); border:1px solid var(--border) }
+
+/* chips and modals */
+.profile-rel-chip:hover{ background: var(--ink); color: var(--ink-text) }
+#profile-modal{ background: rgba(20,18,15,0.45); -webkit-backdrop-filter: blur(4px); backdrop-filter: blur(4px) }
+
+/* --- floating soap bubbles (layer built by bubbles.js) ---
+   z-index:-1 keeps them above the page background but behind every bit of content,
+   so they never cover a button or catch a click. */
+.w-bubbles{ position:fixed; inset:0; overflow:hidden; pointer-events:none; z-index:-1 }
+.w-bubble{ position:absolute; bottom:-200px; border-radius:50%; animation: w-rise linear infinite; will-change: transform }
+.w-bubble-inner{
+	width:100%; height:100%; border-radius:50%; position:relative;
+	animation: w-sway ease-in-out infinite alternate;
+	background: radial-gradient(circle at 50% 50%, rgba(255,255,255,0) 62%, rgba(255,255,255,0.35) 74%, rgba(255,255,255,0) 82%);
+	box-shadow:
+		inset 0 0 0 1px rgba(255,255,255,0.55),
+		inset 6px -8px 18px rgba(120,170,255,0.18),
+		inset -8px 6px 18px rgba(255,140,200,0.16),
+		0 6px 20px -10px rgba(80,100,140,0.18);
+}
+.w-bubble-inner::before{
+	content:""; position:absolute; inset:0; border-radius:50%;
+	background: conic-gradient(from 0deg,
+		rgba(255,138,190,0.55), rgba(255,214,120,0.50), rgba(150,236,190,0.50),
+		rgba(120,196,255,0.55), rgba(186,150,255,0.55), rgba(255,138,190,0.55));
+	-webkit-mask: radial-gradient(circle, transparent 56%, #000 71%, #000 100%);
+	        mask: radial-gradient(circle, transparent 56%, #000 71%, #000 100%);
+	animation: w-film 14s linear infinite; opacity: 0.75;
+}
+.w-bubble-inner::after{
+	content:""; position:absolute; inset:0; border-radius:50%;
+	background:
+		radial-gradient(ellipse 22% 14% at 30% 24%, rgba(255,255,255,0.95), rgba(255,255,255,0) 70%),
+		radial-gradient(circle at 70% 76%, rgba(255,255,255,0.55) 0 3%, rgba(255,255,255,0) 7%);
+}
+body.dark .w-bubble-inner{
+	box-shadow: inset 0 0 0 1px rgba(255,255,255,0.18), inset 6px -8px 18px rgba(120,170,255,0.20), inset -8px 6px 18px rgba(255,140,200,0.16);
+}
+body.dark .w-bubble-inner::before{ opacity:0.5 }
+body.dark .w-bubble-inner::after{ opacity:0.55 }
+@keyframes w-rise{ from{ transform: translate3d(0,0,0) } to{ transform: translate3d(0, calc(-100vh - 420px), 0) } }
+@keyframes w-sway{
+	from{ transform: translateX(-22px) scale(1,1) }
+	50% { transform: translateX(6px) scale(1.025,0.98) }
+	to  { transform: translateX(24px) scale(0.98,1.02) }
+}
+@keyframes w-film{ to{ transform: rotate(360deg) } }
+@media (prefers-reduced-motion: reduce){
+	.w-bubble, .w-bubble-inner, .w-bubble-inner::before{ animation:none !important }
+}
+@media print{ .w-bubbles{ display:none } }
+
+/* email/search inputs never got the shared input sizing — make them match the rest */
+input[type="email"], input[type="search"]{ padding:11px 13px; margin-top:6px; font-size:15px; width:100%; color:var(--text); font-family:var(--font-body); }
+h3{ font-size:1.4em }
+h4{ font-family: var(--font-display); font-weight:600; font-size:1.2em }
+body.dark .w-bubble{ opacity:0.55 }
