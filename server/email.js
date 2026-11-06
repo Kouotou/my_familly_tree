@@ -52,7 +52,7 @@ function withTimeout(promise, ms){
   });
 }
 
-async function sendEmail({ to, subject, html, fromName }) {
+async function sendEmail({ to, subject, html, text, fromName, replyTo, attachments }) {
   const recipients = (Array.isArray(to) ? to : [to]).filter(Boolean);
   if (!recipients.length) return { skipped: true, reason: 'no recipients' };
   const t = getTransporter();
@@ -61,9 +61,14 @@ async function sendEmail({ to, subject, html, fromName }) {
     return { skipped: true, reason: 'no credentials' };
   }
   const result = await withTimeout(
-    t.sendMail({ from: `${fromName || PLATFORM_BRAND} <${GMAIL_USER}>`, to: recipients.join(', '), subject, html })
+    t.sendMail(Object.assign(
+      { from: `${fromName || PLATFORM_BRAND} <${GMAIL_USER}>`, to: recipients.join(', '), subject, html },
+      text ? { text } : {},
+      replyTo ? { replyTo } : {},
+      attachments && attachments.length ? { attachments } : {}
+    ))
       .then(info => ({ ok: true, info })),
-    SEND_TIMEOUT_MS
+    attachments && attachments.length ? SEND_TIMEOUT_MS * 3 : SEND_TIMEOUT_MS
   );
   if (result.ok) {
     console.log('[email] sent', result.info.messageId || '', '->', recipients.join(', '), '-', subject);

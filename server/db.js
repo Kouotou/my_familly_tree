@@ -444,6 +444,18 @@ async function ensurePlatformSchema() {
         reviewed_by TEXT
       );
 
+      -- one row per email the owner sends from the owner panel's "Send an email" section
+      CREATE TABLE IF NOT EXISTS public.owner_mailings (
+        id TEXT PRIMARY KEY,
+        subject TEXT,
+        audience TEXT,
+        recipient_count INTEGER,
+        sent_count INTEGER,
+        failed TEXT,
+        attachment_names TEXT,
+        sent_at TEXT
+      );
+
       CREATE TABLE IF NOT EXISTS public.platform_requests (
         id TEXT PRIMARY KEY,
         type TEXT,

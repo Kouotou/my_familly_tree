@@ -1547,6 +1547,137 @@ router.post('/platform/admins/:id/delete', express.json(), wrap(async (req,res)=
   res.json({ ok:true });
 }));
 
+// --- Owner mailings: the owner writes one formatted email (subject, bold/italic/lists/links,
+// attachments) and sends it to every administrator, chosen administrators, or everyone on the
+// platform who registered an email. Each person gets their own copy (nobody sees anyone
+// else's address), and Reply-To is the owner's own email, so a reply is an ordinary private
+// reply straight to the owner's inbox.
+const mailUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 4 * 1024 * 1024, files: 5 } });
+const MAIL_ATTACHMENTS_MAX_BYTES = 4 * 1024 * 1024; // Vercel rejects request bodies over ~4.5 MB
+const MAIL_CONCURRENCY = 4;
+
+function mailEscape(s){
+  return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[c]));
+}
+
+// The owner is trusted, but the body still goes out to many inboxes: drop anything active.
+function sanitizeMailHtml(html){
+  return String(html || '')
+    .replace(/<\s*(script|style|iframe|object|textarea|select|button)\b[\s\S]*?<\s*\/\s*\1\s*>/gi, '')
+    .replace(/<\s*\/?\s*(script|style|iframe|object|embed|form|input|button|textarea|select|meta|link|base)\b[^>]*>/gi, '')
+    .replace(/\son[a-z]+\s*=\s*("[^"]*"|'[^']*'|[^\s>]+)/gi, '')
+    .replace(/(href|src)\s*=\s*(["'])\s*(javascript|data|vbscript):[^"']*\2/gi, '$1="#"');
+}
+
+function mailHtmlToText(html){
+  return String(html || '')
+    .replace(/<\s*br\s*\/?>/gi, '\n')
+    .replace(/<\/(p|div|h[1-6]|li|blockquote)>/gi, '\n')
+    .replace(/<li[^>]*>/gi, '• ')
+    .replace(/<[^>]+>/g, '')
+    .replace(/&nbsp;/g, ' ').replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#39;/g, "'")
+    .replace(/\n{3,}/g, '\n\n').trim();
+}
+
+// Everyone with an email, across every active family. Keyed "<family slug>:<user id>" so the
+// browser only ever sends back keys, never raw addresses.
+async function collectMailRecipients(){
+  const families = await db.prepare("SELECT slug, name, schema_name FROM public.families WHERE status = 'active' ORDER BY name").all();
+  const out = [];
+  for (const family of families){
+    let rows = [];
+    try {
+      rows = await db.withTenant(family.schema_name, () => db.prepare(
+        `SELECT u.id, u.username, u.email, u.role, u.preferred_language, p.full_name
+           FROM users u LEFT JOIN people p ON p.id = u.person_id
+          WHERE u.email IS NOT NULL AND TRIM(u.email) <> '' AND u.role IN ('admin','member')
+          ORDER BY u.role, LOWER(COALESCE(p.full_name, u.username))`
+      ).all());
+    } catch (e) {
+      console.error('[mail] could not read recipients for family', family.slug, e.message);
+      continue;
+    }
+    rows.forEach(r => out.push({
+      key: `${family.slug}:${r.id}`,
+      name: r.full_name || r.username,
+      username: r.username,
+      email: String(r.email).trim(),
+      role: r.role,
+      family_slug: family.slug,
+      family_name: family.name,
+    }));
+  }
+  return out;
+}
+
+router.get('/platform/mail/recipients', wrap(async (req,res)=>{
+  if (!requirePlatformOwner(req,res)) return;
+  const owner = await db.prepare('SELECT email FROM public.users WHERE id = ?').get(req.session.user.id);
+  res.json({ recipients: await collectMailRecipients(), reply_to: (owner && owner.email) || null });
+}));
+
+router.get('/platform/mail/history', wrap(async (req,res)=>{
+  if (!requirePlatformOwner(req,res)) return;
+  res.json(await db.prepare('SELECT * FROM public.owner_mailings ORDER BY sent_at DESC LIMIT 30').all());
+}));
+
+router.post('/platform/mail/send', (req,res,next)=> mailUpload.array('attachments', 5)(req,res,(err)=>{
+  if (err) return res.status(400).json({ error: err.code === 'LIMIT_FILE_SIZE' ? 'An attachment is larger than 4 MB.' : (err.code === 'LIMIT_FILE_COUNT' ? 'At most 5 attachments.' : err.message) });
+  next();
+}), wrap(async (req,res)=>{
+  if (!requirePlatformOwner(req,res)) return;
+  const subject = String((req.body && req.body.subject) || '').trim();
+  const bodyHtml = sanitizeMailHtml(req.body && req.body.html);
+  const audience = String((req.body && req.body.audience) || 'custom');
+  let keys = [];
+  try { keys = JSON.parse((req.body && req.body.recipients) || '[]'); } catch(e){}
+  if (!subject) return res.status(400).json({ error: 'Please write a subject.' });
+  if (!mailHtmlToText(bodyHtml)) return res.status(400).json({ error: 'Please write a message.' });
+  if (!Array.isArray(keys) || !keys.length) return res.status(400).json({ error: 'Please choose at least one recipient.' });
+
+  const files = req.files || [];
+  const totalBytes = files.reduce((n, f) => n + f.size, 0);
+  if (totalBytes > MAIL_ATTACHMENTS_MAX_BYTES) return res.status(400).json({ error: 'Attachments must be 4 MB in total or less.' });
+  const attachments = files.map(f => ({ filename: f.originalname, content: f.buffer, contentType: f.mimetype }));
+
+  // resolve keys → people server-side, then one copy per distinct address
+  const wanted = new Set(keys.map(String));
+  const seen = new Set();
+  const targets = [];
+  for (const r of await collectMailRecipients()){
+    if (!wanted.has(r.key)) continue;
+    const addr = r.email.toLowerCase();
+    if (seen.has(addr)) continue;
+    seen.add(addr);
+    targets.push(r);
+  }
+  if (!targets.length) return res.status(400).json({ error: 'None of the chosen people have an email address.' });
+
+  const owner = await db.prepare('SELECT email FROM public.users WHERE id = ?').get(req.session.user.id);
+  const replyTo = (owner && owner.email) || undefined;
+
+  const failed = [];
+  let sent = 0;
+  let cursor = 0;
+  async function worker(){
+    while (cursor < targets.length){
+      const r = targets[cursor++];
+      const personal = bodyHtml.replace(/\{name\}/gi, mailEscape(r.name));
+      const html = `<div style="font-family:Georgia,'Times New Roman',serif;font-size:16px;line-height:1.6;color:#1f1d1a;max-width:640px">${personal}</div>`
+        + `<hr style="border:none;border-top:1px solid #e7e2d8;margin:28px 0 12px">`
+        + `<p style="font-family:Arial,sans-serif;font-size:12px;color:#8b857b;margin:0">Africa Family Trees · ${mailEscape(r.family_name)}</p>`;
+      const result = await sendEmail({ to: r.email, subject, html, text: mailHtmlToText(personal), replyTo, attachments });
+      if (result && result.ok) sent++;
+      else failed.push(r.email);
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(MAIL_CONCURRENCY, targets.length) }, worker));
+
+  await db.prepare('INSERT INTO public.owner_mailings (id, subject, audience, recipient_count, sent_count, failed, attachment_names, sent_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
+    .run(uuidv4(), subject, audience, targets.length, sent, JSON.stringify(failed), JSON.stringify(files.map(f => f.originalname)), now());
+  res.json({ ok: true, recipients: targets.length, sent, failed, reply_to: replyTo || null });
+}));
+
 // the owner's own notification email — separate from admins' emails (set by the owner when
 // adding them), since the owner has no one else to set theirs for them
 router.post('/owner/email', express.json(), wrap(async (req,res)=>{

@@ -5,10 +5,13 @@
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <meta name="google" content="notranslate" />
   <title>Africa Family Trees</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,500;0,600;1,500&family=Inter:wght@400;500;600&display=swap">
   <link rel="stylesheet" href="/styles.css">
   <link rel="stylesheet" href="/welcome.css">
 </head>
-<body>
+<body class="w-site">
   <header class="topbar">
     <div class="topbar-left">
       <h1 data-i18n="w_brand">Africa Family Trees</h1>
@@ -24,7 +27,7 @@
     <!-- Hero -->
     <section class="w-hero">
       <div class="w-hero-text">
-        <p class="w-eyebrow" data-i18n="w_hero_eyebrow">A private home for every family's story</p>
+        <p class="w-kicker" data-i18n="w_hero_eyebrow">A private home for every family's story</p>
         <h2 data-i18n="w_hero_title">Your family's history, kept safe, shared with pride.</h2>
         <p class="w-hero-desc" data-i18n="w_hero_desc">Africa Family Trees gives every family its own private space to build a family tree together, share photos, audio and video memories, plan gatherings, and keep the generations connected — wherever they live.</p>
         <div class="w-hero-actions">
@@ -33,37 +36,41 @@
         </div>
       </div>
       <div class="w-hero-visual">
-        <img src="/family-illustration.svg" alt="" />
+        <div class="w-frame"><img src="/family-tree-line.svg" alt="" /></div>
       </div>
     </section>
 
     <!-- Returning member: jump to your family -->
     <section class="w-returning">
       <div class="w-returning-card">
-        <h3 data-i18n="w_returning_title">Already part of a family here?</h3>
-        <p class="hint" data-i18n="w_returning_desc">Enter your family's ID to go straight to its login page.</p>
+        <div class="w-returning-text">
+          <h3 data-i18n="w_returning_title">Already part of a family here?</h3>
+          <p class="hint" data-i18n="w_returning_desc">Enter your family's ID to go straight to its login page.</p>
+        </div>
+        <div class="w-returning-form-wrap">
         <form id="w-family-jump-form">
           <input id="w-family-jump-input" type="text" required data-i18n-placeholder="w_returning_placeholder" placeholder="e.g. dubois" />
           <button type="submit" data-i18n="w_returning_btn">Go to my family →</button>
         </form>
         <p id="w-family-jump-feedback" class="hint"></p>
+        </div>
       </div>
     </section>
 
     <!-- About / Mission / Vision -->
     <section class="w-about" id="w-about">
       <div class="w-about-card">
-        <span class="w-about-icon">🌍</span>
+        <span class="w-about-num">I.</span>
         <h3 data-i18n="w_about_title">About</h3>
         <p data-i18n="w_about_body">Africa Family Trees started as one family's project to preserve their own history — and grew into a platform any family can bring their own onto. Each family gets a completely private space: nothing you post is visible to any other family on the platform.</p>
       </div>
       <div class="w-about-card">
-        <span class="w-about-icon">🎯</span>
+        <span class="w-about-num">II.</span>
         <h3 data-i18n="w_mission_title">Mission</h3>
         <p data-i18n="w_mission_body">To make it simple for any family, anywhere, to record who they are, where they come from, and the moments that matter — in a space built and moderated by the family itself, not a stranger's algorithm.</p>
       </div>
       <div class="w-about-card">
-        <span class="w-about-icon">🌱</span>
+        <span class="w-about-num">III.</span>
         <h3 data-i18n="w_vision_title">Vision</h3>
         <p data-i18n="w_vision_body">A future where no family's history is lost to distance, time, or a single person's memory — where every generation can add their part, and every new member can find their place.</p>
       </div>
@@ -71,8 +78,10 @@
 
     <!-- How it works -->
     <section class="w-how" id="w-how-it-works">
-      <h2 data-i18n="w_how_title">How it works</h2>
-      <p class="w-how-sub" data-i18n="w_how_sub">A quick look at what your family can do together once your tree is set up.</p>
+      <div class="w-section-head">
+        <h2 data-i18n="w_how_title">How it works</h2>
+        <p class="w-how-sub" data-i18n="w_how_sub">A quick look at what your family can do together once your tree is set up.</p>
+      </div>
 
       <div class="archive-tabs w-how-tabs">
         <button type="button" data-how-tab="tree" class="active" data-i18n="w_how_tab_tree">Growing the tree</button>
@@ -131,7 +140,12 @@
 
   </main>
 
+  <footer class="w-footer">
+    <span data-i18n="w_brand">Africa Family Trees</span> · © <span id="w-year"></span>
+  </footer>
+
   <script src="/app.js"></script>
+  <script src="/bubbles.js"></script>
   <script>
     // the platform owner can override the hero photo/title/description from owner.html
     // without a code deploy — falls back to the built-in illustration and copy when unset
@@ -141,6 +155,8 @@
       if (data.hero_title) document.querySelector('.w-hero-text h2').textContent = data.hero_title;
       if (data.hero_desc) document.querySelector('.w-hero-desc').textContent = data.hero_desc;
     }).catch(()=>{});
+
+    document.getElementById('w-year').textContent = new Date().getFullYear();
 
     document.getElementById('w-family-jump-form').addEventListener('submit', (e)=>{
       e.preventDefault();

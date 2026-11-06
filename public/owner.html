@@ -93,6 +93,68 @@
       <div id="resetRequestsList">Loading...</div>
     </div>
 
+    <div id="owner-mail-section" style="padding:16px;background:var(--card);border-radius:10px;box-shadow:var(--shadow);margin-bottom:20px">
+      <h3 style="margin-top:0" data-i18n="mail_heading">Send an email</h3>
+      <p style="color:var(--muted);margin-top:-6px;font-size:13px" data-i18n="mail_desc">Write to administrators or to everyone on the platform who registered an email. Each person receives their own copy and can reply to you directly.</p>
+
+      <div class="mail-label" data-i18n="mail_to_label">To</div>
+      <div id="mail-audience" class="archive-tabs" style="margin:6px 0 10px">
+        <button type="button" data-audience="all_admins" class="active" data-i18n="mail_aud_all_admins">All administrators</button>
+        <button type="button" data-audience="some_admins" data-i18n="mail_aud_some_admins">Choose administrators</button>
+        <button type="button" data-audience="everyone" data-i18n="mail_aud_everyone">Everyone with an email</button>
+        <button type="button" data-audience="custom" data-i18n="mail_aud_custom">Choose people</button>
+      </div>
+      <div id="mail-picker" class="hidden">
+        <input id="mail-picker-search" type="search" data-i18n-placeholder="mail_search_placeholder" placeholder="Search by name, email or family" style="width:100%;margin-bottom:8px" />
+        <div style="display:flex;gap:8px;margin-bottom:6px">
+          <button type="button" class="secondary" id="mail-select-all" style="margin:0;padding:6px 12px;font-size:12px" data-i18n="mail_select_all">Select all shown</button>
+          <button type="button" class="secondary" id="mail-select-none" style="margin:0;padding:6px 12px;font-size:12px" data-i18n="mail_select_none">Clear</button>
+        </div>
+        <div id="mail-picker-list" class="mail-picker-list"></div>
+      </div>
+      <div id="mail-recipient-summary" class="hint" style="font-size:13px;margin:4px 0 14px"></div>
+
+      <label data-i18n="mail_subject_label">Subject<input id="mail-subject" type="text" maxlength="200" /></label>
+
+      <div class="mail-label" style="margin-top:10px" data-i18n="mail_message_label">Message</div>
+      <div class="mail-editor-wrap">
+        <div class="mail-toolbar" role="toolbar">
+          <button type="button" data-cmd="bold" title="Bold"><b>B</b></button>
+          <button type="button" data-cmd="italic" title="Italic"><i>I</i></button>
+          <button type="button" data-cmd="underline" title="Underline"><u>U</u></button>
+          <span class="mail-tb-sep"></span>
+          <select id="mail-block" title="Style">
+            <option value="P" data-i18n="mail_fmt_normal">Normal text</option>
+            <option value="H2" data-i18n="mail_fmt_heading">Heading</option>
+            <option value="H3" data-i18n="mail_fmt_subheading">Subheading</option>
+            <option value="BLOCKQUOTE" data-i18n="mail_fmt_quote">Quote</option>
+          </select>
+          <input type="color" id="mail-color" title="Text colour" value="#8a4f28" />
+          <span class="mail-tb-sep"></span>
+          <button type="button" data-cmd="insertUnorderedList" title="Bullet list">•≡</button>
+          <button type="button" data-cmd="insertOrderedList" title="Numbered list">1.≡</button>
+          <button type="button" data-cmd="justifyLeft" title="Align left">⇤</button>
+          <button type="button" data-cmd="justifyCenter" title="Centre">↔</button>
+          <span class="mail-tb-sep"></span>
+          <button type="button" id="mail-link-btn" title="Link">🔗</button>
+          <button type="button" id="mail-name-btn" data-i18n="mail_insert_name">+ Name</button>
+          <button type="button" data-cmd="removeFormat" title="Clear formatting">⌫</button>
+        </div>
+        <div id="mail-editor" class="mail-editor" contenteditable="true"></div>
+      </div>
+      <p class="hint" style="margin-top:6px" data-i18n="mail_name_hint">Tip: "+ Name" inserts {name}, which is replaced by each person's own name.</p>
+
+      <label data-i18n="mail_attach_label">Attachments (up to 5 files, 4 MB in total)<input id="mail-attachments" type="file" multiple /></label>
+      <div id="mail-attach-list" class="hint"></div>
+
+      <div id="mail-replyto-note" class="hint" style="font-size:13px"></div>
+      <button type="button" id="mail-send-btn" data-i18n="mail_send_btn">Send email</button>
+      <div id="mail-feedback" class="hint" style="font-size:13px"></div>
+
+      <h4 style="margin:22px 0 8px" data-i18n="mail_history_heading">Sent emails</h4>
+      <div id="mail-history"></div>
+    </div>
+
     <div style="padding:16px;background:var(--card);border-radius:10px;box-shadow:var(--shadow);margin-bottom:20px">
       <h3 style="margin-top:0" data-i18n="owner_families_heading">Families on this platform</h3>
       <p style="color:var(--muted);margin-top:-6px;font-size:13px" data-i18n="owner_families_desc">Review requests for new families, and suspend or reactivate any existing one.</p>
@@ -663,6 +725,212 @@
     loadAllFamilies();
     loadAnalytics(currentAnalyticsPeriod);
     });
+  </script>
+
+  <style>
+    .mail-label{ font-weight:600; font-size:14px; color:var(--text) }
+    .mail-picker-list{ max-height:280px; overflow-y:auto; border:1px solid var(--border); border-radius:10px; padding:6px; background:var(--bg) }
+    .mail-picker-list .mail-fam{ font-weight:700; font-size:12px; color:var(--muted); text-transform:uppercase; letter-spacing:0.5px; margin:10px 6px 4px }
+    .mail-picker-list label{ display:flex; align-items:center; gap:10px; padding:6px 8px; border-radius:8px; font-weight:400; font-size:14px; margin:0; cursor:pointer }
+    .mail-picker-list label:hover{ background:var(--accent-soft) }
+    .mail-picker-list input{ width:auto; margin:0 }
+    .mail-picker-list .mail-meta{ color:var(--muted); font-size:12px }
+    .mail-role{ font-size:11px; padding:1px 7px; border-radius:999px; background:var(--accent-soft); color:var(--accent-strong); font-weight:700 }
+    .mail-editor-wrap{ border:1px solid var(--border); border-radius:10px; overflow:hidden; background:var(--bg); margin-top:6px }
+    .mail-toolbar{ display:flex; flex-wrap:wrap; align-items:center; gap:4px; padding:6px; border-bottom:1px solid var(--border); background:var(--card-alt) }
+    .mail-toolbar button{ margin:0; padding:5px 10px; min-width:34px; font-size:13px; background:var(--card); color:var(--text); border:1px solid var(--border); box-shadow:none; border-radius:6px }
+    .mail-toolbar button:hover{ background:var(--accent-soft) }
+    .mail-toolbar select{ width:auto; margin:0; padding:5px 6px; font-size:13px }
+    .mail-toolbar input[type=color]{ width:34px; height:30px; padding:2px; margin:0; border:1px solid var(--border); border-radius:6px; background:var(--card) }
+    .mail-tb-sep{ width:1px; height:22px; background:var(--border); margin:0 4px }
+    .mail-editor{ min-height:220px; padding:14px 16px; outline:none; font-family:Georgia,'Times New Roman',serif; font-size:16px; line-height:1.6; color:var(--text) }
+    .mail-editor:empty::before{ content:attr(data-placeholder); color:var(--muted) }
+    .mail-editor blockquote{ border-left:3px solid var(--accent); margin:8px 0; padding:2px 12px; color:var(--muted) }
+    .mail-hist{ border:1px solid var(--border); border-radius:8px; padding:8px 12px; margin-bottom:6px; font-size:13px }
+  </style>
+  <script>
+  document.addEventListener('DOMContentLoaded', ()=>{
+    const section = document.getElementById('owner-mail-section');
+    if (!section) return;
+    async function api(path, opts={}){ const res = await fetch('/api'+path, Object.assign({}, opts, { credentials: 'same-origin' })); const ct = res.headers.get('content-type')||''; if (ct.includes('application/json')) return res.json(); return { error: res.status === 413 ? t('mail_err_too_big') : (await res.text()).slice(0,200) }; }
+    function showConfirm(message){
+      const el = document.getElementById('confirm-modal');
+      if (!el) return Promise.resolve(window.confirm(message));
+      return new Promise(resolve=>{
+        el.querySelector('#confirm-msg').textContent = message;
+        el.style.display = 'flex';
+        const yes = el.querySelector('#confirm-yes'), no = el.querySelector('#confirm-no');
+        const done = (v)=>{ el.style.display='none'; yes.removeEventListener('click', onYes); no.removeEventListener('click', onNo); resolve(v); };
+        const onYes = ()=> done(true), onNo = ()=> done(false);
+        yes.addEventListener('click', onYes); no.addEventListener('click', onNo);
+      });
+    }
+    const esc = (s)=> String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+    const editor = document.getElementById('mail-editor');
+    editor.setAttribute('data-placeholder', t('mail_body_placeholder'));
+    let recipients = [];
+    let audience = 'all_admins';
+    const chosen = new Set();
+
+    function audienceKeys(){
+      if (audience === 'all_admins') return recipients.filter(r=> r.role === 'admin').map(r=> r.key);
+      if (audience === 'everyone') return recipients.map(r=> r.key);
+      return recipients.filter(r=> chosen.has(r.key)).map(r=> r.key);
+    }
+    function uniqueEmails(keys){
+      const set = new Set(keys); const emails = new Set();
+      recipients.forEach(r=>{ if (set.has(r.key)) emails.add(r.email.toLowerCase()); });
+      return emails.size;
+    }
+    function updateSummary(){
+      const n = uniqueEmails(audienceKeys());
+      document.getElementById('mail-recipient-summary').textContent = t('mail_recipient_count', { n });
+    }
+    function renderPicker(){
+      const list = document.getElementById('mail-picker-list');
+      const q = document.getElementById('mail-picker-search').value.trim().toLowerCase();
+      const pool = recipients.filter(r=> audience === 'some_admins' ? r.role === 'admin' : true)
+        .filter(r=> !q || (r.name + ' ' + r.email + ' ' + r.family_name + ' ' + r.username).toLowerCase().includes(q));
+      if (!pool.length){ list.innerHTML = '<div class="hint" style="padding:8px">' + esc(t('mail_no_people')) + '</div>'; return; }
+      let html = ''; let fam = null;
+      pool.forEach(r=>{
+        if (r.family_name !== fam){ fam = r.family_name; html += '<div class="mail-fam">' + esc(fam) + '</div>'; }
+        html += '<label><input type="checkbox" data-key="' + esc(r.key) + '"' + (chosen.has(r.key) ? ' checked' : '') + '>'
+          + '<span><strong>' + esc(r.name) + '</strong> ' + (r.role === 'admin' ? '<span class="mail-role">' + esc(t('mail_role_admin')) + '</span>' : '')
+          + '<br><span class="mail-meta">' + esc(r.email) + '</span></span></label>';
+      });
+      list.innerHTML = html;
+      list.querySelectorAll('input[data-key]').forEach(cb=> cb.addEventListener('change', ()=>{
+        if (cb.checked) chosen.add(cb.dataset.key); else chosen.delete(cb.dataset.key);
+        updateSummary();
+      }));
+    }
+    function setAudience(a){
+      audience = a;
+      section.querySelectorAll('[data-audience]').forEach(b=> b.classList.toggle('active', b.dataset.audience === a));
+      document.getElementById('mail-picker').classList.toggle('hidden', !(a === 'some_admins' || a === 'custom'));
+      if (a === 'some_admins'){ // keep only admins ticked when switching to the admin picker
+        [...chosen].forEach(k=>{ const r = recipients.find(x=> x.key === k); if (!r || r.role !== 'admin') chosen.delete(k); });
+      }
+      renderPicker(); updateSummary();
+    }
+    section.querySelectorAll('[data-audience]').forEach(b=> b.addEventListener('click', ()=> setAudience(b.dataset.audience)));
+    document.getElementById('mail-picker-search').addEventListener('input', renderPicker);
+    document.getElementById('mail-select-all').addEventListener('click', ()=>{
+      document.querySelectorAll('#mail-picker-list input[data-key]').forEach(cb=> chosen.add(cb.dataset.key));
+      renderPicker(); updateSummary();
+    });
+    document.getElementById('mail-select-none').addEventListener('click', ()=>{ chosen.clear(); renderPicker(); updateSummary(); });
+
+    async function loadRecipients(){
+      try{
+        const res = await api('/platform/mail/recipients');
+        recipients = (res && res.recipients) || [];
+        document.getElementById('mail-replyto-note').textContent = res && res.reply_to
+          ? t('mail_replyto_note', { email: res.reply_to })
+          : t('mail_replyto_missing');
+      }catch(e){ recipients = []; }
+      setAudience(audience);
+    }
+
+    // --- editor toolbar ---
+    try { document.execCommand('styleWithCSS', false, false); } catch(e){}
+    section.querySelectorAll('.mail-toolbar [data-cmd]').forEach(b=> b.addEventListener('mousedown', (e)=>{
+      e.preventDefault(); editor.focus(); document.execCommand(b.dataset.cmd, false, null);
+    }));
+    document.getElementById('mail-block').addEventListener('change', (e)=>{
+      editor.focus(); document.execCommand('formatBlock', false, '<' + e.target.value + '>');
+    });
+    document.getElementById('mail-color').addEventListener('input', (e)=>{
+      editor.focus(); document.execCommand('foreColor', false, e.target.value);
+    });
+    document.getElementById('mail-link-btn').addEventListener('mousedown', (e)=>{
+      e.preventDefault();
+      const url = prompt(t('mail_link_prompt'), 'https://');
+      if (!url || !/^(https?:|mailto:)/i.test(url.trim())) return;
+      editor.focus(); document.execCommand('createLink', false, url.trim());
+    });
+    document.getElementById('mail-name-btn').addEventListener('mousedown', (e)=>{
+      e.preventDefault(); editor.focus(); document.execCommand('insertText', false, '{name}');
+    });
+
+    // --- attachments ---
+    const attachInput = document.getElementById('mail-attachments');
+    const fmtSize = (b)=> b > 1048576 ? (b/1048576).toFixed(1) + ' MB' : Math.max(1, Math.round(b/1024)) + ' KB';
+    function attachmentProblem(){
+      const files = [...attachInput.files];
+      if (files.length > 5) return t('mail_err_too_many_files');
+      if (files.reduce((n,f)=> n + f.size, 0) > 4 * 1024 * 1024) return t('mail_err_too_big');
+      return '';
+    }
+    attachInput.addEventListener('change', ()=>{
+      const files = [...attachInput.files];
+      const problem = attachmentProblem();
+      document.getElementById('mail-attach-list').innerHTML = files.map(f=> '📎 ' + esc(f.name) + ' (' + fmtSize(f.size) + ')').join('<br>')
+        + (problem ? '<br><strong style="color:#b3261e">' + esc(problem) + '</strong>' : '');
+    });
+
+    // --- history ---
+    async function loadHistory(){
+      const box = document.getElementById('mail-history');
+      try{
+        const rows = await api('/platform/mail/history');
+        if (!Array.isArray(rows) || !rows.length){ box.innerHTML = '<div class="hint">' + esc(t('mail_history_empty')) + '</div>'; return; }
+        box.innerHTML = rows.map(r=>{
+          let failed = []; try { failed = JSON.parse(r.failed || '[]'); } catch(e){}
+          let files = []; try { files = JSON.parse(r.attachment_names || '[]'); } catch(e){}
+          return '<div class="mail-hist"><strong>' + esc(r.subject) + '</strong> — ' + esc(new Date(r.sent_at).toLocaleString())
+            + '<br>' + esc(t('mail_history_line', { sent: r.sent_count, total: r.recipient_count }))
+            + (files.length ? ' · 📎 ' + esc(files.join(', ')) : '')
+            + (failed.length ? '<br><span style="color:#b3261e">' + esc(t('mail_failed_list', { list: failed.join(', ') })) + '</span>' : '')
+            + '</div>';
+        }).join('');
+      }catch(e){ box.innerHTML = ''; }
+    }
+
+    // --- send ---
+    document.getElementById('mail-send-btn').addEventListener('click', async ()=>{
+      const feedback = document.getElementById('mail-feedback');
+      feedback.textContent = '';
+      const subject = document.getElementById('mail-subject').value.trim();
+      const html = editor.innerHTML.trim();
+      const keys = audienceKeys();
+      if (!subject){ feedback.textContent = t('mail_err_subject'); return; }
+      if (!editor.textContent.trim()){ feedback.textContent = t('mail_err_body'); return; }
+      if (!keys.length){ feedback.textContent = t('mail_err_recipients'); return; }
+      const problem = attachmentProblem();
+      if (problem){ feedback.textContent = problem; return; }
+      const n = uniqueEmails(keys);
+      if (!(await showConfirm(t('mail_confirm', { n, subject })))) return;
+
+      const fd = new FormData();
+      fd.append('subject', subject);
+      fd.append('html', html);
+      fd.append('audience', audience);
+      fd.append('recipients', JSON.stringify(keys));
+      [...attachInput.files].forEach(f=> fd.append('attachments', f));
+      const btn = document.getElementById('mail-send-btn');
+      btn.disabled = true; feedback.textContent = t('mail_sending', { n });
+      try{
+        const res = await api('/platform/mail/send', { method:'POST', body: fd });
+        if (res && res.ok){
+          feedback.textContent = t('mail_sent', { sent: res.sent, total: res.recipients })
+            + (res.failed && res.failed.length ? ' ' + t('mail_failed_list', { list: res.failed.join(', ') }) : '');
+          if (!res.failed || !res.failed.length){
+            document.getElementById('mail-subject').value = ''; editor.innerHTML = '';
+            attachInput.value = ''; document.getElementById('mail-attach-list').innerHTML = '';
+          }
+          loadHistory();
+        } else {
+          feedback.textContent = (res && res.error) || t('ep_error_generic');
+        }
+      }catch(e){ feedback.textContent = t('ep_error_generic'); }
+      btn.disabled = false;
+    });
+
+    loadRecipients();
+    loadHistory();
+  });
   </script>
 </body>
 </html>

@@ -1,0 +1,43 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 500" width="400" height="500">
+  <!-- Fine-line genealogy emblem for the public website: one root, three generations. -->
+  <g fill="none" stroke="#a8834a" stroke-linecap="round" stroke-linejoin="round">
+    <!-- trunk and roots -->
+    <path d="M200 430 L200 330" stroke-width="2"/>
+    <path d="M200 430 C185 440 170 446 150 450 M200 430 C215 440 230 446 250 450 M200 432 L200 456" stroke-width="1.4" opacity="0.7"/>
+    <!-- generation 2 -->
+    <path d="M200 330 C200 300 130 300 120 262 M200 330 C200 300 270 300 280 262" stroke-width="1.6"/>
+    <!-- generation 3 -->
+    <path d="M120 238 C120 205 80 205 72 172 M120 238 C120 205 160 205 168 172" stroke-width="1.3"/>
+    <path d="M280 238 C280 205 240 205 232 172 M280 238 C280 205 320 205 328 172" stroke-width="1.3"/>
+    <!-- generation 4 -->
+    <path d="M72 150 C72 124 52 124 48 102 M72 150 C72 124 92 124 96 102" stroke-width="1"/>
+    <path d="M168 150 C168 124 148 124 144 102 M168 150 C168 124 188 124 192 102" stroke-width="1"/>
+    <path d="M232 150 C232 124 212 124 208 102 M232 150 C232 124 252 124 256 102" stroke-width="1"/>
+    <path d="M328 150 C328 124 308 124 304 102 M328 150 C328 124 348 124 352 102" stroke-width="1"/>
+  </g>
+  <!-- medallions -->
+  <g stroke="#a8834a" fill="#fdfbf6">
+    <circle cx="200" cy="340" r="16" stroke-width="1.8"/>
+    <circle cx="120" cy="250" r="13" stroke-width="1.5"/>
+    <circle cx="280" cy="250" r="13" stroke-width="1.5"/>
+    <circle cx="72" cy="162" r="11" stroke-width="1.3"/>
+    <circle cx="168" cy="162" r="11" stroke-width="1.3"/>
+    <circle cx="232" cy="162" r="11" stroke-width="1.3"/>
+    <circle cx="328" cy="162" r="11" stroke-width="1.3"/>
+  </g>
+  <g fill="#a8834a" opacity="0.85">
+    <circle cx="200" cy="340" r="5"/>
+    <circle cx="120" cy="250" r="4"/><circle cx="280" cy="250" r="4"/>
+    <circle cx="72" cy="162" r="3.4"/><circle cx="168" cy="162" r="3.4"/><circle cx="232" cy="162" r="3.4"/><circle cx="328" cy="162" r="3.4"/>
+  </g>
+  <!-- leaves / youngest generation -->
+  <g fill="#d9c49c">
+    <circle cx="48" cy="96" r="7"/><circle cx="96" cy="96" r="7"/>
+    <circle cx="144" cy="96" r="7"/><circle cx="192" cy="96" r="7"/>
+    <circle cx="208" cy="96" r="7"/><circle cx="256" cy="96" r="7"/>
+    <circle cx="304" cy="96" r="7"/><circle cx="352" cy="96" r="7"/>
+  </g>
+  <g fill="none" stroke="#a8834a" stroke-width="0.8" opacity="0.5">
+    <path d="M60 60 C140 30 260 30 340 60"/>
+  </g>
+</svg>
